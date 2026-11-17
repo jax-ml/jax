@@ -4806,27 +4806,31 @@ def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
 
 def _naryop_collective_rule(in_avals, out_avals, **params):
   from jax._src.lax import parallel
-  out_aval, *_ = out_avals
-  out_parts = out_aval.sharding.spec.partitions
-  if all(not a.ndim or a.sharding.spec.partitions == out_parts
+
+  out_aval, *rest = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  assert all(o.sharding.spec.partitions == out_partitions for o in rest)
+
+  if all(not a.ndim or a.sharding.spec.partitions == out_partitions
          for a in in_avals):
     return mlir.PartitioningRule()
+
   for a in in_avals:
     if a.ndim and any(s not in (out_s, None) for s, out_s in
-                      zip(a.sharding.spec.partitions, out_parts)):
+                      zip(a.sharding.spec.partitions, out_partitions)):
       raise NotImplementedError
 
   mesh = get_abstract_mesh()
 
-  def _slice_to_shard(x_shard, outer_in_aval):
-    if (not outer_in_aval.ndim or
-        outer_in_aval.sharding.spec.partitions == out_parts):
+  def _slice_to_shard(x_shard, global_in_aval):
+    if (not global_in_aval.ndim or
+        global_in_aval.sharding.spec.partitions == out_partitions):
       return x_shard
 
     starts, sizes, needs_slice = [], [], False
-    for d, s, out_s in safe_zip(
-        x_shard.shape, outer_in_aval.sharding.spec.partitions, out_parts):
-      if s == out_s or d == 1:
+    for d, in_s, out_s in safe_zip(
+        x_shard.shape, global_in_aval.sharding.spec.partitions, out_partitions):
+      if in_s == out_s or d == 1:
         starts.append(np.int32(0))
         sizes.append(d)
       else:
@@ -4841,9 +4845,10 @@ def _naryop_collective_rule(in_avals, out_avals, **params):
           x_shard, starts, sizes, allow_negative_indices=False)
     return x_shard
 
-  return mlir.PartitioningRule(
-      in_collective=lambda *xs: tuple(
-          _slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals)))
+  def in_collective(*xs):
+    return tuple(_slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals))
+
+  return mlir.PartitioningRule(in_collective=in_collective)
 
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
@@ -8765,12 +8770,9 @@ def _concatenate_lower(ctx, *xs, dimension):
 
 def _concatenate_collective_rule(in_avals, out_avals, *, dimension):
   out_aval, = out_avals
-  out_spec = out_aval.sharding.spec
-  # _concatenate_sharding_rule skips empty-mesh constants.
-  if (out_spec.partitions[dimension] is not None or
-      any(a.sharding.spec != out_spec for a in in_avals)):
+  if out_aval.sharding.spec.partitions[dimension] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  return _naryop_collective_rule(in_avals, out_avals)
 
 
 mlir.register_lowering(
@@ -8887,11 +8889,14 @@ stack_p = standard_primitive(
 ad.deflinear2(stack_p, _stack_transpose_rule)
 
 def _stack_collective_rule(in_avals, out_avals, *, axis):
-  del out_avals, axis
-  # _stack_sharding_rule skips empty-mesh constants.
-  if len({a.sharding.spec for a in in_avals}) > 1:
+  out_aval, = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  if out_partitions[axis] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  elem_spec = out_aval.sharding.spec.update(
+      partitions=out_partitions[:axis] + out_partitions[axis + 1:])
+  elem_aval = in_avals[0].update(sharding=out_aval.sharding.update(spec=elem_spec))
+  return _naryop_collective_rule(in_avals, [elem_aval])
 
 mlir.register_lowering(
     stack_p, _stack_lower, shard_map_collective_rule=_stack_collective_rule)
@@ -10900,6 +10905,8 @@ def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
   non_empty_s = [
       a.sharding for a in avals
       if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
+  if not non_empty_s:
+    return [core.get_cur_mesh_sharding()] * len(avals)
   for s in non_empty_s:
     if s.spec[dimension] is not None:
       raise core.ShardingTypeError(
@@ -10909,7 +10916,7 @@ def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
       shardings = " ".join(str(s) for s in non_empty_s)
       raise core.ShardingTypeError(
           f'Arguments to sort must have equal shardings, got: {shardings}')
-  return [a.sharding for a in avals]
+  return [non_empty_s[0]] * len(avals)
 
 def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
   avals = tuple(avals)
@@ -11074,12 +11081,10 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   return [mlir.lower_with_sharding_in_types(ctx, op, aval)
           for op, aval in zip(sort.results, ctx.avals_out)]
 
-def _sort_collective_rule(in_avals, out_avals, **params):
-  del out_avals, params
-  # _sort_sharding_rule skips empty-mesh constants.
-  if len({a.sharding.spec for a in in_avals}) > 1:
+def _sort_collective_rule(in_avals, out_avals, *, dimension, **params):
+  if out_avals[0].sharding.spec.partitions[dimension] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  return _naryop_collective_rule(in_avals, out_avals)
 
 mlir.register_lowering(
     sort_p, _sort_lower, shard_map_collective_rule=_sort_collective_rule)

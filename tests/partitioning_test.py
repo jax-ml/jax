@@ -712,6 +712,20 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.concatenate(np_inps, axis=dim))
     self.assertArraysEqual(out, expected)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_concatenate_empty_mesh(self, mesh):
+    np_x = np.arange(32, dtype=np.float32).reshape(8, 4)
+    np_y = np.arange(40, dtype=np.float32).reshape(8, 5)
+    x = jax.device_put(np_x, P('x', None))
+
+    @jax.jit
+    def f(a):
+      return lax.concatenate([a, np_y], 1)
+
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.concatenate([np_x, np_y], axis=1))
+
   @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
   def test_slice_concatenate_mixed_and_unsupported(self, mesh):
     np_x = np.arange(128, dtype=np.float32).reshape(4, 8, 4)
@@ -750,16 +764,12 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     arr_e = jax.device_put(np.arange(16, dtype=np.float32).reshape(8, 2),
                            P('e', None))
-    ones = np.ones((8, 2), np.float32)
 
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.slice(x, (2, 0), (6, 2))).lower(arr_e)
 
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.slice(x, (0, 0), (8, 2), (2, 1))).lower(arr_e)
-
-    with self.assertRaises(NotImplementedError):
-      jax.jit(lambda x: lax.concatenate([x, ones], 1)).lower(arr_e)
 
   @parameterized.parameters((None,), ('x',))
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
@@ -1334,9 +1344,15 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a, b: jnp.stack([a, b], axis=0)).lower(x, bad_y)
 
-    with self.assertRaises(NotImplementedError):
-      jax.jit(lambda a: jnp.stack(
-          [a, np.zeros(a.shape, np.float32)], axis=0)).lower(x)
+    np_c = np.arange(100, 116, dtype=np.float32).reshape(4, 4)
+
+    @jax.jit
+    def stack_const(a):
+      return jnp.stack([a, np_c, a], axis=0)
+
+    out_const = stack_const(x)
+    self.assertEqual(out_const.sharding, NamedSharding(mesh, P(None, 'x', 'y')))
+    self.assertArraysEqual(out_const, np.stack([x, np_c, x], axis=0))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unstack(self, mesh):
@@ -2075,9 +2091,18 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda k: lax.sort(k, dimension=0)).lower(keys)
 
-    with self.assertRaises(NotImplementedError):
-      jax.jit(lambda k: lax.sort(
-          (k, np.zeros((4, 4), np.int32)), dimension=1, num_keys=1)).lower(keys)
+    const_vals = np.arange(100, 116, dtype=np.int32).reshape(4, 4)
+
+    @jax.jit
+    def sort_const(k):
+      return lax.sort((k, const_vals), dimension=1, num_keys=1)
+
+    out_ck, out_cv = sort_const(keys)
+    self.assertEqual(out_cv.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out_ck, np.sort(keys, axis=1))
+    self.assertArraysEqual(
+        out_cv,
+        np.take_along_axis(const_vals, np.argsort(keys, axis=1), axis=1))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_cumred(self, mesh):
