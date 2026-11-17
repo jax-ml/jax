@@ -2584,6 +2584,7 @@ def _maybe_lower_with_shard_map(
     _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
   from jax._src import shard_map  # type: ignore
   from jax._src import pjit  # type: ignore
+
   if (not config.jax_partitioning.value or
       _prim in shard_map_passthrough_primitives):
     return None
@@ -2592,12 +2593,11 @@ def _maybe_lower_with_shard_map(
   if mesh.empty or mesh.are_all_axes_manual:
     return None
   if not mesh.are_all_axes_explicit_or_manual:
-    raise NotImplementedError(
+    raise ValueError(
         f'Cannot lower `{_prim}` with `jax_partitioning` when mesh has Auto'
-        f' axes: {mesh}'
-    )
-  assert mesh.explicit_axes
+        f' axes: {mesh}')
 
+  assert mesh.explicit_axes
   if (rule := shard_map_collective_rules.get(_prim)) is None:
     raise NotImplementedError
 
@@ -2608,6 +2608,7 @@ def _maybe_lower_with_shard_map(
   assert isinstance(partitioning_rule, PartitioningRule)
   if partitioning_rule.per_shard_params:
     params = params | partitioning_rule.per_shard_params
+
   out_specs = [a.sharding.spec for a in ctx.avals_out]
   if not _prim.multiple_results:
     out_specs, = out_specs

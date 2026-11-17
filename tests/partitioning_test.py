@@ -260,18 +260,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         f_bad.lower(x_z)
 
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_missing_rule_raises_not_implemented(self, mesh):
-    arr = jax.device_put(np.ones((4, 8), dtype=np.float32), P('x', 'y'))
-
-    with self.assertRaises(NotImplementedError):
-      jax.jit(lambda x: lax.rev(x, (0,))).lower(arr)
-
-    with self.assertRaises(NotImplementedError):
-      f_bad = jax.jit(
-          lambda x: lax.reduce_sum(x, axes=(0,), out_sharding=P(None)))
-      f_bad.lower(arr)
-
   @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
   def test_manual_collectives_under_partial_shard_map(self, mesh):
     np_x = np.arange(16, dtype=np.float32).reshape(2, 8)
@@ -870,7 +858,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return jnp.sum(a * 2)
 
     with jax.set_mesh(mesh):
-      with self.assertRaisesRegex(NotImplementedError, 'Auto'):
+      with self.assertRaisesRegex(ValueError, 'Auto'):
         f.lower(x)
 
   @parameterized.parameters(
@@ -1667,10 +1655,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
             prng.random_bits(ks, 32, (4,), out_sharding=P())[0],
         )
 
-    with self.assertRaisesRegex(NotImplementedError, 'Auto'):
+    with self.assertRaisesRegex(ValueError, 'Auto'):
       f_auto_prng.lower(keys_auto)
+
     with config.jax_partitioning(False):
-      f_auto_prng(keys_auto)
+      f_auto_prng(keys_auto)  # doesn't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_random_bits_and_iota_2x32_cases(self, mesh):
@@ -2576,6 +2565,50 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out = run_all(k, c_xy)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
+
+  @parameterized.parameters(
+      ((4, 6), P('x', None), (), False),
+      ((4, 6), P('x', None), (1,), False),
+      ((4, 6), P('x', None), (0,), True),
+      ((4, 6), P('x', 'y'), (0, 1), True),
+      ((8, 4), P(('y', 'x'), 'z'), (0,), True),
+      ((4, 4, 2), P('y', 'x', 'z'), (0, 2), True),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_rev(self, shape, spec, dims, has_permute, mesh):
+    np_x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x = jax.device_put(np_x, spec)
+
+    @jax.jit
+    def f(a):
+      return lax.rev(a, dims)
+
+    with config.jax_partitioning(False):
+      expected = f(x)
+
+    lowered_text = f.lower(x).as_text()
+    self.assertIn('sdy.manual_computation', lowered_text)
+    self.assertEqual('collective_permute' in lowered_text, has_permute)
+    if has_permute:
+      self.assertLess(
+          lowered_text.index('collective_permute'),
+          lowered_text.index('stablehlo.reverse'))
+
+    out = f(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+    w = np.arange(1, math.prod(shape) + 1, dtype=np.float32).reshape(shape)
+
+    def loss(a):
+      return (lax.rev(a, dims) * w).sum()
+
+    with config.jax_partitioning(False):
+      exp_grad = jax.jit(jax.grad(loss))(x)
+
+    out_grad = jax.jit(jax.grad(loss))(x)
+    self.assertEqual(out_grad.sharding, exp_grad.sharding)
+    self.assertArraysEqual(out_grad, exp_grad)
 
 
 if __name__ == '__main__':

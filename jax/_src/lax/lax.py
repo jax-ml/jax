@@ -9837,7 +9837,25 @@ def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
   out = hlo.reverse(x, mlir.dense_int_array(dimensions))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
-mlir.register_lowering(rev_p, _rev_lower)
+
+def _rev_collective_rule(in_avals, out_avals, *, dimensions):
+  from jax._src.lax import parallel
+  in_aval, = in_avals
+  mesh = get_abstract_mesh()
+  rev_axes = set(flatten_spec_no_none(in_aval.sharding.spec.partitions[d]
+                                      for d in dimensions))
+  rev_axes = core.order_wrt_mesh(mesh, rev_axes)
+
+  n = math.prod(mesh.shape[a] for a in rev_axes)
+  if n == 1:
+    return mlir.PartitioningRule()
+
+  perm = tuple((i, n - 1 - i) for i in range(n))
+  def in_collective(x):
+    return [parallel.ppermute(x, rev_axes, perm)]
+  return mlir.PartitioningRule(in_collective=in_collective)
+mlir.register_lowering(rev_p, _rev_lower,
+                       shard_map_collective_rule=_rev_collective_rule)
 
 
 def _transpose_shape_rule(operand, *, permutation):
