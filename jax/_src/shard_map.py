@@ -1454,14 +1454,10 @@ class ShardMapTrace(core.Trace):
       f = HashablePartial(
           _prim_applier, prim, self.check, tuple(params.items()), self.mesh,
           self.manual_axes, in_specs, out_specs)
-      if prim.is_high(*map(typeof, tracers), **params):
-        jit_f = api.jit(f)
-      else:
-        jit_f = _eager_jit(f)
       with (core.eval_context(), api.disable_jit(False), config.debug_nans(False),
             config.debug_infs(False), use_abstract_mesh(self.amesh),
             sharding_impls._internal_use_concrete_mesh(self.mesh)):
-        out_vals = jit_f(*in_vals)
+        out_vals = _eager_jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
       out_mat = (out_mat if isinstance(out_mat, (list, tuple))
