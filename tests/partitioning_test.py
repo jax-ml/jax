@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import math
 
 from absl.testing import absltest
@@ -25,6 +26,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
 from jax._src.layout import Layout
+from jax._src.ad_checkpoint import remat, checkpoint_name
 from jax._src.pjit import with_layout_constraint
 from jax._src.random import prng
 import jax.numpy as jnp
@@ -2687,6 +2689,132 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out_tok = f_token(x)
     self.assertEqual(out_tok.sharding, exp_tok.sharding)
     self.assertAllClose(out_tok, exp_tok)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_device_put_passthrough(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    np_y = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0)
+    x = jax.device_put(np_x, P('x', 'y'))
+    y_host = jax.device_put(
+        np_y, NamedSharding(mesh, P('x', None), memory_kind='pinned_host'))
+    const_np = np.arange(4, dtype=np.float32).reshape(1, 4)
+
+    @jax.jit
+    def f(a, b_host):
+      a_host, b_dev = jax.device_put(
+          (a, b_host), (jax.memory.Space.Host, jax.memory.Space.Device))
+      b_dev2 = jax.device_put(
+          b_host, NamedSharding(mesh, P('x', None), memory_kind='device'))
+      c_rep = jax.device_put(const_np, NamedSharding(mesh, P()))
+      return a_host, b_dev + b_dev2 + c_rep
+
+    with config.jax_partitioning(False):
+      exp_host, exp_dev = f(x, y_host)
+
+    out_host, out_dev = f(x, y_host)
+    self.assertEqual(
+        out_host.sharding,
+        NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host'))
+    self.assertEqual(
+        out_dev.sharding,
+        NamedSharding(mesh, P('x', None), memory_kind='device'))
+    self.assertAllClose(out_host, exp_host)
+    self.assertAllClose(out_dev, exp_dev)
+
+    lowered_tpu = f.trace(x, y_host).lower(lowering_platforms=('tpu',))
+    self.assertIn('annotate_device_placement', lowered_tpu.as_text())
+
+    def loss(a, b_host):
+      a_host = jax.device_put(a, jax.memory.Space.Host)
+      a_back = jax.device_put(a_host, jax.memory.Space.Device)
+      b_dev = jax.device_put(
+          b_host, NamedSharding(mesh, P('x', None), memory_kind='device'))
+      return (a_back * 2.0).sum() + (b_dev * 3.0).sum()
+
+    grad_fn = jax.jit(jax.grad(loss, argnums=(0, 1)))
+
+    with config.jax_partitioning(False):
+      exp_ga, exp_gb = grad_fn(x, y_host)
+
+    out_ga, out_gb = grad_fn(x, y_host)
+    self.assertEqual(out_ga.sharding, exp_ga.sharding)
+    self.assertEqual(out_gb.sharding, exp_gb.sharding)
+    self.assertAllClose(out_ga, exp_ga)
+    self.assertAllClose(out_gb, exp_gb)
+
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=[],
+        names_which_can_be_offloaded=['offloaded'],
+        offload_src='device',
+        offload_dst='pinned_host',
+    )
+
+    @functools.partial(remat, policy=policy)
+    def remat_step(a):
+      h = checkpoint_name(a * 2.0, 'offloaded')
+      return jnp.sin(h)
+
+    def remat_loss(a):
+      return remat_step(a).sum()
+
+    remat_grad_fn = jax.jit(jax.grad(remat_loss))
+    with config.jax_partitioning(False):
+      exp_remat_grad = remat_grad_fn(x)
+
+    out_remat_grad = remat_grad_fn(x)
+    self.assertEqual(out_remat_grad.sharding, exp_remat_grad.sharding)
+    self.assertAllClose(out_remat_grad, exp_remat_grad)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_device_put_reshard_raises(self, mesh):
+    x = jax.device_put(np.arange(16, dtype=np.float32).reshape(4, 4), P('x', None))
+
+    @jax.jit
+    def reshard_on_device(a):
+      return jax.device_put(a, NamedSharding(mesh, P(None, 'y')))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Resharding via `jax.device_put`'):
+      reshard_on_device.lower(x)
+
+    @jax.jit
+    def reshard_to_host(a):
+      return jax.device_put(
+          a, NamedSharding(mesh, P(None, 'y'), memory_kind='pinned_host'))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Resharding via `jax.device_put`'):
+      reshard_to_host.lower(x)
+
+    @jax.jit
+    def shard_constant():
+      return jax.device_put(
+          jnp.arange(8, dtype=np.float32), NamedSharding(mesh, P('x')))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Resharding via `jax.device_put`'):
+      shard_constant.lower()
+
+    other_mesh = jax.sharding.Mesh(
+        mesh.devices.reshape(4), ('z',), axis_types=(AxisType.Explicit,))
+
+    @jax.jit
+    def put_other_mesh(a):
+      return jax.device_put(a, NamedSharding(other_mesh, P()))
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Resharding via `jax.device_put`'):
+      put_other_mesh.lower(x)
+
+    gspmd_rep = jax._src.sharding_impls.GSPMDSharding.get_replicated(
+        list(mesh.devices.flat))
+
+    @jax.jit
+    def put_gspmd(a):
+      return jax.device_put(a, gspmd_rep)
+
+    with self.assertRaises(NotImplementedError):
+      put_gspmd.lower(x)
 
 
 if __name__ == '__main__':
