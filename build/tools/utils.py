@@ -69,6 +69,14 @@ bazel_packages = {
             "12abcedb177ca1bd293875dd7d5aa1ebf4336cf44d406b597907932251cf9714"
         ),
     ),
+
+    ("Windows", "ARM64"): BazelPackage(
+        base_uri=None,
+        file="bazel-8.7.0-windows-arm64.exe",
+        sha256=(
+            "de94507a266da65f60c1067a77717dbf39c77fd20ea8fd0a5de33d660e809f41"
+        ),
+    ),
 }
 
 def download_and_verify_bazel():
@@ -290,3 +298,11 @@ def is_linux_x86_64(arch: str, os_name: str):
 def is_linux_aarch64(arch: str, os_name: str):
   """Returns true if the architecture is Linux aarch64."""
   return arch == "aarch64" and os_name == "linux"
+
+def is_windows(os_name: str):
+  """Returns true if OS is Windows."""
+  return os_name == "windows"
+
+def is_windows_arm64(arch: str, os_name: str):
+  """Returns true if the architecture is Windows ARM64."""
+  return arch == "ARM64" and os_name == "windows"
