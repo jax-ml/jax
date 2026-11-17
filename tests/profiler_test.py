@@ -636,6 +636,61 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that trace contains kernel_details
       self.assertTrue("kernel_details" in trace_content, "Expected 'kernel_details' in trace content")
 
+  @jtu.skip_on_devices("cuda")
+  def testCaptureUnsupportedBackendRaises(self):
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      jax.profiler.start_capture()
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      jax.profiler.stop_capture()
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      with jax.profiler.capture():
+        pass
+
+  @jtu.run_on_devices("cuda")
+  @jtu.thread_unsafe_test()
+  def testCudaCapture(self):
+    if not hasattr(profiler._profiler, "start_capture"):
+      self.skipTest("jaxlib is too old to support GPU capture control")
+
+    @jit
+    def matmul_plus_bias(x, y, z):
+      return jnp.dot(x, y) + z
+
+    x = jnp.ones((64, 64), dtype=jnp.float32)
+    y = jnp.ones((64, 64), dtype=jnp.float32)
+    z = jnp.ones((64, 64), dtype=jnp.float32)
+    # Warm up outside capture.
+    matmul_plus_bias(x, y, z).block_until_ready()
+
+    with jax.profiler.capture():
+      matmul_plus_bias(x, y, z).block_until_ready()
+
+    jax.profiler.start_capture()
+    try:
+      matmul_plus_bias(x, y, z).block_until_ready()
+    finally:
+      jax.profiler.stop_capture()
+
+    thread_errors = []
+
+    def unbound_worker():
+      try:
+        profiler._profiler.start_capture()
+      except RuntimeError as exc:
+        thread_errors.append(str(exc))
+
+    worker = threading.Thread(target=unbound_worker)
+    worker.start()
+    worker.join()
+    self.assertEqual(len(thread_errors), 1)
+    self.assertIn("CUDA_ERROR_INVALID_CONTEXT", thread_errors[0])
+
 
 if __name__ == "__main__":
   if hasattr(mp, "handle_test_main"):
