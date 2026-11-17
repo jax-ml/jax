@@ -1837,6 +1837,21 @@ def convert_element_type(operand: ArrayLike,
       new_dtype, 'convert_element_type')
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
+
+def _clamp_and_cast_index(x: ArrayLike, dtype: DTypeLike) -> Array:
+  """Casts `x` to `dtype`, clamping unsigned values that exceed `dtype`'s max."""
+  x_dtype = dtypes.dtype(x)
+  if (
+      dtypes.issubdtype(x_dtype, np.unsignedinteger)
+      and dtypes.iinfo(x_dtype).max > dtypes.iinfo(dtype).max
+  ):
+    max_val = dtypes.iinfo(dtype).max
+    if isinstance(x, (int, np.integer)):
+      x = _min(int(x), max_val)
+    else:
+      x = min(x, _const(x, max_val))
+  return convert_element_type(x, dtype)
+
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
     new_dtype: DType | None = None,

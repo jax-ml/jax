@@ -2301,7 +2301,7 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   index_dtype = lax_utils.int_dtype_for_shape(operand.shape, signed=True)
   intarray = partial(np.array, dtype=index_dtype)
   operand_dims = lax.shape_as_value(operand.shape).astype(index_dtype)
-  indices = lax.convert_element_type(indices, index_dtype)
+  indices = lax._clamp_and_cast_index(indices, index_dtype)
   num_batch_dims = len(indices.shape) - 1
 
   upper_bound = operand_dims[
@@ -2650,7 +2650,7 @@ def _gather_collective_rule(
   reduce_fn = parallel.pmax if out_aval.dtype == np.bool_ else parallel.psum
 
   def in_collective(op, idx):
-    idx = lax.convert_element_type(idx, index_dtype)
+    idx = lax._clamp_and_cast_index(idx, index_dtype)
     offsets = lax.stack([
         lax.convert_element_type(parallel.axis_index(op_parts[d]), index_dtype)
         * op_shard_shape[d]

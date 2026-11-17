@@ -588,7 +588,7 @@ class NDIndexer:
       # We must be careful with dtypes because dynamic_slice requires all
       # start indices to have matching types.
       dt = lax_utils.int_dtype_for_shape(self.shape, signed=True)
-      start_indices = [lax.convert_element_type(i, dt) for i in start_indices]
+      start_indices = [lax._clamp_and_cast_index(i, dt) for i in start_indices]
 
     return _DynamicSliceIndexer(
       start_indices=start_indices,
@@ -1486,7 +1486,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
 
       start_dim = len(gather_indices_shape)
       gather_indices.extend(
-          (lax.convert_element_type(a, index_dtype), start_dim)
+          (lax._clamp_and_cast_index(a, index_dtype), start_dim)
           for a in advanced_index_arrs
       )
       gather_indices_shape += shape
@@ -1510,7 +1510,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(indexer.shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i_converted = lax.convert_element_type(index.index, index_dtype)  # pyrefly: ignore[bad-argument-type]
+      i_converted = lax._clamp_and_cast_index(index.index, index_dtype)  # pyrefly: ignore[bad-argument-type]
       gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
@@ -1538,7 +1538,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(step, 1):
         # Optimization: avoid generating trivial gather.
         if not core.definitely_equal(slice_size, indexer.shape[x_axis]):
-          gather_indices.append((lax.convert_element_type(start, index_dtype),
+          gather_indices.append((lax._clamp_and_cast_index(start, index_dtype),
                                 len(gather_indices_shape)))
           start_index_map.append(x_axis)
         gather_slice_shape.append(slice_size)
