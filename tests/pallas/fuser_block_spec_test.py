@@ -14,6 +14,7 @@
 
 import functools
 import itertools
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -26,6 +27,7 @@ from jax._src.pallas import einshape as einshape_lib
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
+from jax._src.pallas.fuser import fuser_utils
 from jax.experimental import checkify
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -3407,6 +3409,308 @@ class PushBlockSpecTest(parameterized.TestCase):
       block_spec_lib.push_pull_block_spec(
           lambda v, *, x: f(v, x), x=x_bs, grid_len=2
       )(jnp.zeros(v_shape), x=jnp.zeros(x_shape))
+
+  def test_push_pull_sliced_addupdate_static(self):
+    y = jax.random.normal(jax.random.key(0), (512, 512), dtype=np.float32)
+    z_type = jax.ShapeDtypeStruct((128, 512), jnp.float32)
+    z_bs = pl.BlockSpec((128, 128), lambda i, j, *_: (i, j))
+
+    @jax.jit
+    def check_stateful():
+      y_ref = jax.new_ref(y)
+
+      def out_fusion(z):
+        y_ref[128:256] += z
+
+      z_fn, z_values, z_sp, z_aliases = (
+          block_spec_lib.get_stateful_output_fusion_values(out_fusion, z_type)
+      )
+      self.assertEqual(z_aliases, {0: 0})
+      values_types = jax.tree.map(
+          lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
+          jax.tree.map(jax.typeof, z_values),
+      )
+      kernel_fn, z_val_bs, _, _, (_, (out_bs,)) = (
+          block_spec_lib.push_pull_block_spec(
+              z_fn,
+              z_bs,
+              scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
+                  0
+              ),
+              grid_len=2,
+          )(values_types, z_type)
+      )
+      sp_mem = (jax.tree.map(lambda x: x[None], z_sp),)
+      self.assertEqual(out_bs.block_shape, (128, 128))
+      self.assertEqual(z_val_bs[0].block_shape, (128, 128))
+      out_idx = out_bs.index_map(0, 2, *sp_mem)
+      in_idx = z_val_bs[0].index_map(0, 2, *sp_mem)
+      tile = kernel_fn(
+          (0, 2),
+          sp_mem,
+          (jnp.full((128, 128), 2.0),),
+          jnp.full((128, 128), 3.0),
+      )[1][0]
+      return out_idx, in_idx, tile
+
+    out_idx, in_idx, tile = check_stateful()
+    self.assertEqual(tuple(int(x) for x in out_idx), (1, 2))
+    self.assertEqual(tuple(int(x) for x in in_idx), (1, 2))
+    np.testing.assert_array_equal(tile, np.full((128, 128), 5.0))
+
+    # Verify direct pull_block_spec with strict_mode=True also succeeds.
+    y_ref_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+
+    def pure_sliced_addupdate(vals, z):
+      (y_val,) = vals
+      x_old = lax.dynamic_slice(y_val, (128, 0), (128, 512))
+      return (lax.dynamic_update_slice(y_val, x_old + z, (128, 0)),)
+
+    pure_sliced_addupdate.output_input_aliases = {0: 0}
+    _, _, _, _, (out_bs,) = block_spec_lib.push_pull_block_spec(
+        pure_sliced_addupdate,
+        z_bs,
+        grid_len=2,
+    )((y_ref_type,), z_type)
+    _, ((y_strict_bs,), _), _ = block_spec_lib.pull_block_spec(
+        pure_sliced_addupdate, (out_bs,), grid_len=2, strict_mode=True
+    )((y_ref_type,), z_type)
+    self.assertEqual(y_strict_bs.index_map(0, 2), (1, 2))
+
+  def test_push_pull_sliced_addupdate_dynamic_and_size1(self):
+    z_type = jax.ShapeDtypeStruct((128, 512), jnp.float32)
+    z_bs = pl.BlockSpec((128, 128), lambda i, j, *_: (i, j))
+    offset = jnp.int32(128)
+
+    def dynamic_addupdate(z):
+      def body(y_val):
+        x_old = lax.dynamic_slice(y_val, (offset, 0), (128, 512))
+        return (lax.dynamic_update_slice(y_val, x_old + z, (offset, 0)),)
+
+      return body
+
+    y_arr = jnp.zeros((512, 512), jnp.float32)
+    fn, vals, sp = block_spec_lib.get_stateful_input_fusion_values(
+        lambda z: dynamic_addupdate(z)(y_arr), z_type
+    )
+    fn.output_input_aliases = {0: 0}
+    vals_types = jax.tree.map(jax.typeof, vals)
+    _, z_val_bs, _, _, (out_bs,) = block_spec_lib.push_pull_block_spec(
+        fn,
+        z_bs,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(2),
+        grid_len=2,
+    )(vals_types, z_type)
+    sp_mem = ((), (), jax.tree.map(lambda x: x[None], sp))
+    self.assertEqual(out_bs.index_map(0, 1, *sp_mem), (1, 1))
+    self.assertEqual(z_val_bs[0].index_map(0, 1, *sp_mem), (1, 1))
+
+    # Size-1 leading slice: y_ref[1:2] += z.
+    y3_type = jax.ShapeDtypeStruct((2, 128, 128), jnp.float32)
+    z2_type = jax.ShapeDtypeStruct((1, 128, 128), jnp.float32)
+    z2_bs = pl.BlockSpec((1, 128, 128), lambda i, j, *_: (0, i, j))
+
+    def size1_slice_addupdate(vals, z):
+      (y_val,) = vals
+      x_old = lax.dynamic_slice(y_val, (1, 0, 0), (1, 128, 128))
+      return (lax.dynamic_update_slice(y_val, x_old + z, (1, 0, 0)),)
+
+    size1_slice_addupdate.output_input_aliases = {0: 0}
+    _, z2_val_bs, _, _, (out2_bs,) = block_spec_lib.push_pull_block_spec(
+        size1_slice_addupdate, z2_bs, grid_len=2
+    )((y3_type,), z2_type)
+    self.assertEqual(out2_bs.index_map(0, 0), (1, 0, 0))
+    self.assertEqual(z2_val_bs[0].index_map(0, 0), (1, 0, 0))
+
+  def test_normalize_index_jaxpr_const_folds_without_backend_dispatch(self):
+    # Verify pure-NumPy constant folding handles negative/positive floor_divide
+    # and clip without dispatching to JAX/XLA (required for cross-compilation
+    # backends where no executable device exists).
+    def f(i):
+      return i + jnp.clip(jnp.int32(16), 0, 32) // 8
+
+    def g(i):
+      return i + 2
+
+    f_jaxpr = jax.make_jaxpr(f)(jax.ShapeDtypeStruct((), jnp.int32))
+    g_jaxpr = jax.make_jaxpr(g)(jax.ShapeDtypeStruct((), jnp.int32))
+    neg_jaxpr = jax.make_jaxpr(lambda i: i + (jnp.int32(-7) // 3))(
+        jax.ShapeDtypeStruct((), jnp.int32)
+    )
+    ref_neg_jaxpr = jax.make_jaxpr(lambda i: i + jnp.int32(-3))(
+        jax.ShapeDtypeStruct((), jnp.int32)
+    )
+
+    with mock.patch.object(
+        jax._src.core,
+        'eval_jaxpr',
+        side_effect=AssertionError('must not dispatch to JAX'),
+    ):
+      self.assertTrue(
+          fuser_utils.compare_jaxprs(
+              block_spec_lib._normalize_index_jaxpr(f_jaxpr),
+              block_spec_lib._normalize_index_jaxpr(g_jaxpr),
+          )
+      )
+      self.assertTrue(
+          fuser_utils.compare_jaxprs(
+              block_spec_lib._normalize_index_jaxpr(neg_jaxpr),
+              block_spec_lib._normalize_index_jaxpr(ref_neg_jaxpr),
+          )
+      )
+
+    # Also verify static pl.ds(int, int) sliced addupdate via lower().
+    def check_pl_ds(c):
+      g_ref = jax.new_ref(c)
+      z_type = jax.ShapeDtypeStruct((16, 256), jnp.float32)
+      z_bs = pl.BlockSpec((8, 128), lambda i, j, k, *_: (i, j))
+      z_fn, z_values, _, _ = block_spec_lib.get_stateful_output_fusion_values(
+          lambda z: g_ref.__setitem__(
+              (pl.ds(16, 16), slice(None)), g_ref[pl.ds(16, 16), :] + z
+          ),
+          z_type,
+      )
+      values_types = jax.tree.map(
+          lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
+          jax.tree.map(jax.typeof, z_values),
+      )
+      block_spec_lib.push_pull_block_spec(
+          z_fn,
+          z_bs,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
+              2
+          ),
+          grid_len=3,
+      )(values_types, z_type)
+      return jax.ref.freeze(g_ref)
+
+    self.assertIsNotNone(
+        jax.jit(check_pl_ds).lower(jax.ShapeDtypeStruct((48, 256), jnp.float32))
+    )
+
+  @parameterized.named_parameters(
+      (
+          'shifted_slice',
+          lambda y, z: lax.dynamic_update_slice(
+              y, lax.dynamic_slice(y, (0, 0), (128, 512)) + z, (128, 0)
+          ),
+          (128, 512),
+      ),
+      ('transposed_read', lambda y, z: y.T + z, (512, 512)),
+  )
+  def test_push_pull_rejects_mismatched_aliased_ref_index_maps(
+      self, body, z_shape
+  ):
+    y_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    z_type = jax.ShapeDtypeStruct(z_shape, jnp.float32)
+
+    def fn(vals, z):
+      (y_val,) = vals
+      return (body(y_val, z),)
+
+    fn.output_input_aliases = {0: 0}
+    z_bs = pl.BlockSpec((128, 128), lambda i, j, *_: (i, j))
+    with self.assertRaisesRegex(ValueError, 'mismatched index maps'):
+      block_spec_lib.push_pull_block_spec(fn, z_bs, grid_len=2)(
+          (y_type,), z_type
+      )
+    with self.assertRaisesRegex(ValueError, 'mismatched index maps'):
+      block_spec_lib.push_pull_block_spec(fn, z_bs)((y_type,), z_type)
+
+  def test_aliased_ref_with_kernel_owned_scalar_prefetch(self):
+    group_handler = block_spec_lib.make_scalar_prefetch_handler(0)
+
+    def z_index_map(i, j, *sp):
+      group_ids = group_handler(*sp)
+      return group_ids[i], j, 0
+
+    z_bs = pl.BlockSpec((None, 128, 128), z_index_map)
+    y_arr = jnp.zeros((3, 512, 128), jnp.float32)
+    z_type = jax.ShapeDtypeStruct((3, 128, 128), jnp.float32)
+
+    @jax.jit
+    def check(offset):
+      y_ref = jax.new_ref(y_arr)
+
+      def out_fusion(z):
+        y_ref[:, pl.ds(offset, 128), :] += z
+
+      z_fn, z_values, z_sp, _ = (
+          block_spec_lib.get_stateful_output_fusion_values(out_fusion, z_type)
+      )
+      values_types = jax.tree.map(
+          lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
+          jax.tree.map(jax.typeof, z_values),
+      )
+      _, z_val_bs, _, _, (_, (out_bs,)) = block_spec_lib.push_pull_block_spec(
+          z_fn,
+          z_bs,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
+              1
+          ),
+          grid_len=2,
+      )(values_types, z_type)
+      sp_mem = (
+          jnp.array([2, 0], dtype=jnp.int32),
+          jax.tree.map(lambda x: x[None], z_sp),
+      )
+      return out_bs.index_map(0, 1, *sp_mem), z_val_bs[0].index_map(
+          0, 1, *sp_mem
+      )
+
+    out_idx, in_idx = check(jnp.int32(128))
+    self.assertEqual(tuple(int(x) for x in out_idx), (2, 2, 0))
+    self.assertEqual(tuple(int(x) for x in in_idx), (2, 2, 0))
+
+  @parameterized.named_parameters(
+      (
+          'full_then_sliced_addupdate',
+          lambda y_ref, v, z: (
+              y_ref.__setitem__(slice(None), v),
+              y_ref.__setitem__(slice(128, 256), y_ref[128:256] + z),
+          ),
+          (512, 512),
+      ),
+      (
+          'disjoint_slice_then_sliced_addupdate',
+          lambda y_ref, v, z: (
+              y_ref.__setitem__(slice(0, 128), v),
+              y_ref.__setitem__(slice(128, 256), y_ref[128:256] + z),
+          ),
+          (128, 512),
+      ),
+  )
+  def test_push_pull_rejects_multiple_writes_to_aliased_ref(
+      self, body, v_shape
+  ):
+    y = jnp.zeros((512, 512), jnp.float32)
+    v = jnp.ones(v_shape, jnp.float32)
+    z_type = jax.ShapeDtypeStruct((128, 512), jnp.float32)
+    z_bs = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+
+    @jax.jit
+    def run():
+      y_ref = jax.new_ref(y)
+
+      def out_fusion(z):
+        body(y_ref, v, z)
+
+      z_fn, z_values, _, _ = block_spec_lib.get_stateful_output_fusion_values(
+          out_fusion, z_type
+      )
+      values_types = jax.tree.map(
+          lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
+          jax.tree.map(jax.typeof, z_values),
+      )
+      block_spec_lib.push_pull_block_spec(z_fn, z_bs, grid_len=2)(
+          values_types, z_type
+      )
+      return jax.ref.freeze(y_ref)
+
+    with self.assertRaisesRegex(
+        ValueError, 'multiple writes to the same Ref in one fusion'
+    ):
+      run.lower()
 
 
 if __name__ == '__main__':

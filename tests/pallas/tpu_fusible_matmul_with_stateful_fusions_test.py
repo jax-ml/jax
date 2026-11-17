@@ -719,5 +719,83 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(outer(x, y), ref(x, y), atol=5e-5)
 
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_sliced_addupdate(self, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (128, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+    out_init = jax.random.normal(k2, (512, 512), jnp.float32)
+
+    OFFSET, SIZE, bm = 128, 128, 128
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl, bm=bm)
+
+    @jax.jit
+    def run_matmul(x, y, out_init):
+      out_ref = jax.new_ref(out_init)
+
+      @fuser.fuse
+      def matmul(x, y):
+        z = _fusible_matmul(x, y)
+        out_ref[OFFSET : OFFSET + SIZE] += z
+
+      matmul(x, y)
+      return jax.ref.freeze(out_ref)
+
+    out = run_matmul(x, y, out_init)
+    expected = out_init.at[OFFSET : OFFSET + SIZE].add(x @ y)
+    self.assertArraysAllClose(out, expected, atol=1e-4, rtol=1e-4)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_with_dynamic_sliced_addupdate(self, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (128, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+    out_init = jax.random.normal(k2, (512, 512), jnp.float32)
+
+    OFFSET, SIZE, bm = 128, 128, 128
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl, bm=bm)
+
+    @jax.jit
+    def run_matmul(x, y, out_init):
+      out_ref = jax.new_ref(out_init)
+      offset = jnp.array(OFFSET)
+
+      @fuser.fuse
+      def matmul(x, y):
+        z = _fusible_matmul(x, y)
+        out_ref[pl.ds(offset, SIZE), :] += z
+
+      matmul(x, y)
+      return jax.ref.freeze(out_ref)
+
+    out = run_matmul(x, y, out_init)
+    expected = out_init.at[OFFSET : OFFSET + SIZE].add(x @ y)
+    self.assertArraysAllClose(out, expected, atol=1e-4, rtol=1e-4)
+
+  @parameterized.parameters(KernelImpl)
+  def test_matmul_forbids_mismatched_aliased_ref_slices(self, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (128, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+    out_init = jax.random.normal(k2, (512, 512), jnp.float32)
+
+    _fusible_matmul = functools.partial(fusible_matmul, impl=impl, bm=128)
+
+    @jax.jit
+    def run_matmul(x, y, out_init):
+      out_ref = jax.new_ref(out_init)
+
+      @fuser.fuse
+      def matmul(x, y):
+        z = _fusible_matmul(x, y)
+        out_ref[128:256] = out_ref[0:128] + z
+
+      matmul(x, y)
+      return jax.ref.freeze(out_ref)
+
+    with self.assertRaisesRegex(ValueError, 'mismatched index maps'):
+      run_matmul(x, y, out_init)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
