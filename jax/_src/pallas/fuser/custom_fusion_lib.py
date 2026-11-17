@@ -34,12 +34,69 @@ from jax._src.pallas.fuser import block_spec as block_spec_lib
 
 custom_fusion_p = core.Primitive('custom_fusion')
 custom_fusion_p.multiple_results = True
+block_spec_lib.array_prefetch_primitives.add(custom_fusion_p)
 
-CustomPullBlockSpecRuleFn = Callable[[tuple[block_spec_lib.BlockIndexTransform, ...]],
-                                     Sequence[block_spec_lib.BlockIndexTransform]]
 
-CustomPushBlockSpecRuleFn = Callable[[tuple[pallas_core.BlockSpec, ...]],
-                                     tuple[pallas_core.BlockSpec, ...]]
+@dataclasses.dataclass(frozen=True)
+class CustomPullContext:
+  """Context passed to a ``custom_fusion`` pull block spec rule."""
+
+  _scalar_prefetch_fn: Callable[[], tuple[Any, ...]] | None
+  _grid_len: int | None
+
+  @property
+  def program_ids(self) -> tuple[Any, ...]:
+    if self._grid_len is None:
+      raise ValueError(
+          'Grid must be provided to access program_ids in pull_block_spec.'
+      )
+    pids = block_spec_lib._sp_env.program_ids
+    if pids is None:
+      raise ValueError(
+          'program_ids can only be accessed inside a block_index_transform.'
+      )
+    return pids
+
+  def get_scalar_prefetch(self) -> tuple[Any, ...]:
+    """Returns this ``custom_fusion``'s ``Usage.SCALAR_PREFETCH`` inputs.
+
+    Scalar inputs are loaded as scalar values; non-scalar array inputs are
+    passed as SMEM ``Ref``s (supporting scalar indexing such as ``arr[idx]``)
+    and are supported only on blocked ``custom_fusion`` operations.
+    """
+    if self._scalar_prefetch_fn is None:
+      return ()
+    if self._grid_len is None:
+      raise ValueError('Grid must be provided to pull_block_spec.')
+    if block_spec_lib._sp_env.scalar_prefetch is None:
+      raise ValueError(
+          'get_scalar_prefetch() can only be called inside a'
+          ' block_index_transform.'
+      )
+    return self._scalar_prefetch_fn()
+
+
+CustomPullBlockSpecRuleFn = Callable[
+    [tuple[block_spec_lib.BlockIndexTransform, ...]],
+    Sequence[block_spec_lib.BlockIndexTransform | None],
+]
+CustomPullBlockSpecWithCtxRuleFn = Callable[
+    [
+        CustomPullContext,
+        tuple[block_spec_lib.BlockIndexTransform, ...],
+    ],
+    Sequence[block_spec_lib.BlockIndexTransform | None],
+]
+
+CustomPushBlockSpecRuleFn = Callable[
+    [tuple[pallas_core.BlockSpec, ...]],
+    tuple[pallas_core.BlockSpec, ...],
+]
+
+CustomUsageRuleFn = Callable[
+    [tuple[set[block_spec_lib.Usage], ...]],
+    Sequence[set[block_spec_lib.Usage]],
+]
 
 @dataclasses.dataclass(frozen=True)
 class CustomEvalContext:
@@ -70,12 +127,17 @@ class custom_fusion:
     - ``def_eval_rule(fn)``: Required. ``fn(ctx: CustomEvalContext, *args) ->
       Sequence[Any]`` evaluates the operation on a single block and must return
       a sequence of flat output leaves (even for a single output).
-    - ``def_pull_block_spec(fn)``: Required. ``fn(out_block_transforms:
-      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]``
-      propagates output block transforms backward to the inputs.
+    - ``def_pull_block_spec(fn)`` / ``def_pull_block_spec_with_ctx(fn)``:
+      Required (define one). ``fn(out_block_transforms)`` (or
+      ``fn(ctx: CustomPullContext, out_block_transforms)``) propagates output
+      ``BlockIndexTransforms`` backward to the inputs.
     - ``def_push_block_spec(fn)``: Optional (only needed for output fusions).
       ``fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]``
       propagates input ``BlockSpecs`` forward to the outputs.
+    - ``def_usage_rule(fn)``: Optional. ``fn(used_out)`` returns a sequence of
+      ``set[Usage]`` specifying how each positional input is used (e.g.,
+      ``{Usage.REGULAR}`` or ``{Usage.SCALAR_PREFETCH}``). Defaults to
+      forwarding output usages to all inputs.
     - ``def_pallas_impl(fn)``: Optional alternative implementation for use inside
       a Pallas kernel; must produce the same output abstract values as ``fun``.
 
@@ -88,10 +150,13 @@ class custom_fusion:
 
   eval_rule: CustomEvalRuleFn | None = None
 
-  pull_block_spec_rule: CustomPullBlockSpecRuleFn | None = None
+  pull_block_spec_rule: CustomPullBlockSpecWithCtxRuleFn | None = None
 
   # Optional if this custom_fusion is only used as an input fusion.
   push_block_spec_rule: CustomPushBlockSpecRuleFn | None = None
+
+  # Optional usage rule declaring REGULAR vs SCALAR_PREFETCH per input.
+  usage_rule: CustomUsageRuleFn | None = None
 
   # Optional alternative implementation to use instead of `fun` for when this
   # custom fusion is run inside a Pallas kernel.
@@ -106,14 +171,46 @@ class custom_fusion:
     return pallas_impl
 
   def def_pull_block_spec(
-      self, pull_block_spec_rule: CustomPullBlockSpecRuleFn):
+      self, pull_block_spec_rule: CustomPullBlockSpecRuleFn
+  ):
+    if self.pull_block_spec_rule is not None:
+      raise ValueError(
+          "pull_block_spec rule has already been defined for this"
+          " custom_fusion (define either def_pull_block_spec or"
+          " def_pull_block_spec_with_ctx, not both)."
+      )
+    self.pull_block_spec_rule = (
+        lambda _, out_block_transforms: pull_block_spec_rule(
+            out_block_transforms
+        )
+    )
+    return pull_block_spec_rule
+
+  def def_pull_block_spec_with_ctx(
+      self, pull_block_spec_rule: CustomPullBlockSpecWithCtxRuleFn
+  ):
+    if self.pull_block_spec_rule is not None:
+      raise ValueError(
+          "pull_block_spec rule has already been defined for this"
+          " custom_fusion (define either def_pull_block_spec or"
+          " def_pull_block_spec_with_ctx, not both)."
+      )
     self.pull_block_spec_rule = pull_block_spec_rule
     return pull_block_spec_rule
 
   def def_push_block_spec(
-      self, push_block_spec_rule: CustomPushBlockSpecRuleFn):
+      self, push_block_spec_rule: CustomPushBlockSpecRuleFn
+  ):
     self.push_block_spec_rule = push_block_spec_rule
     return push_block_spec_rule
+
+  def def_usage_rule(self, usage_rule: CustomUsageRuleFn):
+    if self.usage_rule is not None:
+      raise ValueError(
+          "usage_rule has already been defined for this custom_fusion."
+      )
+    self.usage_rule = usage_rule
+    return usage_rule
 
   def def_eval_rule(self, eval_rule: CustomEvalRuleFn):
     self.eval_rule = eval_rule
@@ -178,6 +275,7 @@ class custom_fusion:
         eval_rule=self.eval_rule,
         pull_block_spec_rule=self.pull_block_spec_rule,
         push_block_spec_rule=self.push_block_spec_rule,
+        usage_rule=self.usage_rule,
         pallas_jaxpr=pallas_jaxpr,
         pallas_num_consts=len(pallas_consts))
 
@@ -243,24 +341,103 @@ def _custom_fusion_eval_rule(
   ), *args)
 
 
+def _compute_arg_usages(
+    usage_rule: CustomUsageRuleFn | None,
+    used_out: Sequence[set[block_spec_lib.Usage]],
+    num_args: int,
+) -> list[set[block_spec_lib.Usage]]:
+  if usage_rule is not None:
+    arg_usages = list(usage_rule(tuple(used_out)))
+    if len(arg_usages) != num_args:
+      raise ValueError(
+          f"custom_fusion usage_rule returned {len(arg_usages)} usages, "
+          f"expected {num_args}."
+      )
+    return arg_usages
+  all_usages = set().union(*used_out)
+  return [set(all_usages) for _ in range(num_args)]
+
+
 @block_spec_lib.register_pull_block_spec_rule(custom_fusion_p)
 def _custom_fusion_pull_block_spec_rule(
-    ctx : block_spec_lib.PullRuleContext,
-    out_block_transforms : tuple[block_spec_lib.BlockIndexTransform, ...],
+    ctx: block_spec_lib.PullRuleContext,
+    out_block_transforms: tuple[block_spec_lib.BlockIndexTransform, ...],
     *,
-    pull_block_spec_rule : CustomPullBlockSpecRuleFn,
+    pull_block_spec_rule: CustomPullBlockSpecWithCtxRuleFn,
+    usage_rule: CustomUsageRuleFn | None,
+    num_consts: int,
+    pallas_num_consts: int,
     **_,
-) -> Sequence[block_spec_lib.BlockIndexTransform]:
-  del ctx
-  return pull_block_spec_rule(out_block_transforms)
+) -> Sequence[block_spec_lib.BlockIndexTransform | None]:
+  num_total_consts = num_consts + pallas_num_consts
+  num_args = len(ctx.avals_in) - num_total_consts
+  own_arg_usages = _compute_arg_usages(usage_rule, ctx.out_usages, num_args)
+  own_sp_indices = [
+      arg_idx
+      for arg_idx, u in enumerate(own_arg_usages)
+      if block_spec_lib.Usage.SCALAR_PREFETCH in u
+  ]
+
+  raw_sp_fn = ctx.scalar_prefetch_fn
+  sp_fn: Callable[[], tuple[Any, ...]] | None
+  if not own_sp_indices:
+    sp_fn = None
+  elif raw_sp_fn is None:
+    arg_invars = ctx.invars[num_total_consts:]
+    if not all(isinstance(arg_invars[i], core.Literal) for i in own_sp_indices):
+      raise NotImplementedError(
+          "Scalar prefetch in custom_fusion inside a nested call (e.g."
+          " jax.jit) is not supported yet."
+      )
+    literal_sp_vals = tuple(
+        arg_invars[i].val for i in own_sp_indices  # type: ignore[union-attr]
+    )
+    sp_fn = lambda: literal_sp_vals
+  else:
+    # Filter raw_sp_fn() (which returns every fusion-wide SCALAR_PREFETCH var
+    # and core.Literal in ctx.invars) down to only this custom_fusion's own
+    # Usage.SCALAR_PREFETCH positional args, preserving literal SP args.
+    needed_is_sp = tuple(
+        idx >= num_total_consts
+        and block_spec_lib.Usage.SCALAR_PREFETCH
+        in own_arg_usages[idx - num_total_consts]
+        for idx, (v, u) in enumerate(
+            zip(ctx.invars, ctx.in_usages, strict=True)
+        )
+        if block_spec_lib.Usage.SCALAR_PREFETCH in u
+        or isinstance(v, core.Literal)
+    )
+    if sum(needed_is_sp) != len(own_sp_indices):
+      raise NotImplementedError(
+          "Scalar prefetch in custom_fusion inside a nested call (e.g."
+          " jax.jit) is not supported yet."
+      )
+
+    def _filtered_sp_fn() -> tuple[Any, ...]:
+      return tuple(
+          val
+          for val, keep in zip(raw_sp_fn(), needed_is_sp, strict=True)
+          if keep
+      )
+
+    sp_fn = _filtered_sp_fn
+
+  custom_ctx = CustomPullContext(
+      _scalar_prefetch_fn=sp_fn,
+      _grid_len=ctx.grid_len,
+  )
+  in_block_transforms = pull_block_spec_rule(custom_ctx, out_block_transforms)
+  return [None] * num_total_consts + list(in_block_transforms)
 
 
 @block_spec_lib.register_push_block_spec_rule(custom_fusion_p)
 def _custom_fusion_push_block_spec_rule(
-    ctx : block_spec_lib.PushRuleContext,
-    *block_specs : pallas_core.BlockSpec,
-    push_block_spec_rule : CustomPushBlockSpecRuleFn | None,
-    **_
+    ctx: block_spec_lib.PushRuleContext,
+    *block_specs: pallas_core.BlockSpec,
+    push_block_spec_rule: CustomPushBlockSpecRuleFn | None,
+    num_consts: int,
+    pallas_num_consts: int,
+    **_,
 ) -> tuple[pallas_core.BlockSpec, ...]:
   del ctx
   if push_block_spec_rule is None:
@@ -268,18 +445,21 @@ def _custom_fusion_push_block_spec_rule(
         "custom_fusion is missing a push_block_spec rule "
         "(use def_push_block_spec to define one)."
     )
-  return push_block_spec_rule(block_specs)
+  return push_block_spec_rule(block_specs[num_consts + pallas_num_consts:])
 
 
 @block_spec_lib.register_usage_rule(custom_fusion_p)
 def _custom_fusion_usage_rule(
-    ctx : block_spec_lib.UsageRuleContext,
+    ctx: block_spec_lib.UsageRuleContext,
     used_out: Sequence[set[block_spec_lib.Usage]],
     *,
-    jaxpr: core.Jaxpr,
-    **_
+    usage_rule: CustomUsageRuleFn | None,
+    num_consts: int,
+    pallas_num_consts: int,
+    **_,
 ) -> Sequence[set[block_spec_lib.Usage]]:
-  del ctx
-  # TODO(jburnim): Error if jaxpr gives different usage than pallas_jaxpr?
-  read_usage_env = block_spec_lib.compute_usage(jaxpr, used_out)
-  return util.safe_map(read_usage_env, jaxpr.invars)
+  num_total_consts = num_consts + pallas_num_consts
+  num_args = len(ctx.avals_in) - num_total_consts
+  arg_usages = _compute_arg_usages(usage_rule, used_out, num_args)
+  const_usage = set().union(*used_out)
+  return [set(const_usage) for _ in range(num_total_consts)] + arg_usages
