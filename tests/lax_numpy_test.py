@@ -50,7 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_version
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.numpy import ufuncs as jnp_ufuncs
 from jax._src.util import safe_zip, tuple_update
 
@@ -656,6 +656,52 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = np.sum(x.T @ x)
     tol = 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
     self.assertAllClose(actual, expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape_and_transpose=[(16, 16, 256, False), (13, 13, 316, True)],
+      dtype=float_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  def testMatmulConstantLhsReduce(self, shape_and_transpose, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42651
+    if jtu.test_device_matches(["cpu"]) and jaxlib_extension_version < 525:
+      self.skipTest("Requires jaxlib_extension_version >= 525")
+    m, k, n, transpose_rhs = shape_and_transpose
+    rng = jtu.rand_default(self.rng())
+    tol = {
+        np.float16: 5e-2,
+        jnp.bfloat16: 2e-1,
+        np.float32: 1e-3,
+        np.float64: 1e-12,
+    }
+    c_np = (rng((m, k), dtype) * 0.25).astype(dtype)
+    rhs_shape = (n, k) if transpose_rhs else (k, n)
+    x_np = (rng(rhs_shape, dtype) * 0.25).astype(dtype)
+    c = jnp.asarray(c_np)
+    x = jnp.asarray(x_np)
+    x_mat = x_np.T if transpose_rhs else x_np
+    expected_dot = c_np.astype(np.float64) @ x_mat.astype(np.float64)
+    expected_col_sum = expected_dot.sum(axis=0).astype(dtype)
+    expected_total_sum = np.asarray(expected_dot.sum(), dtype=dtype)
+
+    def col_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def col_sum_const(rhs):
+      return (c_np @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def total_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum()
+
+    self.assertAllClose(
+        jax.jit(col_sum_arr)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(col_sum_const)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(total_sum_arr)(x), expected_total_sum, atol=tol, rtol=tol
+    )
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
