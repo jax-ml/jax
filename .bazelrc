@@ -110,14 +110,6 @@ common:windows --features=archive_param_file
 # _USE_MATH_DEFINES is defined.
 common:windows --copt=/D_USE_MATH_DEFINES
 common:windows --host_copt=/D_USE_MATH_DEFINES
-# Make sure to include as little of windows.h as possible
-common:windows --copt=-DWIN32_LEAN_AND_MEAN
-common:windows --host_copt=-DWIN32_LEAN_AND_MEAN
-common:windows --copt=-DNOGDI
-common:windows --host_copt=-DNOGDI
-# https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
-# otherwise, there will be some compiling error due to preprocessing.
-common:windows --copt=/Zc:preprocessor
 common:windows --cxxopt=/std:c++20
 common:windows --host_cxxopt=/std:c++20
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
