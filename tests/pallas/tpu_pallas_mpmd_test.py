@@ -1094,12 +1094,12 @@ class MpmdTest(PallasSCTest):
     )
     num_cores = v_mesh.num_cores
     num_subcores = v_mesh.num_subcores
-    x1 = jnp.arange(num_cores * 8 * 128, dtype=jnp.int32).reshape(
-        num_cores, 8, 128
-    )
-    x2 = jnp.arange(
+    x1 = jnp.arange(
         num_cores * num_subcores * 8 * 128, dtype=jnp.int32
     ).reshape(num_cores, num_subcores, 8, 128)
+    x2 = jnp.arange(num_cores * 8 * 128, dtype=jnp.int32).reshape(
+        num_cores, 8, 128
+    )
 
     def _barrier(my_sem, scs_sem, tec_sem):
       num_cores = jax.lax.axis_size("core")
