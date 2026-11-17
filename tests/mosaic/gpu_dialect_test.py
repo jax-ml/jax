@@ -3331,6 +3331,7 @@ class DialectLoweringTest(MosaicGpuTest):
         mgpu.wgmma(acc, a, b, swizzle=64)
 
   @parameterized.product(
+      arch_minor=(3, 7),
       k_and_num_instrs=(
           # (K, number of K=96 instructions, number of K=64 instructions)
           (256, 2, 1),
@@ -3344,8 +3345,8 @@ class DialectLoweringTest(MosaicGpuTest):
           (32, ir.Float8E8M0FNUType.get),
       ),
   )
-  def test_tcgen05_mma_sm103_k96_decomposition(
-      self, k_and_num_instrs, collective, scale_block_and_type
+  def test_tcgen05_mma_k96_decomposition(
+      self, arch_minor, k_and_num_instrs, collective, scale_block_and_type
   ):
     k, num_k96, num_k64 = k_and_num_instrs
     scale_block, scale_ty_fn = scale_block_and_type
@@ -3356,7 +3357,7 @@ class DialectLoweringTest(MosaicGpuTest):
         ir.IntegerAttr.get(i32, 10)
     )
     self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
-        ir.IntegerAttr.get(i32, 3)
+        ir.IntegerAttr.get(i32, arch_minor)
     )
     with self.kernel():
       f4 = ir.Float4E2M1FNType.get()

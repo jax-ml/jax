@@ -125,6 +125,11 @@ def _mxf4_sparsity_version() -> int:
   return int(arch == utils.RUBIN)
 
 
+def _supports_k96_mma() -> bool:
+  """Whether dense 4-bit block-scaled MMA can issue K=96 steps."""
+  return utils.get_arch() in (utils.Arch(10, 3), utils.RUBIN)
+
+
 def sparse_group_elems(element_type: ir.Type) -> int:
   """The number of A elements described by one pair of metadata entries."""
   assert utils.bitwidth(element_type) != 32, "tf32 support not implemented"
@@ -211,9 +216,11 @@ def _create_scaled_instr_descriptor(
   # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
   # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
   # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
-  # .kind::mxf4nvf4 on sm_103a.
-  if is_k96 and (not is_fp4 or sparse or arch != utils.Arch(10, 3)):
-    raise ValueError("K=96 is only supported for dense 4-bit MMA on sm_103a")
+  # .kind::mxf4nvf4 on sm_103a and sm_107a.
+  if is_k96 and (not is_fp4 or sparse or not _supports_k96_mma()):
+    raise ValueError(
+        "K=96 is only supported for dense 4-bit MMA on sm_103a or sm_107a"
+    )
   desc |= is_k96 << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
@@ -629,19 +636,19 @@ def mma(
   else:
     a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
-  # On SM103, dense 4-bit block-scaled MMA can issue K=96 (48B) steps in
-  # addition to K=64 (32B) steps.
+  # On SM103 and SM107, dense 4-bit block-scaled MMA can issue K=96 (48B) steps
+  # in addition to K=64 (32B) steps.
   # TODO(allanrenucci): Support sparse K=192 steps.
   use_k96 = (
       a_scale is not None and b_scale is not None
       and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
       and not is_sparse
-      # TODO(allanrenucci): Also enable on Rubin once validated there.
-      and utils.get_arch() == utils.Arch(10, 3)
+      and _supports_k96_mma()
       # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
       and not isinstance(a, TMEMRef)
       # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
       and a_swizzle == b_swizzle == 128
+      # TODO(allanrenucci): Support A scales in `scales_128_lane_layout()`.
       and a_scale.layout == b_scale.layout == scales_layout()
       # Because of how `scales_layout()` lays out scales in TMEM, K=96 only
       # works if B scales are padded along N to exactly 128 rows (for an

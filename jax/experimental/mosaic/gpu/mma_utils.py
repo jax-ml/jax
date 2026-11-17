@@ -120,14 +120,16 @@ class SmemDescriptor:
     offset = self._desc_const | self._slice_addr_offset(mn_idx, k_idx)
     next_tile_k = (k_idx // self._k_tiling + 1) * self._k_tiling
     if self.fastest_dim == Dim.K and k_idx + instr_k > next_tile_k:
-      # The slice crosses a K swizzle tile boundary (e.g. SM103 `K=96` MMA). In
+      # The slice crosses a K swizzle tile boundary (e.g. `K=96` MMA). In
       # LBO absolute-address mode (bit 52), bits [16:30) hold the address of the
       # next tile (see
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-leading-dimension-byte-offset-absolute-address).
-      # This mode is only supported on sm_103a (see
+      # This mode is only supported on sm_103a and sm_107a (see
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-shared-memory-descriptor).
-      if utils.get_arch() != utils.Arch(10, 3):
-        raise ValueError("MMA slices crossing K swizzle tiles require sm_103a")
+      if utils.get_arch() not in (utils.Arch(10, 3), utils.RUBIN):
+        raise ValueError(
+            "MMA slices crossing K swizzle tiles require sm_103a or sm_107a"
+        )
       if k_idx + instr_k > next_tile_k + self._k_tiling:
         raise ValueError("MMA slice cannot span more than 2 K swizzle tiles")
       next_tile = self._slice_addr_offset(mn_idx, next_tile_k)

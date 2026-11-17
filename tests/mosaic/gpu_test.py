@@ -2576,14 +2576,20 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           (jnp.float8_e8m0fnu, 16),
           (jnp.float8_e8m0fnu, 32),
           (jnp.float8_e4m3fn, 16),
+          (jnp.float8_e4m3fn, 32),
+          *(
+              [(jnp.float8_e5m3fnu, 16), (jnp.float8_e5m3fnu, 32)]
+              if dtypes.float8_e5m3fnu is not None
+              else []
+          ),
       ),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_fp4_k_steps(
       self, n, scale_jax_dtype_and_block_size, k_steps
   ):
-    # On sm_103, these MMAs mix K=96 and K=64 instructions, and each K
-    # (256, 512, 768) exercises a different decomposition (see `_do_mma`).
+    # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
+    # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
     scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
     self._run_mma_block_scaled(
         m=128,
@@ -2598,8 +2604,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
 
   def test_mma_block_scaled_fp4_overpadded_b_scales(self):
-    # B scales padded along N to 256 rows even though N <= 128. On sm_103, this
-    # must not use K=96 instructions (see `tcgen05.mma`).
+    # B scales padded along N to 256 rows even though N <= 128. On sm_103 and
+    # sm_107, this must not use K=96 instructions (see `tcgen05.mma`).
     self._run_mma_block_scaled(
         m=128,
         n=128,
@@ -3008,15 +3014,22 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           (jnp.float8_e8m0fnu, 16),
           (jnp.float8_e8m0fnu, 32),
           (jnp.float8_e4m3fn, 16),
+          (jnp.float8_e4m3fn, 32),
       ),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_collective_fp4_k_steps(
       self, n, scale_jax_dtype_and_block_size, k_steps
   ):
-    # On sm_103, these MMAs mix K=96 and K=64 instructions, and each K
-    # (256, 512, 768) exercises a different decomposition (see `_do_mma`).
+    # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
+    # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
     scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and block_size != 16
+        and not jtu.is_sm107f()
+    ):
+      self.skipTest("e4m3fn scale with block size != 16 requires sm_107f.")
     self._run_mma_block_scaled_collective(
         m=256,
         n=n,
