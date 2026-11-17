@@ -149,7 +149,8 @@ def register_call_primitive_rules(
     lowering_rule = partial(
         mlir.core_call_lowering, name=name, inline_jax_late=inline_jax_late)
     mlir.register_lowering(
-        prim, lowering_rule, cacheable=False, shard_map_passthrough=True)
+        prim, lowering_rule, cacheable=False,
+        shard_map_collective_rule=lambda *_, **__: None)
 
 def create_call_primitive(name: str, inline_jax_late: bool = True
                           ) -> core.Primitive:

@@ -160,7 +160,7 @@ mlir.register_lowering(
     xla_metadata_value_p,
     _xla_metadata_value_lowering_rule,
     cacheable=False,
-    shard_map_passthrough=True,
+    shard_map_collective_rule=lambda *_, **__: None,
 )
 
 
@@ -359,7 +359,7 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, xla_metadata, ad_metadata):
   return out_nodes
 mlir.register_lowering(
     xla_metadata_call_p, _xla_metadata_call_lowering,
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _xla_metadata_call_batcher(axis_data, vals_in, dims_in, *, jaxpr,

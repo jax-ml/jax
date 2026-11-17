@@ -6589,7 +6589,8 @@ ad.primitive_transposes[to_edtype_p] = \
     lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
 mlir.register_lowering(
-    to_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
+    to_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _from_edtype_abstract_eval(x, *, dtype):
@@ -6632,7 +6633,8 @@ ad.primitive_transposes[from_edtype_p] = \
     lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
 batching.defvectorized(from_edtype_p)
 mlir.register_lowering(
-    from_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
+    from_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -11295,7 +11297,8 @@ def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
   return [hlo.create_token()]
 mlir.register_lowering(
-    create_token_p, _create_token_lowering, shard_map_passthrough=True)
+    create_token_p, _create_token_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def after_all(*operands):
@@ -11503,7 +11506,8 @@ copy_p.def_abstract_eval(lambda x: x)
 def _copy_lowering(ctx, x):
   out_aval, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
-mlir.register_lowering(copy_p, _copy_lowering, shard_map_passthrough=True)
+mlir.register_lowering(
+    copy_p, _copy_lowering, shard_map_collective_rule=lambda *_, **__: None)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 copy_p.is_high = lambda x: x.is_high  # type: ignore

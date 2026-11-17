@@ -1463,7 +1463,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(
-    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
+    jit_p, _pjit_lowering, cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],

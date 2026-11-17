@@ -1081,11 +1081,10 @@ class PartitioningRule:
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
-shard_map_collective_rules: dict[
-    core.Primitive, Callable[..., PartitioningRule | None]] = {}
-shard_map_passthrough_primitives: set[core.Primitive] = {
-    core.call_p,
-    core.closed_call_p,
+
+shard_map_collective_rules: dict[core.Primitive, Callable[..., PartitioningRule | None]] = {
+    core.call_p: lambda *_, **__: None,
+    core.closed_call_p: lambda *_, **__: None,
 }
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
@@ -1093,8 +1092,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       inline: bool | core.Inline = True,
                       cacheable: bool = True,
                       *,
-                      shard_map_collective_rule: Callable | None = None,
-                      shard_map_passthrough: bool = False) -> None:
+                      shard_map_collective_rule: Callable | None = None) -> None:
   """Registers a lowering rule for a primitive.
 
   Args:
@@ -1113,12 +1111,9 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
     shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
-      raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
-      collectives via ``shard_map`` when ``jax_partitioning`` is
-      enabled.
-    shard_map_passthrough: If ``True``, lower this primitive directly without
-      wrapping it in ``shard_map`` (e.g. for identity primitives or primitives
-      whose lowering delegates to other JAX ops).
+      ``None`` to lower directly without ``shard_map``, or raising
+      ``NotImplementedError`` if unsupported) to lower explicit-mesh
+      collectives via ``shard_map`` when ``jax_partitioning`` is enabled.
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -1132,8 +1127,6 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
-  if shard_map_passthrough:
-    shard_map_passthrough_primitives.add(prim)
   if shard_map_collective_rule is not None:
     # TODO(rdyro): Support platform-specific shard_map_collective_rules.
     shard_map_collective_rules[prim] = shard_map_collective_rule
@@ -2585,8 +2578,7 @@ def _maybe_lower_with_shard_map(
   from jax._src import shard_map  # type: ignore
   from jax._src import pjit  # type: ignore
 
-  if (not config.jax_partitioning.value or
-      _prim in shard_map_passthrough_primitives):
+  if not config.jax_partitioning.value:
     return None
 
   mesh = get_abstract_mesh()
@@ -3266,8 +3258,8 @@ register_lowering(
     shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
 register_lowering(
-    ad_util.stop_gradient_p, lambda ctx, x: [x], shard_map_passthrough=True
-)
+    ad_util.stop_gradient_p, lambda ctx, x: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def compare_hlo(x, y, direction: str, comparison_type: str | None = None):

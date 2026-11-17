@@ -190,7 +190,7 @@ mlir.register_lowering(
     program_order_p,
     partial(mlir.core_call_lowering, name="program_order", inline_jax_late=True),
     cacheable=False,
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 batching.fancy_primitive_batchers[program_order_p] = partial(
     eval_jaxpr_rules.eval_jaxpr_batch, program_order_p)
