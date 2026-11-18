@@ -6008,20 +6008,23 @@ def semaphore_wait(
   """
   ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
   value = jnp.asarray(value, dtype=jnp.int32)
-  args = [ref, transforms, value, decrement]
+  args = [ref, transforms, value]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_wait_p.bind(
       *flat_args,
       args_tree=args_tree,
+      decrement=decrement,
       memory_scope=memory_scope,
   )
 
 
 @semaphore_wait_p.def_effectful_abstract_eval
-def _semaphore_wait_abstract_eval(*avals, args_tree, memory_scope):
+def _semaphore_wait_abstract_eval(
+    *avals, args_tree, decrement: bool, memory_scope
+):
   del memory_scope  # Unused.
   return pallas_primitives.semaphore_wait_p.abstract_eval(
-      *avals, args_tree=args_tree
+      *avals, args_tree=args_tree, decrement=decrement
   )
 
 
@@ -6037,9 +6040,10 @@ def _semaphore_wait_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *args,
     args_tree,
+    decrement: bool,
     memory_scope: Literal["sys", "gpu"] = "sys",
 ):
-  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
   sem_aval, transform_avals, *_ = tree_util.tree_unflatten(
       args_tree, ctx.avals_in
   )
