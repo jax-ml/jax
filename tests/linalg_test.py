@@ -1903,8 +1903,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       inverted_pivots = jnp.argsort(p[0])
       return (q @ r)[:, inverted_pivots]
 
-    m, n = shape
-    if pivoting and mode != "r" and (m == n or (m > n and mode != "full")):
+    if pivoting and mode != "r":
       for a in args_maker():
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 

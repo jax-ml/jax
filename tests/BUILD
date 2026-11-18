@@ -869,6 +869,7 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_indexing_test.py"],
     backend_tags = {
         "cpu": ["noasan"],  # Times out.
+        "gpu": ["noasan"],  # Times out.
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -1561,6 +1562,7 @@ jax_multiplatform_test(
     srcs = ["scipy_fft_test.py"],
     backend_tags = {
         "cpu": ["noasan"],  # Times out on CPU with asan.
+        "gpu": ["noasan"],  # Times out on GPU with asan.
         "tpu": [
             "noasan",
             "notsan",
