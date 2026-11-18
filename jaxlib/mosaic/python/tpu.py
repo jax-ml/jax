@@ -113,3 +113,22 @@ def reinterpret_cast(
       loc=loc,
       ip=ip,
   ).result
+
+
+def memref_reshape(
+    result,
+    input,
+    dynamic_sizes=None,
+    *,
+    loc=None,
+    ip=None,
+):
+  if dynamic_sizes is None:
+    dynamic_sizes = []
+  return _tpu_ops_gen.MemRefReshapeOp(
+      result,
+      input,
+      dynamic_sizes,
+      loc=loc,
+      ip=ip,
+  ).result
