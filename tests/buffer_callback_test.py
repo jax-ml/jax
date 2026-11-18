@@ -19,10 +19,12 @@ import numpy as np
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
+from jax._src.typing import DLDeviceType
 from jax.experimental import buffer_callback
 import jax.numpy as jnp
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(2)
 
 
 class BufferCallbackTest(jtu.JaxTestCase):
@@ -76,6 +78,9 @@ class BufferCallbackTest(jtu.JaxTestCase):
 
     def callback(ctx, out, arg):
       del ctx  # unused
+      if jax._src.lib.ifrt_version >= 86:
+        self.assertEqual(arg.__dlpack_device__(), (DLDeviceType.kDLCPU, 0))
+        self.assertEqual(out.__dlpack_device__(), (DLDeviceType.kDLCPU, 0))
 
       x = np.from_dlpack(arg)
       self.assertArraysEqual(x, data)
@@ -87,13 +92,18 @@ class BufferCallbackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     shape = (3, 4)
     data = rng(shape, dtype)
-    fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct.like(data)
+    sharding = jax.sharding.make_single_device_sharding(jax.devices("cpu")[-1])
+    x_dev = jax.device_put(data, sharding)
+    fun = jax.jit(
+        buffer_callback.buffer_callback(
+            callback, jax.ShapeDtypeStruct.like(data)
+        ),
+        out_shardings=sharding,
     )
 
     # We can't actually test the output because numpy doesn't support writable
     # DLPack tensors.
-    jax.block_until_ready(fun(data))
+    jax.block_until_ready(fun(x_dev))
 
   @parameterized.product(
       dtype=jtu.dtypes.all, command_buffer_compatible=[True, False]
