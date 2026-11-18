@@ -1137,6 +1137,12 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           xla::nb_numpy_ndarray numpy_array =
               nb::cast<xla::nb_numpy_ndarray>(h);
+          // Byte order is not represented by the XLA primitive type. Fall
+          // back to Python so that non-native dtypes are rejected there.
+          if (!PyArray_ISNOTSWAPPED(
+                  reinterpret_cast<PyArrayObject*>(numpy_array.ptr()))) {
+            return xla::InvalidArgument("Non-native byte order");
+          }
           ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType dtype,
                                 DtypeToPrimitiveType(numpy_array.dtype()));
           if (!jax_enable_x64) {
