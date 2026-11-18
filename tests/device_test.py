@@ -90,6 +90,55 @@ class DeviceTest(jtu.JaxTestCase):
     self.assertTrue(dl.is_fully_addressable)
     self.assertEqual(dl.addressable_device_list, dl)
 
+  def test_device_list_equal_tuple(self):
+    if jaxlib_extension_version < 526:
+      self.skipTest('Requires jaxlib_extension_version >= 526')
+
+    def assert_equal(a, b):
+      self.assertTrue(a == b)
+      self.assertTrue(b == a)
+      self.assertFalse(a != b)
+      self.assertFalse(b != a)
+
+    def assert_not_equal(a, b):
+      self.assertFalse(a == b)
+      self.assertFalse(b == a)
+      self.assertTrue(a != b)
+      self.assertTrue(b != a)
+
+    devices = tuple(jax.devices())
+    assert_equal(xc.DeviceList(devices), devices)
+
+    client = xc.make_cpu_client(num_devices=3)
+    d0, d1, d2 = client.devices()
+    device_list = xc.DeviceList((d0, d1))
+
+    assert_equal(device_list, (d0, d1))
+    assert_equal(xc.DeviceList((d0, d0)), (d0, d0))
+    assert_not_equal(device_list, (d1, d0))
+    assert_not_equal(device_list, ())
+    assert_not_equal(device_list, (d0,))
+    assert_not_equal(device_list, (d0, d1, d2))
+    assert_not_equal(device_list, (d0, d0))
+    assert_not_equal(device_list, (0, 1))
+    assert_not_equal(device_list, (d0, None))
+    assert_not_equal(device_list, [d0, d1])
+    assert_not_equal(device_list, None)
+
+    empty_device_list = xc.DeviceList(())
+    assert_equal(empty_device_list, ())
+    assert_not_equal(empty_device_list, (d0,))
+    assert_not_equal(empty_device_list, [])
+
+    other_client = xc.make_cpu_client(num_devices=2)
+    other_d0, other_d1 = other_client.devices()
+    assert_not_equal(device_list, (other_d0, other_d1))
+    assert_not_equal(device_list, (d0, other_d1))
+
+    multi_client_device_list = xc.DeviceList((d0, other_d0))
+    assert_equal(multi_client_device_list, (d0, other_d0))
+    assert_not_equal(multi_client_device_list, (d0, d1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
