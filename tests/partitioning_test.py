@@ -1561,13 +1561,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(vag_g.sharding, xd.sharding)
     self.assertArraysEqual(vag_g, 2 * distinct)
 
-    if xd.sharding.spec.partitions[axis % len(shape)] is None:
-      out_g = jax.jit(jax.grad(loss))(xd)
-      self.assertEqual(out_g.sharding, xd.sharding)
-      self.assertArraysEqual(out_g, exp_g)
-    else:
-      with self.assertRaises(NotImplementedError):
-        jax.jit(jax.grad(loss)).lower(xd)
+    out_g = jax.jit(jax.grad(loss))(xd)
+    self.assertEqual(out_g.sharding, xd.sharding)
+    self.assertArraysEqual(out_g, exp_g)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_precision(self, mesh):
@@ -2280,17 +2276,39 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         scatter_dims_to_operand_dims=(0, 1),
     )
 
+    xy = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
+    xy_vec = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(8, 2), P(('x', 'y'), None))
+    # Unsorted index map with 2 sharded dims; the last 2 rows are dropped.
+    raw_idx = np.array([[1, 3], [2, 0], [-1, 0], [0, 9]], dtype=np.int32)
+    rev_dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(),
+        inserted_window_dims=(0, 1),
+        scatter_dims_to_operand_dims=(1, 0),
+    )
+
     @jax.jit
-    def f(a, u, i, ba, bu, bi, fu):
+    def f(a, u, i, ba, bu, bi, fu, xy, xy_vec):
       s_set = a.at[i].set(u)
       s_add = a.at[i].add(u, out_sharding=P(None, 'y'))
       s_max = a.at[i].max(u)
       s_vmap = jax.vmap(lambda r, j, v: r.at[j].add(v))(ba, bi, bu)
       s_clip = lax.scatter(
           a, jnp.array([0, 1], dtype=np.int32), fu, full_dnums, mode='clip')
-      return s_set, s_add, s_max, s_vmap, s_clip
+      sh_set = xy.at[i].set(u, out_sharding=P('x', 'y'))
+      sh_add = xy.at[i].add(
+          u, mode='promise_in_bounds', out_sharding=P('x', 'y'))
+      sh_2d = lax.scatter_add(
+          xy, raw_idx, jnp.arange(4, dtype=np.float32), rev_dnums,
+          out_sharding=P('x', 'y'))
+      sh_xy = xy_vec.at[i].add(1.0, out_sharding=P(('x', 'y'), None))
+      sh_row0 = xy_vec.at[(0, slice(0, 2, 1))].add(
+          1.0, out_sharding=P(('x', 'y'), None))
+      return (s_set, s_add, s_max, s_vmap, s_clip,
+              sh_set, sh_add, sh_2d, sh_xy, sh_row0)
 
-    args = (x, upd, idx, bx, bupd, bidx, full_upd)
+    args = (x, upd, idx, bx, bupd, bidx, full_upd, xy, xy_vec)
 
     with mesh.jax_partitioning(False):
       expected = f(*args)
@@ -2299,14 +2317,37 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(out.sharding, exp.sharding)
       self.assertArraysEqual(out, exp)
 
-    xy = jax.device_put(
-        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
+    # Indices must stay 64-bit: int32 would wrap 2**32 + 1 to 1.
+    with jax.enable_x64(True):
+      @jax.jit
+      def add_big(a, i):
+        return lax.scatter_add(
+            a, i, jnp.ones(2, dtype=np.float32), rev_dnums,
+            out_sharding=P('x', 'y'))
+
+      big_idx = np.array([[2**32 + 1, 0], [1, 2]], dtype=np.int64)
+      with config.jax_partitioning(False):
+        expected_big = add_big(xy, big_idx)
+      self.assertArraysEqual(add_big(xy, big_idx), expected_big)
 
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: a.at[idx].add(upd)).lower(xy)
 
     with self.assertRaises(NotImplementedError):
-      jax.jit(lambda a: a.at[idx].add(upd, out_sharding=P('x', 'y'))).lower(xy)
+      jax.jit(
+          lambda a: a.at[idx].add(upd, mode='clip', out_sharding=P('x', 'y'))
+      ).lower(xy)
+
+    # The sharded inserted dim 0 has no index component.
+    no_idx_dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(0,),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(1,),
+    )
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a, u: lax.scatter_add(
+          a, np.zeros(1, np.int32), u, no_idx_dnums,
+          mode='promise_in_bounds', out_sharding=P('x', 'y'))).lower(xy, upd[0])
 
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda a: a.at[idx].add(upd, out_sharding=P(None, None))).lower(x)
@@ -2395,13 +2436,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(vag_g.sharding, x.sharding)
     self.assertArraysEqual(vag_g, 2 * vals)
 
-    if x.sharding.spec.partitions[axis % len(shape)] is None:
-      out_g = jax.jit(jax.grad(loss))(x)
-      self.assertEqual(out_g.sharding, x.sharding)
-      self.assertArraysEqual(out_g, exp_g)
-    else:
-      with self.assertRaises(NotImplementedError):
-        jax.jit(jax.grad(loss)).lower(x)
+    out_g = jax.jit(jax.grad(loss))(x)
+    self.assertEqual(out_g.sharding, x.sharding)
+    self.assertArraysEqual(out_g, exp_g)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_approx_top_k_partial_reduce(self, mesh):

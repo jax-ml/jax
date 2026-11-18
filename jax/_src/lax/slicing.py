@@ -3795,6 +3795,7 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
 
 def _scatter_collective_rule(
     in_avals, out_avals, *, dimension_numbers, mode, out_sharding, **params):
+  from jax._src.lax import parallel
   del params
   op_aval, idx_aval, upd_aval = in_avals
   out_aval, = out_avals
@@ -3803,10 +3804,17 @@ def _scatter_collective_rule(
   upd_parts = upd_aval.sharding.spec.partitions
   dnums = dimension_numbers
 
+  sharded_inserted = [
+      i for i in dnums.inserted_window_dims if op_parts[i] is not None]
+  if sharded_inserted and (
+      not set(sharded_inserted).issubset(dnums.scatter_dims_to_operand_dims) or
+      mode == GatherScatterMode.CLIP):
+    raise NotImplementedError
+
   # FILL_OR_DROP checks bounds against local shard size instead of global size.
   if (mode == GatherScatterMode.FILL_OR_DROP and
-      any(op_parts[d] is not None
-          for d in dnums.scatter_dims_to_operand_dims)):
+      any(op_parts[d] is not None for d in dnums.scatter_dims_to_operand_dims
+          if d not in sharded_inserted)):
     raise NotImplementedError
 
   # _scatter_spec_computation allows replicated-vs-sharded batch broadcasting.
@@ -3820,12 +3828,40 @@ def _scatter_collective_rule(
     raise NotImplementedError
 
   # Explicit out_sharding bypasses _scatter_spec_computation in propagation.
-  if out_sharding is not None and (
-      out_aval.sharding.spec.partitions != op_parts or
-      _scatter_spec_computation(op_aval, idx_aval, upd_aval, dnums) is None):
-    raise NotImplementedError
+  # Sharded inserted dims are handled by the index shift below, so skip them.
+  if out_sharding is not None:
+    op_check = op_aval.update(sharding=op_aval.sharding.update(spec=P(*(
+        None if i in dnums.inserted_window_dims else p
+        for i, p in enumerate(op_parts)))))
+    if (out_aval.sharding.spec.partitions != op_parts or
+        _scatter_spec_computation(op_check, idx_aval, upd_aval, dnums) is None):
+      raise NotImplementedError
 
-  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+  if not sharded_inserted:
+    return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+  op_shard_shape = op_aval.sharding.shard_shape(op_aval.shape)
+  index_dtype = lax_utils.int_dtype_for_shape(op_aval.shape, signed=True)
+  if dtypes.iinfo(idx_aval.dtype).bits > dtypes.iinfo(index_dtype).bits:
+    index_dtype = np.dtype(np.int64)
+
+  # Subtracting `axis_index * shard_size` shifts indices targeting other shards
+  # outside `[0, shard_size)`. Because `CLIP` is rejected above, both
+  # `FILL_OR_DROP` (the `.at[...]` default) and `PROMISE_IN_BOUNDS` lower to raw
+  # `hlo.ScatterOp`, which we rely on to drop out-of-bounds updates per shard.
+  def in_collective(op, idx, upd):
+    idx = lax._clamp_and_cast_index(idx, index_dtype)
+    offsets = lax.stack([
+        lax.convert_element_type(parallel.axis_index(op_parts[d]), index_dtype)
+        * op_shard_shape[d]
+        if d in sharded_inserted else np.array(0, dtype=index_dtype)
+        for d in dnums.scatter_dims_to_operand_dims
+    ])
+    return (op, idx - lax.broadcast_in_dim(offsets, idx.shape, (idx.ndim - 1,)),
+            upd)
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective, per_shard_params={'out_sharding': None})
 
 def _scatter_set_collective_rule(
     in_avals, out_avals, *, update_jaxpr, **params):
