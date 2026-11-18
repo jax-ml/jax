@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * The `jaxlib` wheel now ships the PJRT C API header
+    `xla/pjrt/c/pjrt_c_api.h` under {func}`jax.ffi.include_dir`, so that
+    out-of-tree PJRT plugins can build against the PJRT C API version that
+    `jaxlib` was built with.
   * Added a `with_logs` option to {func}`jax.grad` and
     {func}`jax.value_and_grad`, returning backward-pass logs alongside
     gradients without calling {func}`jax.vjp` directly.
