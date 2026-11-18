@@ -4877,9 +4877,7 @@ class APITest(jtu.JaxTestCase):
     self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
     # For xla_late, we expect XLA to preserve the call on CPU, but it
     # will be inlined/flattened on TPU and GPU.
-    if jtu.device_under_test() == 'tpu' or (
-        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 513
-    ):
+    if jtu.device_under_test() in ('tpu', 'gpu'):
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
@@ -4915,9 +4913,7 @@ class APITest(jtu.JaxTestCase):
     mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
     self.assertIn("func.func private @inline_mode_test", mlir_text)
     self.assertIn('inlineable = "xla_late"', mlir_text)
-    if jtu.device_under_test() == 'tpu' or (
-        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 512
-    ):
+    if jtu.device_under_test() in ('tpu', 'gpu'):
       self.assertNotIn("call(", hlo_text)
     else:
       self.assertIn("call(", hlo_text)

@@ -25,7 +25,6 @@ import jax
 from jax import dtypes
 from jax import lax
 import jax.numpy as jnp
-from jax._src.lib import xla_version
 import jax._src.test_util as jtu
 
 jax.config.parse_flags_with_absl()
@@ -450,8 +449,6 @@ class EinsumTest(jtu.JaxTestCase):
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def test_vmap_jit_closure_captured_ones(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/42549
-    if jtu.test_device_matches(['cpu']) and xla_version < 84:
-      self.skipTest('Requires xla_version >= 84')
     n_met, n_age, n_wave = 3, 20, 100
     ones_cube = jnp.ones((n_met, n_age, n_wave), dtype=dtype)
     w = jnp.linspace(0.1, 1.0, n_met * n_age, dtype=dtype).reshape(n_met, n_age)

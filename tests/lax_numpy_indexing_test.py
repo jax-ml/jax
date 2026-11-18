@@ -32,7 +32,6 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.indexing import Slice
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import jaxlib_extension_version
 from jax._src.numpy import indexing
 import numpy as np
 
@@ -2061,8 +2060,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
   def testFullSliceSetFollowedByReverse(self):
     # Regression test for https://github.com/jax-ml/jax/issues/41497
-    if jaxlib_extension_version < 510:
-      self.skipTest("Requires jaxlib_extension_version >= 510")
     x = jnp.arange(4)
     f1 = jax.jit(lambda x: jnp.zeros_like(x).at[:].set(x)[::-1])
     self.assertArraysEqual(f1(x), x[::-1])
@@ -2172,8 +2169,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   )
   def testFloat64ColumnScatterSet(self, rows, width, count):
     # Regression test for https://github.com/jax-ml/jax/issues/41888
-    if jaxlib_extension_version < 524:
-      self.skipTest("Requires jaxlib_extension_version >= 524")
     if not config.enable_x64.value:
       self.skipTest("Requires jax_enable_x64=True")
     out = np.zeros((rows, width), dtype=np.float64)

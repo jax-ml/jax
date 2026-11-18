@@ -458,14 +458,9 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
 
 
 def _rnn_fwd_gpu_lowering(
-    platform, legacy_lowering, ctx, input, h_0, c_0, weights, seq_lengths, *,
+    platform, ctx, input, h_0, c_0, weights, seq_lengths, *,
     input_size: int, hidden_size: int, num_layers: int, dropout: float,
     bidirectional: bool, cudnn_allow_tf32: bool):
-  if jax._src.lib.jaxlib_extension_version < 513:
-    return legacy_lowering(
-        ctx, input, h_0, c_0, weights, seq_lengths, input_size=input_size,
-        hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
-        bidirectional=bidirectional, cudnn_allow_tf32=cudnn_allow_tf32)
   return ffi.ffi_lowering(f"{platform}dnn_rnn_ffi_v2")(
       ctx, input, h_0, c_0, weights, seq_lengths, dropout=np.float32(dropout),
       bidirectional=bool(bidirectional),
@@ -479,12 +474,12 @@ rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(
       rnn_fwd_p,
-      partial(_rnn_fwd_gpu_lowering, 'cu', gpu_rnn.cudnn_rnn_lowering),
+      partial(_rnn_fwd_gpu_lowering, 'cu'),
       platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_lowering"):
     mlir.register_lowering(
         rnn_fwd_p,
-        partial(_rnn_fwd_gpu_lowering, 'hip', gpu_rnn.miopen_rnn_lowering),
+        partial(_rnn_fwd_gpu_lowering, 'hip'),
         platform='rocm')
 
 
@@ -523,16 +518,10 @@ def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
 
 
 def _rnn_bwd_gpu_lowering(
-    platform, legacy_lowering, ctx, dy, dhn, dcn, x, h0, c0, w, y,
+    platform, ctx, dy, dhn, dcn, x, h0, c0, w, y,
     reserve_space, seq_lengths, *, input_size: int, hidden_size: int,
     num_layers: int, dropout: bool, bidirectional: bool,
     cudnn_allow_tf32: bool):
-  if jax._src.lib.jaxlib_extension_version < 513:
-    return legacy_lowering(
-        ctx, dy, dhn, dcn, x, h0, c0, w, y, reserve_space, seq_lengths,
-        input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
-        dropout=dropout, bidirectional=bidirectional,
-        cudnn_allow_tf32=cudnn_allow_tf32)
   zeroed_dw = mlir.ir_constant(np.zeros(ctx.avals_out[3].shape, dtype=np.float32))
   ctx = ctx.replace(
       avals_in=(*ctx.avals_in[:9], ctx.avals_out[3], ctx.avals_in[9]))
@@ -552,12 +541,12 @@ rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(
       rnn_bwd_p,
-      partial(_rnn_bwd_gpu_lowering, 'cu', gpu_rnn.cudnn_rnn_bwd_lowering),
+      partial(_rnn_bwd_gpu_lowering, 'cu'),
       platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_bwd_lowering"):
     mlir.register_lowering(
         rnn_bwd_p,
-        partial(_rnn_bwd_gpu_lowering, 'hip', gpu_rnn.miopen_rnn_bwd_lowering),
+        partial(_rnn_bwd_gpu_lowering, 'hip'),
         platform='rocm')
 
 lstm.defvjp(lstm_fwd, lstm_bwd)

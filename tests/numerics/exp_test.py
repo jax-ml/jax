@@ -21,7 +21,6 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -159,23 +158,13 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
-    if xla_version >= 80:
-      bounds = [
-          ("cpu", {f16: 1.0}),
-          ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
-          (TPU_EUPV1, {f16: 1.0, f32: 61.0}),
-          ("tpu_v5p", {f16: 1.0, f32: 65.5}),
-          (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
-      ]
-    else:
-      bounds = [
-          ("cpu", {bf16: 101.0, f16: 14.0, f32: 68.5, f64: 719.0}),
-          ("gpu", {bf16: 101.0, f16: 14.0, f32: 69.0, f64: 719.0}),
-          (TPU_EUPV1, {bf16: 44.0, f16: 7.5, f32: 141.5}),
-          ("tpu_v5p", {bf16: 44.0, f16: 7.5, f32: 133.0}),
-          ("tpu_v6e", {bf16: 44.0, f16: 7.5, f32: 90.0}),
-          ("tpu_7x", {bf16: 75.0, f16: 7.5, f32: 90.0}),
-      ]
+    bounds = [
+        ("cpu", {f16: 1.0}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
+        (TPU_EUPV1, {f16: 1.0, f32: 61.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 65.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+    ]
     ignore_inputs = [
         (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
     ]
@@ -209,8 +198,6 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_highest_accuracy(self, dtype):
-    if xla_version < 80:
-      self.skipTest("Requires xla_version >= 80")
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),

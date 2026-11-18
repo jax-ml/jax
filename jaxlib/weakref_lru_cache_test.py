@@ -22,7 +22,6 @@ import weakref
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax.jaxlib import weakref_lru_cache
-from jax.jaxlib import xla_client
 
 
 def _dummy_context_fn():
@@ -590,8 +589,6 @@ class WeakrefLRUCacheTest(parameterized.TestCase):
       ("weak_key_weak_value_cache", weakref_lru_cache.WeakKeyWeakValueCache),
   )
   def testCallUninitialized(self, cls):
-    if xla_client._version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     cache = cls.__new__(cls)
     with self.assertRaises(TypeError):
       cache(object())

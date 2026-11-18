@@ -29,7 +29,6 @@ import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import jaxlib_extension_version
 from jax._src.scipy import special as special_internal
 from jax.scipy import special as lsp_special
 
@@ -350,8 +349,6 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   @jtu.sample_product(dtype=float_dtypes)
   @jax.numpy_dtype_promotion('standard')  # polygamma mixes int n with float x.
   def testZetaLargeQ(self, dtype):
-    if jaxlib_extension_version < 510:
-      self.skipTest("Requires jaxlib_extension_version >= 510")
     # Regression test for https://github.com/jax-ml/jax/issues/38637,
     # https://github.com/jax-ml/jax/issues/38608 and
     # https://github.com/jax-ml/jax/issues/41366.
