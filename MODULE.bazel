@@ -8,9 +8,9 @@ bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_a
 bazel_dep(name = "apple_support", version = "2.8.0")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "bazel_features", version = "1.50.0")
-bazel_dep(name = "bazel_skylib", version = "1.9.0")
-bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
-bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "flatbuffers", version = "25.9.23", repo_name = "com_github_google_flatbuffers")
+bazel_dep(name = "googletest", version = "1.18.0", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "platforms", version = "1.1.0")
@@ -39,7 +39,7 @@ archive_override(
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
-# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.2.10).
+# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.9.23).
 # TODO: Remove this override once flatbuffers is upgraded to >= 25.12.19.
 single_version_override(
     module_name = "aspect_rules_esbuild",
