@@ -393,8 +393,8 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(
       axis=[0, 1, 2],
-      in_shape=[(2, 29, 206), (12, 28), (12,)],
-      reduce_func = [jnp.argmax, jnp.argmin],
+      in_shape=[(2, 29, 206), (12, 28), (12,), (300,)],
+      reduce_func=[jnp.argmax, jnp.argmin],
       keepdims=[False, True],
   )
   def test_reduce_index(self, axis, in_shape, reduce_func, keepdims):
@@ -467,6 +467,32 @@ class OpsTest(ptu.PallasTPUTest):
     )(x)
 
     np.testing.assert_array_equal(result, reduce_func(x, axis))
+
+  # The result of reducing a 1D input is a scalar, and Mosaic only supports
+  # extracting 32-bit scalars, so we only test int32 indices here.
+  @parameterized.product(
+      in_shape=[(12,), (300,)],
+      reduce_func=[jnp.argmax, jnp.argmin],
+  )
+  def test_bf16_input_reduce_index_1d(self, in_shape, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+
+    dtype = jnp.bfloat16
+
+    # Keep the reduced dimension, since scalar outputs are not supported.
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], 0, keepdims=True)
+
+    x = jnp.argsort(
+        jax.random.normal(jax.random.key(22), shape=in_shape)
+    ).astype(dtype)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1,), dtype=jnp.int32),
+    )(x)
+
+    np.testing.assert_array_equal(result, reduce_func(x, 0, keepdims=True))
 
   @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
   def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
