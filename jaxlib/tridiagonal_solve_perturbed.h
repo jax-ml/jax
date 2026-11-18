@@ -267,14 +267,14 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
 
   if (n > 1) {
     p = u(n - 2, 0);
-    rhs_row = x.row(n - 2) - u(n - 2, 1) * x.row(n - 1);
+    rhs_row.noalias() = x.row(n - 2) - u(n - 2, 1) * x.row(n - 1);
     MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
     x.row(n - 2) = rhs_row * (Scalar(1.0) / p);
   }
 
   for (int k = n - 3; k >= 0; --k) {
     p = u(k, 0);
-    rhs_row = x.row(k) - u(k, 1) * x.row(k + 1) - u(k, 2) * x.row(k + 2);
+    rhs_row.noalias() = x.row(k) - u(k, 1) * x.row(k + 1) - u(k, 2) * x.row(k + 2);
     MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
     x.row(k) = rhs_row * (Scalar(1.0) / p);
   }
