@@ -2537,7 +2537,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       scale_jax_dtype=(
           jnp.float8_e8m0fnu,
           jnp.float8_e4m3fn,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
@@ -2574,7 +2574,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       scale_jax_dtype=(
           jnp.float8_e8m0fnu,
           jnp.float8_e4m3fn,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       block_size=(16, 32),
       k_steps=(1, 2, 3),
@@ -4791,7 +4791,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       dtype=(
           jnp.float32,
           jnp.float16,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.int4
       ),
   )
@@ -5945,7 +5945,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.bfloat16,
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.float4_e2m1fn,
       ),
   )
@@ -6092,7 +6092,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.float8_e5m2,
           jnp.float8_e4m3fn,
           jnp.float8_e8m0fnu,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       jax_dtype_to=(
           jnp.float32,
@@ -6101,7 +6101,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.float8_e5m2,
           jnp.float8_e4m3fn,
           jnp.float8_e8m0fnu,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       vec_len=(1, 2, 4, 8),
   )
@@ -6298,7 +6298,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
       dst_dtype=(
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.float4_e2m1fn,
       ),
   )

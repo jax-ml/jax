@@ -18,6 +18,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * New features
 * Breaking changes
+  * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations
 * Changes
 * Bug fixes

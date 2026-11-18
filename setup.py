@@ -75,7 +75,7 @@ setup(
     python_requires='>=3.12',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
-        'ml_dtypes>=0.5.0',
+        'ml_dtypes>=0.7.0',
         'numpy>=2.2',
         'opt_einsum',
         'scipy>=1.15',

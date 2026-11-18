@@ -149,6 +149,8 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.float64): ir.F64Type.get,
   np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
+  np.dtype(dtypes.int1): partial(ir.IntegerType.get_signless, 1),
+  np.dtype(dtypes.uint1): partial(ir.IntegerType.get_unsigned, 1),
   np.dtype(dtypes.int2): partial(ir.IntegerType.get_signless, 2),
   np.dtype(dtypes.uint2): partial(ir.IntegerType.get_unsigned, 2),
   np.dtype(dtypes.float8_e3m4): ir.Float8E3M4Type.get,
@@ -157,28 +159,10 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float4_e2m1fn): ir.Float4E2M1FNType.get,
   np.dtype(dtypes.float6_e2m3fn): ir.Float6E2M3FNType.get,
   np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
+  np.dtype(dtypes.float8_e5m3fnu): ir.Float8E5M3FNUType.get,
+  np.dtype(dtypes.bcomplex32): lambda: ir.ComplexType.get(ir.BF16Type.get()),
+  np.dtype(dtypes.complex32): lambda: ir.ComplexType.get(ir.F16Type.get()),
 }
-
-if dtypes.float8_e5m3fnu is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float8_e5m3fnu)] = ir.Float8E5M3FNUType.get
-
-if dtypes.int1 is not None:
-  assert dtypes.uint1 is not None
-  _dtype_to_ir_type[np.dtype(dtypes.int1)] = partial(
-      ir.IntegerType.get_signless, 1
-  )
-  _dtype_to_ir_type[np.dtype(dtypes.uint1)] = partial(
-      ir.IntegerType.get_unsigned, 1
-  )
-
-if dtypes.bcomplex32 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.bcomplex32)] = (
-      lambda: ir.ComplexType.get(ir.BF16Type.get())
-  )
-if dtypes.complex32 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.complex32)] = (
-      lambda: ir.ComplexType.get(ir.F16Type.get())
-  )
 
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
