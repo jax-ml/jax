@@ -395,7 +395,25 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    })
       .def_prop_rw("xla_gpu_experimental_autotune_cache_mode",
                    &DebugOptions::xla_gpu_experimental_autotune_cache_mode,
-                   &DebugOptions::set_xla_gpu_experimental_autotune_cache_mode);
+                   &DebugOptions::set_xla_gpu_experimental_autotune_cache_mode)
+      .def_prop_rw("xla_dump_autotune_cache_to",
+                   &DebugOptions::xla_dump_autotune_cache_to,
+                   [](DebugOptions* self, std::string value) {
+                     self->set_xla_dump_autotune_cache_to(value);
+                   })
+      .def_prop_rw("xla_load_autotune_cache_from",
+                   &DebugOptions::xla_load_autotune_cache_from,
+                   [](DebugOptions* self, std::string value) {
+                     self->set_xla_load_autotune_cache_from(value);
+                   })
+      .def_prop_rw("xla_autotune_cache_dir",
+                   &DebugOptions::xla_autotune_cache_dir,
+                   [](DebugOptions* self, std::string value) {
+                     self->set_xla_autotune_cache_dir(value);
+                   })
+      .def_prop_rw("xla_autotune_cache_mode",
+                   &DebugOptions::xla_autotune_cache_mode,
+                   &DebugOptions::set_xla_autotune_cache_mode);
 
   nb::class_<ExecutableBuildOptions>(m, "ExecutableBuildOptions")
       .def(nb::init<>())
