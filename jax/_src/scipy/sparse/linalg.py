@@ -190,7 +190,7 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
 
-  return _ldexp_tree(x_final, exp)
+  return _ldexp_tree(x_final, exp), None
 
 
 # aliases for working with pytrees
@@ -218,18 +218,24 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
     q_ = A(phat)
     alpha_ = rho_ / _vdot_tree(rhat, q_)
     s = _sub(r, _mul(alpha_, q_))
-    exit_early = _vdot_real_tree(s, s) < atol2
+    exit_early = _vdot_real_tree(s, s) <= atol2
     shat = M(s)
     t = A(shat)
-    omega_ = _vdot_tree(t, s) / _vdot_tree(t, t)  # make cases?
-    x_ = tree_map(partial(jnp.where, exit_early),
+    omega_ = _vdot_tree(t, s) / _vdot_tree(t, t)
+    rho_ok = (rho_ != 0) & jnp.isfinite(rho_)
+    alpha_ok = (alpha_ != 0) & jnp.isfinite(alpha_)
+    omega_ok = (omega_ != 0) & jnp.isfinite(omega_)
+    # Keep the alpha update if s has converged or the omega step breaks down.
+    alpha_only = exit_early | ~omega_ok
+    x_ = tree_map(partial(jnp.where, alpha_only),
                   _add(x, _mul(alpha_, phat)),
                   _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
                   )
-    r_ = tree_map(partial(jnp.where, exit_early),
+    r_ = tree_map(partial(jnp.where, alpha_only),
                   s, _sub(s, _mul(omega_, t)))
-    k_ = jnp.where((omega_ == 0) | (alpha_ == 0), -11, k + 1)
-    k_ = jnp.where((rho_ == 0), -10, k_)
+    x_ = tree_map(partial(jnp.where, rho_ok & alpha_ok), x_, x)
+    k_ = jnp.where(alpha_ok & (exit_early | omega_ok), k + 1, -11)
+    k_ = jnp.where(rho_ok, k_, -10)
     return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k_
 
   r0 = _sub(b, A(x0))
@@ -237,9 +243,8 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
       1, *dtypes.lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
-  x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
-
-  return x_final
+  x_final, *_, k = lax.while_loop(cond_fun, body_fun, initial_value)
+  return x_final, jnp.minimum(k, 0)
 
 
 def _shapes(pytree):
@@ -288,15 +293,14 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
     return not issubclass(x.dtype.type, np.complexfloating)
   symmetric = all(map(real_valued, tree_leaves(b))) \
     if check_symmetric else False
-  x = lax.custom_linear_solve(
+  return lax.custom_linear_solve(
       A,
       b,
       solve=isolve_solve,
       transpose_solve=transpose_solve,
       symmetric=symmetric,
+      has_aux=True,
   )
-  info = None
-  return x, info
 
 
 def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
@@ -797,10 +801,10 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   Returns
   -------
   x : array or tree of arrays
-      The converged solution. Has the same structure as ``b``.
-  info : None
-      Placeholder for convergence information. In the future, JAX will report
-      the number of iterations when convergence is not achieved, like SciPy.
+      The last iterate. Has the same structure as ``b``.
+  info : integer scalar
+      -10 for a rho breakdown, -11 for an alpha or omega breakdown, or 0 if
+      no breakdown was detected (including when ``maxiter`` is reached).
 
   Other Parameters
   ----------------

@@ -16,6 +16,7 @@ from functools import partial
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 import scipy.sparse.linalg
 
@@ -286,6 +287,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertArraysEqual(grad_scaled, grad_ref * scale)
 
   # BICGSTAB
+  @parameterized.named_parameters(
+      ("alpha", [[0, 1], [-1, 0]], [0, 0], -11),
+      ("omega", [[1, 0], [1, 0]], [1, 0], -11),
+      ("rho", [[1, 0, 0], [1, 1, 0], [0, 1, 1]], [1, -0.5, 0], -10),
+  )
+  def test_bicgstab_breakdown(self, matrix, expected_x, expected_info):
+    A = jnp.array(matrix, dtype=float)
+    b = jnp.zeros(len(matrix)).at[0].set(1)
+    x, info = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertArraysEqual(x, jnp.array(expected_x, dtype=b.dtype))
+    self.assertEqual(info, expected_info)
+
   @jtu.sample_product(
     shape=[(5, 5)],
     dtype=[np.float64, np.complex128],
@@ -343,6 +356,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = shape[0] * float(jnp.finfo(dtype).eps)
     x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol,
                                                M=M)
+    self.assertEqual(info, 0)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
