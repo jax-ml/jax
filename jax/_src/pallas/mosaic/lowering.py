@@ -1022,10 +1022,24 @@ def _check_block_mappings(
     else:
       bs1, as1 = 1, 1
 
+    if bm.array_aval.dtype == jnp.bool_:
+      bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
+    else:
+      bitwidth = dtypes.itemsize_bits(physical_dtype)
+    packing = 32 // bitwidth
+
     if rank >= 2:
-      evenly_divisible = (
-          (bs0 == as0 or bs0 % 128 == 0) and
-          (bs1 == as1 or bs1 % 8 == 0)
+      # VMEM blocks with 1, 2 or 4 rows are retiled by the pipeline DMAs. A
+      # block needs at least as many rows as are packed into a sublane.
+      retiled = (
+          bs1 in (1, 2, 4)
+          and bs1 >= packing
+          and tpu_core.unwrap_core_memory_space(memory_space)
+          == tpu_core.MemorySpace.VMEM
+          and is_libtpu_at_least("0.0.54")
+      )
+      evenly_divisible = (bs0 == as0 or bs0 % 128 == 0) and (
+          bs1 == as1 or bs1 % 8 == 0 or retiled
       )
       if not evenly_divisible:
         extra_msg = ""
@@ -1040,17 +1054,13 @@ def _check_block_mappings(
             "The Pallas TPU lowering currently requires that the last two "
             "dimensions of your block shape are divisible by 8 and 128 "
             "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
+            "overall array. The second to last dimension of a VMEM block "
+            "may also be 1, 2 or 4, if it is at least 32 // dtype bitwidth. "
             + extra_msg
             + err_details()
         )
     else:
       assert rank == 1
-      if bm.array_aval.dtype == jnp.bool_:
-        bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
-      else:
-        bitwidth = dtypes.itemsize_bits(physical_dtype)
-      packing = 32 // bitwidth
       sublane_count = tpu_info.get_tpu_info().num_sublanes
       lane_count = tpu_info.get_tpu_info().num_lanes
       min_tiling = lane_count * packing
