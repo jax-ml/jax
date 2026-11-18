@@ -2622,7 +2622,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
     # With f4 inputs and swizzle=128, K=512, so A has 16 scales per row. That's
     # exactly the 16 bytes per row that tcgen05.cp needs, so no padding is
-    # required.
+    # required. K=512 also mixes K=96 and K=64 instructions (see `_do_mma`).
     self._run_mma_block_scaled(
         m=128,
         n=128,
@@ -3036,6 +3036,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       self, scale_jax_dtype, block_size, lhs_in_tmem
   ):
     self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
+    # With k_steps=2, K=512, which mixes K=96 and K=64 instructions when A is in
+    # SMEM (see `_do_mma`).
     self._run_mma_block_scaled_collective(
         m=256,
         n=128,
