@@ -1683,7 +1683,7 @@ def _tcgen05_mma_constraint_system(
     operands_for_variable[a_var] = [a]
     constraints.append(mma_tiling_constraint(a_var, op))
 
-  if (sparse_meta_operand := getattr(op, "a_sparse_metadata")) is not None:
+  if (sparse_meta_operand := op.a_sparse_metadata) is not None:
     sparse_meta = ValueSite(
         op, VariableType.OPERAND, list(op.operands).index(sparse_meta_operand)
     )
