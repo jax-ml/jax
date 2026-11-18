@@ -1119,8 +1119,7 @@ def _layout_cast_constraint_system(
         f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
-  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is 0.12.0.
-  strict = bool(getattr(op, "strict", False))
+  strict = bool(op.strict)
   return (
       cs.ConstraintSystem(
           assignments={result_var: out_layout},
