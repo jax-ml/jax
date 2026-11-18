@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 525  # YNNPACK constant strides fix
+_version = 526  # Support DeviceAssignment.create from DeviceList
 
 # An internal increasing version number for protecting jaxlib code against
 # xla changes.
@@ -294,6 +294,17 @@ def create(assignment):
    Args:
      assignment: a 2D numpy array of device ordinal integers, indexed by
        [replica][computation_in_replica].
+   Returns:
+     A device assignment.
+  '''
+
+def create(device_list, num_replicas, num_partitions):
+  '''Builds a device assignment from a flat DeviceList in row-major order.
+
+   Args:
+     device_list: a DeviceList of length num_replicas * num_partitions.
+     num_replicas: number of replicas.
+     num_partitions: number of partitions per replica.
    Returns:
      A device assignment.
   '''

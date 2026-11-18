@@ -89,6 +89,20 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key._hash_accelerator_config, devices)
     self.assertEqual(acc_hash1, acc_hash2)
 
+  def test_hash_device_list_parity(self):
+    devices = jax.local_devices()
+    device_array = np.array([devices], dtype=object)
+    device_list = xla_client.DeviceList(tuple(devices))
+
+    self.assertEqual(
+        self.get_hashed_value(cache_key._hash_devices, device_list),
+        self.get_hashed_value(cache_key._hash_devices, device_array),
+    )
+    self.assertEqual(
+        self.get_hashed_value(cache_key._hash_accelerator_config, device_list),
+        self.get_hashed_value(cache_key._hash_accelerator_config, device_array),
+    )
+
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(
         cache_key._hash_platform, xla_bridge.get_backend()

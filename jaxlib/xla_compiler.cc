@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/xla_compiler.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,6 +28,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -45,6 +47,7 @@ limitations under the License.
 #include "jaxlib/dlpack.h"
 #include "jaxlib/hash_util.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_device_list.h"
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -61,10 +64,13 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/status_casters.h"
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
@@ -123,6 +129,50 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
             }
             return result;
           }))
+      .def_static(
+          "create",
+          xla::ValueOrThrowWrapper(
+              [](jax::PyDeviceList& device_list, int num_replicas,
+                 int num_partitions) -> absl::StatusOr<DeviceAssignment> {
+                if (num_replicas <= 0 || num_partitions <= 0) {
+                  return InvalidArgument(
+                      "num_replicas and num_partitions must be positive, got "
+                      "num_replicas=%d, num_partitions=%d.",
+                      num_replicas, num_partitions);
+                }
+                const int64_t expected_devices =
+                    static_cast<int64_t>(num_replicas) * num_partitions;
+                const int num_devices = device_list.Len();
+                if (num_devices != expected_devices) {
+                  return InvalidArgument(
+                      "DeviceList size (%d) does not match num_replicas * "
+                      "num_partitions (%d * %d = %d).",
+                      num_devices, num_replicas, num_partitions,
+                      expected_devices);
+                }
+                if (absl::StatusOr<xla::ifrt::DeviceListRef> ifrt_device_list =
+                        device_list.ifrt_device_list();
+                    ifrt_device_list.ok()) {
+                  nb::gil_scoped_release gil_release;
+                  absl::Span<xla::ifrt::Device* const> devices =
+                      (*ifrt_device_list)->devices();
+                  CHECK_EQ(devices.size(), expected_devices);
+                  DeviceAssignment result(num_replicas, num_partitions);
+                  int64_t* out = result.data();
+                  for (size_t i = 0; i < devices.size(); ++i) {
+                    out[i] = devices[i]->Id().value();
+                  }
+                  return result;
+                }
+                DeviceAssignment result(num_replicas, num_partitions);
+                int64_t* out = result.data();
+                for (int i = 0; i < num_devices; ++i) {
+                  out[i] = nb::cast<int64_t>(device_list.GetItem(i).attr("id"));
+                }
+                return result;
+              }),
+          nb::arg("device_list"), nb::arg("num_replicas"),
+          nb::arg("num_partitions"))
       .def("replica_count", &DeviceAssignment::replica_count)
       .def("computation_count", &DeviceAssignment::computation_count)
       .def("__repr__", &DeviceAssignment::ToString)

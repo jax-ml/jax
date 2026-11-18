@@ -100,7 +100,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "device_test",
     srcs = ["device_test.py"],
-    deps = py_deps("absl/testing"),
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
@@ -1933,10 +1936,12 @@ jax_py_test(
     data = ["testdata/example_pjrt_plugin_config.json"],
     deps = [
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:compiler",
         "//jax/_src:test_util",
     ] + py_deps([
         "absl/logging",
+        "numpy",
     ]),
 )
 

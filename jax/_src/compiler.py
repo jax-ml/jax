@@ -198,10 +198,11 @@ def get_compile_options(
   Args:
     num_replicas: Number of replicas for which to compile.
     num_partitions: Number of partitions for which to compile.
-    device_assignment: Optional ndarray of jax devices indicating the assignment
-      of logical replicas to physical devices (default inherited from
-      xla_client.CompileOptions). Must be consistent with `num_replicas` and
-      `num_partitions`.
+    device_assignment: Optional ndarray or DeviceList of jax devices indicating
+      the assignment of logical replicas to physical devices (default inherited
+      from xla_client.CompileOptions). A DeviceList is flat and interpreted in
+      row-major `(num_replicas, num_partitions)` order. Must be consistent with
+      `num_replicas` and `num_partitions`.
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
@@ -218,27 +219,68 @@ def get_compile_options(
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if device_assignment is not None:
-    logger.debug(
-        'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
-        num_replicas, num_partitions, device_assignment)
-    device_assignment = np.array(device_assignment)
+    if isinstance(device_assignment, xc.DeviceList):
+      logger.debug(
+          "get_compile_options: num_replicas=%s num_partitions=%s"
+          " device_assignment=DeviceList(len=%d)",
+          num_replicas,
+          num_partitions,
+          len(device_assignment),
+      )
+      # Validate shape in Python to preserve ValueError consistent with the
+      # ndarray branch (DeviceAssignment.create raises JaxRuntimeError).
+      if (
+          num_replicas <= 0
+          or num_partitions <= 0
+          or len(device_assignment) != num_replicas * num_partitions
+      ):
+        raise ValueError(
+            f"device_assignment of length {len(device_assignment)} does not "
+            f"match num_replicas={num_replicas}, "
+            f"num_partitions={num_partitions}."
+        )
+      # TODO(garrisonhess): Remove fallback and pyrefly ignores once minimum
+      # jaxlib is >= 526 (CI runs Pyrefly against a pinned pre-526 jaxlib).
+      if lib.jaxlib_extension_version >= 526:
+        device_assignment = xc.DeviceAssignment.create(
+            device_assignment,  # pyrefly: ignore[bad-argument-type]
+            num_replicas,  # pyrefly: ignore[bad-argument-count]
+            num_partitions,
+        )
+      else:
+        device_ids = np.fromiter(
+            (d.id for d in device_assignment),
+            dtype=np.int32,
+            count=len(device_assignment),
+        ).reshape((num_replicas, num_partitions))
+        device_assignment = xc.DeviceAssignment.create(device_ids)
+    else:
+      logger.debug(
+          "get_compile_options: num_replicas=%s num_partitions=%s"
+          " device_assignment=%s",
+          num_replicas,
+          num_partitions,
+          device_assignment,
+      )
+      device_assignment = np.array(device_assignment)
 
-    # Allow 1D device assignment if num_partitions is 1.
-    if (device_assignment.ndim == 1) and (num_partitions == 1):
-      device_assignment = device_assignment[:, None]
+      # Allow 1D device assignment if num_partitions is 1.
+      if (device_assignment.ndim == 1) and (num_partitions == 1):
+        device_assignment = device_assignment[:, None]
 
-    if num_replicas != device_assignment.shape[0]:
-      msg = 'device_assignment does not match num_replicas: {} vs {}.'
-      raise ValueError(msg.format(device_assignment, num_replicas))
+      if num_replicas != device_assignment.shape[0]:
+        msg = "device_assignment does not match num_replicas: {} vs {}."
+        raise ValueError(msg.format(device_assignment, num_replicas))
 
-    if num_partitions != device_assignment.shape[1]:
-      msg = 'device_assignment does not match num_partitions: {} vs {}.'
-      raise ValueError(msg.format(device_assignment, num_partitions))
+      if num_partitions != device_assignment.shape[1]:
+        msg = "device_assignment does not match num_partitions: {} vs {}."
+        raise ValueError(msg.format(device_assignment, num_partitions))
 
-    if device_assignment.dtype == object:
-      device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
-          device_assignment)
-    device_assignment = xc.DeviceAssignment.create(device_assignment)
+      if device_assignment.dtype == object:
+        device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
+            device_assignment
+        )
+      device_assignment = xc.DeviceAssignment.create(device_assignment)
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
@@ -433,10 +475,21 @@ def register_xla_runtime_error_handler(
   _XLA_RUNTIME_ERROR_HANDLERS.append(handler_fn)
 
 
+def _is_multi_process(devices: np.ndarray | xc.DeviceList) -> bool:
+  if isinstance(devices, xc.DeviceList):
+    return len(devices.process_indices) > 1
+  return len({device.process_index for device in devices.flat}) > 1
+
+
+def _min_device_process_id(devices: np.ndarray | xc.DeviceList) -> int:
+  flat = devices.flat if isinstance(devices, np.ndarray) else devices
+  return min(flat, key=lambda device: device.id).process_index
+
+
 def compile_or_get_cached(
     backend: xc.Client,
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: np.ndarray | xc.DeviceList,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     executable_devices: xc.DeviceList,
@@ -448,13 +501,6 @@ def compile_or_get_cached(
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logger.info("Dumped the module to %s.", dumped_to)
 
-  is_multi_process = (
-      len({device.process_index for device in devices.flatten()}) > 1
-  )
-  min_device_process_id = min(
-      devices.flatten(), key=lambda device: device.id
-  ).process_index
-
   # cache_key: may be None if compilation caching is disabled
   cache_key, compile_options = _resolve_compilation_strategy(
     computation,
@@ -462,9 +508,7 @@ def compile_or_get_cached(
     compile_options,
     backend,
     pgle_profiler,
-    is_multi_process,
     module_name,
-    min_device_process_id,
   )
 
   if cache_key is None:
@@ -496,8 +540,8 @@ def compile_or_get_cached(
   util.test_event("compile_after_persistent_compilation_miss")
   if (
       config.share_binary_between_hosts.value
-      and is_multi_process
       and distributed.global_state.client is not None
+      and _is_multi_process(devices)
   ):
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
@@ -509,7 +553,7 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
-        min_device_process_id
+        _min_device_process_id(devices),
     )
   else:
     log_persistent_cache_miss(module_name, cache_key)
@@ -548,13 +592,11 @@ def compile_or_get_cached(
 # contention for CUPTI resources.
 def _resolve_compilation_strategy(
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: np.ndarray | xc.DeviceList,
     compile_options: xc.CompileOptions,
     backend: xc.Client,
     pgle_profiler: profiler.PGLEProfiler | None,
-    is_multi_process: bool,
     module_name: str,
-    min_device_process_id: int,
 ) -> tuple[str | None, xc.CompileOptions]:
   is_auto_pgle_used = (
       config.enable_pgle.value and config.pgle_profiling_runs.value > 0
@@ -608,16 +650,18 @@ def _resolve_compilation_strategy(
       and len(compile_options.executable_build_options.fdo_profile)):
     # Profile data are available to trigger a PGLE-optimized recompilation;
     # store under `pgle_optimized_cache_key` if the cache is enabled
-    if is_multi_process and distributed.global_state.client is not None:
+    if distributed.global_state.client is not None and _is_multi_process(
+        devices
+    ):
       compile_options.executable_build_options.fdo_profile = (
-        _share_fdo_profiles(
-            computation,
-            devices,
-            compile_options,
-            backend,
-            distributed.global_state.client,
-            min_device_process_id,
-        )
+          _share_fdo_profiles(
+              computation,
+              devices,
+              compile_options,
+              backend,
+              distributed.global_state.client,
+              _min_device_process_id(devices),
+          )
       )
     return pgle_optimized_cache_key, compile_options
   else:
@@ -625,12 +669,14 @@ def _resolve_compilation_strategy(
     # enabled. This is also the AutoPGLE-disabled path.
     return cache_key, first_pass_compile_options
 
+
 def _get_cache_key(
     options: xc.CompileOptions,
     backend: xc.Client,
     computation: ir.Module,
-    devices: np.ndarray,
-    override_fdo_profile: bytes | None = None) -> str | None:
+    devices: np.ndarray | xc.DeviceList,
+    override_fdo_profile: bytes | None = None,
+) -> str | None:
   if not compilation_cache.is_cache_used(backend):
     return None
   if override_fdo_profile is not None:
@@ -649,15 +695,16 @@ def _get_cache_key(
                   "skipping the cache: %s", ex)
   return None
 
+
 # The process that has the lowest device ID should share FDO profile before
 # compilation with other processes.
 def _share_fdo_profiles(
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: np.ndarray | xc.DeviceList,
     compile_options: xc.CompileOptions,
     backend: xc.Client,
     global_client: lib._jax.DistributedRuntimeClient,
-    min_process_id
+    min_process_id,
 ) -> bytes:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value

@@ -410,7 +410,7 @@ def put_executable_and_time(
 
 def get_cache_key(
     module: ir.Module,
-    devices: np.ndarray,
+    devices: np.ndarray | xla_client.DeviceList,
     compile_options,
     backend,
     ignore_custom_partitioning: bool = False,

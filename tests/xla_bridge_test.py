@@ -15,18 +15,22 @@
 import gc
 import os
 import platform
+import types
 
 from absl import logging
 from absl.testing import absltest
+import jax
 from jax import version
 from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.interpreters import pxla
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -120,6 +124,14 @@ class GpuPluginOptionsTest(jtu.JaxTestCase):
     self.assertEqual(options["memory_fraction_policy"], "0.75+")
 
 
+def _dummy_computation():
+  return (
+      jax.jit(lambda x: x + 1)
+      .lower(jax.ShapeDtypeStruct((1,), np.float32))
+      .compiler_ir("stablehlo")
+  )
+
+
 class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_set_device_assignment_no_partition(self):
@@ -133,6 +145,174 @@ class XlaBridgeTest(jtu.JaxTestCase):
         num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
     self.assertEqual(compile_options.device_assignment.replica_count(), 2)
     self.assertEqual(compile_options.device_assignment.computation_count(), 2)
+
+  @jtu.thread_unsafe_test()
+  def test_set_device_assignment_from_device_list(self):
+    # Non-square shape and non-monotonic IDs catch stride/transpose bugs on
+    # 1-device CPU.
+    fake_devices = tuple(
+        types.SimpleNamespace(id=i) for i in (10, 30, 20, 40, 50, 60)
+    )
+    device_list = xc.DeviceList(fake_devices)
+    ndarray_devices = np.array(fake_devices, dtype=object).reshape(2, 3)
+
+    def serialized_opts(replicas, partitions, da):
+      return compiler.get_compile_options(
+          num_replicas=replicas, num_partitions=partitions, device_assignment=da
+      ).SerializeAsString()
+
+    expected = serialized_opts(2, 3, ndarray_devices)
+    self.assertEqual(serialized_opts(2, 3, device_list), expected)
+
+    devices = xb.devices()
+    n = len(devices)
+    real_device_list = xc.DeviceList(tuple(devices))
+    expected_real = serialized_opts(
+        1, n, np.array(devices, dtype=object).reshape(1, n)
+    )
+    self.assertEqual(serialized_opts(1, n, real_device_list), expected_real)
+    with mock.patch.object(compiler.lib, "jaxlib_extension_version", 525):
+      self.assertEqual(serialized_opts(2, 3, device_list), expected)
+      self.assertEqual(serialized_opts(1, n, real_device_list), expected_real)
+
+    for bad_da, replicas, partitions in (
+        (device_list, 1, 5),
+        (device_list, 0, 6),
+        (device_list, 6, 0),
+        (device_list, -2, -3),
+        (xc.DeviceList(()), 1, 1),
+    ):
+      with self.assertRaisesRegex(ValueError, "does not match"):
+        compiler.get_compile_options(replicas, partitions, bad_da)
+
+  @jtu.thread_unsafe_test()
+  def test_create_compile_options_with_device_list(self):
+    devices = xb.devices()
+    device_list = xc.DeviceList(tuple(devices))
+    ndarray_devices = np.array(devices, dtype=object)
+    computation = _dummy_computation()
+    backend = xb.get_backend()
+
+    options_from_dl, options_from_ndarray = (
+        pxla.create_compile_options(
+            computation,
+            tuple_args=False,
+            allow_prop_to_inputs=(True,),
+            allow_prop_to_outputs=(True,),
+            backend=backend,
+            np_dev=np_dev,
+            compiler_options={},
+        )
+        for np_dev in (device_list, ndarray_devices)
+    )
+    self.assertEqual(
+        options_from_dl.SerializeAsString(),
+        options_from_ndarray.SerializeAsString(),
+    )
+
+    # Real unmocked cache_key.get parity between DeviceList and ndarray.
+    with mock.patch.object(
+        compiler.compilation_cache,
+        "is_cache_used",
+        autospec=True,
+        return_value=True,
+    ):
+      key_from_dl = compiler._get_cache_key(
+          options_from_dl, backend, computation, device_list
+      )
+      self.assertIsNotNone(key_from_dl)
+      self.assertEqual(
+          key_from_dl,
+          compiler._get_cache_key(
+              options_from_ndarray, backend, computation, ndarray_devices
+          ),
+      )
+
+  def test_lowered_compile_with_device_list(self):
+    devices = xb.devices()
+    device_list = xc.DeviceList(tuple(devices))
+    n = len(devices) * 2
+    mesh = jax.sharding.Mesh(np.array(devices), ("x",))
+    spec = jax.sharding.PartitionSpec("x")
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+    sds = jax.ShapeDtypeStruct(
+        (n,),
+        np.float32,
+        sharding=jax.sharding.NamedSharding(mesh.abstract_mesh, spec),
+    )
+    lowered = (
+        jax.jit(lambda x: x + 1)
+        .trace(sds)
+        .lower(lowering_platforms=(xb.get_backend().platform,))
+    )
+    compiled = lowered.compile(device_assignment=device_list)
+    arr = jax.device_put(np.arange(n, dtype=np.float32), sharding)
+    out = compiled(arr)
+    self.assertArraysEqual(out, arr + 1)
+    self.assertEqual(out.sharding, sharding)
+
+  @jtu.thread_unsafe_test()
+  def test_compile_or_get_cached_multi_process_sharing(self):
+    devices = xb.local_devices()
+    device_list = xc.DeviceList(tuple(devices))
+    computation = _dummy_computation()
+    backend = xb.get_backend()
+    compile_options = xc.CompileOptions()
+
+    multi_proc = tuple(
+        types.SimpleNamespace(id=i, process_index=p)
+        for i, p in ((5, 2), (1, 7), (3, 4))
+    )
+    single_proc = tuple(
+        types.SimpleNamespace(id=i, process_index=2) for i in (5, 1)
+    )
+    cases = (
+        (xc.DeviceList(multi_proc), True),
+        (np.array(multi_proc, dtype=object).reshape(1, 3), True),
+        (device_list, False),
+        (xc.DeviceList(single_proc), False),
+        (np.array(single_proc, dtype=object).reshape(2, 1), False),
+    )
+
+    with (
+        config.share_binary_between_hosts(True),
+        mock.patch.object(
+            compiler.distributed.global_state, "client", object()
+        ),
+        mock.patch.object(
+            compiler, "_get_cache_key", autospec=True, return_value="fake_key"
+        ),
+        mock.patch.object(
+            compiler, "_cache_read", autospec=True, return_value=(None, None)
+        ),
+        mock.patch.object(
+            compiler,
+            "_compile_and_share_module",
+            autospec=True,
+            return_value="shared",
+        ) as mock_share,
+        mock.patch.object(
+            compiler,
+            "_compile_and_write_cache",
+            autospec=True,
+            return_value="cached",
+        ) as mock_write,
+    ):
+      for devices_arg, expect_share in cases:
+        mock_share.reset_mock()
+        mock_write.reset_mock()
+        result = compiler.compile_or_get_cached(
+            backend, computation, devices_arg, compile_options, (), device_list
+        )
+        if expect_share:
+          self.assertEqual(result, "shared")
+          mock_share.assert_called_once()
+          self.assertEqual(mock_share.call_args.args[-1], 7)
+          mock_write.assert_not_called()
+        else:
+          self.assertEqual(result, "cached")
+          mock_write.assert_called_once()
+          mock_share.assert_not_called()
 
   def test_set_fdo_profile(self):
     compile_options = compiler.get_compile_options(
