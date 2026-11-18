@@ -158,6 +158,8 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/executable_run_options.h"
+#include "xla/ffi/api/kernel_api.h"
+#include "xla/ffi/api/kernel_c_api.h"
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
@@ -1006,6 +1008,38 @@ struct InitResult {
   CUfunction function;
 };
 
+// Checks that `device` can run a kernel that uses multimem instructions.
+absl::Status ValidateMultimemSupport(const CompiledKernel& kernel,
+                                     CUdevice device) {
+  int supports_multicast;
+  CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
+      &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
+  if (supports_multicast == 0) {
+    return absl::FailedPreconditionError(
+        "System does not support multicast memory; multimem instructions "
+        "cannot be used.");
+  }
+
+  if (kernel.is_nvshmem_used) {
+    int nvshmem_world_size = NvshmemApi::Default().n_pes();
+    // multimem instructions require multicast memory; mgpu will emit
+    // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
+    // addresses, which will return nullptr and lead to memory errors if
+    // multicast is not supported on the device
+    // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
+    // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
+    if (nvshmem_world_size == 1) {
+      // There is only one device, so NVSHMEM will not configure multicast
+      // mappings and nvshmemx_mc_ptr will return nullptr.
+      return absl::FailedPreconditionError(
+          "Multicast memory mappings are not configured with only one "
+          "device; multimem instructions cannot be used.");
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
@@ -1016,32 +1050,7 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_multimem_used) {
     CUdevice device;
     CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
-    int supports_multicast;
-    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
-        &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
-    if (supports_multicast == 0) {
-      return absl::FailedPreconditionError(
-          "System does not support multicast memory; multimem instructions "
-          "cannot be used.");
-    }
-
-    if (kernel.is_nvshmem_used) {
-      int nvshmem_world_size = NvshmemApi::Default().n_pes();
-      // multimem instructions require multicast memory; mgpu will emit
-      // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
-      // addresses, which will return nullptr and lead to memory errors if
-      // multicast is not supported on the device
-      // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
-      // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
-      // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
-      if (nvshmem_world_size == 1) {
-        // There is only one device, so NVSHMEM will not configure multicast
-        // mappings and nvshmemx_mc_ptr will return nullptr.
-        return absl::FailedPreconditionError(
-            "Multicast memory mappings are not configured with only one "
-            "device; multimem instructions cannot be used.");
-      }
-    }
+    RETURN_IF_ERROR(ValidateMultimemSupport(kernel, device));
   }
   CUmodule module = nullptr;
   CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
@@ -1503,20 +1512,6 @@ absl::Status MosaicGpuPrepare(
   // lazily initialize library handles/plans (e.g. cuBLAS, cuSOLVER, or cuDNN),
   // or load a CUDA module on first execute.
   command_buffer_requests->SetRequiresWarmup(false);
-  // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
-  // CUDA has a system-wide mutex around this call which can cause a deadlock
-  // if user tries to load the module on one GPU while another GPU is executing
-  // the same module. To prevent this we need to initialize all modules used
-  // by several devices before the first execution.
-  // See more details:
-  // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html#impact-on-concurrent-kernel-execution
-  // This operation should be done at Prepare stage since XLA launches a
-  // rendez-vous between Prepare and Initialize, which we need here to make sure
-  // that modules were loaded on all devices before the first execution.
-  DeviceState& device_state =
-      GetDeviceState(resources, collective_params->local_device_id.value());
-  ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
-  CHECK(device_state.kernel_handle != nullptr);
 
   if (!resources->uses_xla_collective_metadata) {
     return absl::OkStatus();
@@ -1562,6 +1557,8 @@ absl::Status MosaicGpuPrepare(
       buffers.size() + (use_barrier_semaphores ? 1 : 0);
   const size_t metadata_size =
       GetCollectiveMetadataSize(num_metadata_buffers, clique_key.num_devices());
+  DeviceState& device_state =
+      GetDeviceState(resources, collective_params->local_device_id.value());
   if (device_state.metadata_handle.is_null()) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "Allocating device memory for Mosaic GPU collective metadata";
@@ -1576,20 +1573,12 @@ absl::Status MosaicGpuPrepare(
   return absl::OkStatus();
 }
 
-absl::Status MosaicGpuInitialize(
+absl::Status InitializeCollectiveMetadata(
     se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
     xla::gpu::CollectiveCliques* collective_cliques,
     const xla::gpu::CollectiveMemory* collective_memory,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources) {
-  TF_RET_CHECK(resources != nullptr)
-      << "resources must not be null in MosaicGpuInitialize";
-  if (!resources->uses_xla_collective_metadata) {
-    // If the kernel does not use collective metadata, we can skip the
-    // initialization.
-    return absl::OkStatus();
-  }
-
   const char* xla_flags = getenv("XLA_FLAGS");
   if (xla_flags &&
       absl::StrContains(xla_flags, "xla_gpu_experimental_enable_nvshmem") &&
@@ -1807,8 +1796,8 @@ absl::StatusOr<
 BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
                 const xla::gpu::CollectiveCliques* collective_cliques,
                 ffi::RemainingArgs inputs, ffi::RemainingRets results,
-                const CustomCallResources& resources, DeviceState& device_state,
-                int device_ordinal) {
+                const CustomCallResources& resources,
+                DeviceState& device_state) {
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
   bool uses_collective_metadata = resources.uses_xla_collective_metadata;
@@ -1831,9 +1820,6 @@ BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
 
     se::DeviceAddressBase metadata_address =
         device_state.metadata_handle.cref();
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Using collective metadata address: " << metadata_address.opaque()
-        << " clique_key: " << clique_key;
 
     // Appending both the device and the host-side collective metadata.
     // The host-side metadata is needed for TMA initialization.
@@ -1868,30 +1854,40 @@ BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
   return std::make_pair(std::move(cfg), comm);
 }
 
-absl::Status MosaicGpuRecord(
+absl::Status MosaicGpuInitialize(
     se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
-    const xla::gpu::CollectiveCliques* collective_cliques,
-    ffi::RecordContext record_ctx, ffi::RemainingArgs inputs,
-    ffi::RemainingRets results, CustomCallResources* resources) {
-  tsl::profiler::TraceMe trace("MosaicGpuRecord");
-  CompiledKernel* kernel = resources->kernel;
+    xla::gpu::CollectiveCliques* collective_cliques,
+    const xla::gpu::CollectiveMemory* collective_memory,
+    ffi::RemainingArgs inputs, ffi::RemainingRets results,
+    CustomCallResources* resources) {
+  TF_RET_CHECK(resources != nullptr)
+      << "resources must not be null in MosaicGpuInitialize";
+  TF_RET_CHECK(stream != nullptr)
+      << "stream must not be null in MosaicGpuInitialize";
+  if (resources->uses_xla_collective_metadata) {
+    RETURN_IF_ERROR(InitializeCollectiveMetadata(
+        stream, collective_params, collective_cliques, collective_memory,
+        inputs, results, resources));
+  }
+
+  // Module initialization calls cuModuleLoadData, which takes the per-context
+  // write lock and implicitly synchronizes the context. Doing this during
+  // execution can deadlock with concurrent collective kernels on the same
+  // device
+  // (https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html#impact-on-concurrent-kernel-execution).
+  // Initializing here ensures all devices finish loading before XLA's
+  // post-initialize rendezvous and before any device starts executing.
   const int device_ordinal = stream->parent()->device_ordinal();
-  XLA_VLOG_DEVICE(5, device_ordinal)
-      << "MosaicGpuRecord called for " << kernel->kernel_name << " with "
-      << record_ctx.action();
-  absl::Cleanup cleanup = [&] {
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "MosaicGpuRecord finished for " << kernel->kernel_name << " with "
-        << record_ctx.action();
-  };
-
   DeviceState& device_state = GetDeviceState(resources, device_ordinal);
-  ASSIGN_OR_RETURN(
-      (auto [cfg, comm]),
-      BuildKernelSpec(collective_params, collective_cliques, inputs, results,
-                      *resources, device_state, device_ordinal));
+  ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
+  CHECK(device_state.kernel_handle != nullptr);
+  return absl::OkStatus();
+}
 
-  // Translate from MosaicKernelSpec to ffi::KernelArg.
+// Host values in the returned args point into `cfg.host_bytes`, so `cfg` must
+// outlive them and stay unchanged.
+std::pair<llvm::SmallVector<ffi::KernelArg, 8>, XLA_FFI_LaunchDims>
+BuildKernelArgsAndDims(const mosaic::gpu::MosaicKernelSpec& cfg) {
   llvm::SmallVector<ffi::KernelArg, 8> kernel_args;
   kernel_args.reserve(cfg.args.size());
   for (const auto& arg : cfg.args) {
@@ -1914,10 +1910,41 @@ absl::Status MosaicGpuRecord(
       /*cluster=*/
       {static_cast<int32_t>(cfg.cluster.x), static_cast<int32_t>(cfg.cluster.y),
        static_cast<int32_t>(cfg.cluster.z)}};
+  return {std::move(kernel_args), dims};
+}
+
+absl::Status MosaicGpuRecord(
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
+    ffi::RecordContext record_ctx, ffi::RemainingArgs inputs,
+    ffi::RemainingRets results, CustomCallResources* resources) {
+  tsl::profiler::TraceMe trace("MosaicGpuRecord");
+  CompiledKernel* kernel = resources->kernel;
+  const int device_ordinal = stream->parent()->device_ordinal();
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "MosaicGpuRecord called for " << kernel->kernel_name << " with "
+      << record_ctx.action();
+  absl::Cleanup cleanup = [&] {
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "MosaicGpuRecord finished for " << kernel->kernel_name << " with "
+        << record_ctx.action();
+  };
+
+  DeviceState& device_state = GetDeviceState(resources, device_ordinal);
+  if (resources->uses_xla_collective_metadata) {
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Using collective metadata address: "
+        << device_state.metadata_handle.cref().opaque();
+  }
+  ASSIGN_OR_RETURN((auto [cfg, comm]),
+                   BuildKernelSpec(collective_params, collective_cliques,
+                                   inputs, results, *resources, device_state));
+
+  auto [kernel_args, dims] = BuildKernelArgsAndDims(cfg);
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
-        << "InternalError: kernel_handle is null; MosaicGpuPrepare must run "
+        << "InternalError: kernel_handle is null; MosaicGpuInitialize must run "
            "before MosaicGpuRecord";
     llvm::SmallVector<const XLA_FFI_Command*, 1> dependencies;
     if (comm != nullptr) {
@@ -1970,11 +1997,15 @@ absl::Status MosaicGpuExecute(
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
   int device_ordinal = collective_params->global_device_id.value();
+  if (resources->uses_xla_collective_metadata) {
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Using collective metadata address: "
+        << device_state.metadata_handle.cref().opaque();
+  }
 
-  ASSIGN_OR_RETURN(
-      (auto [cfg, comm]),
-      BuildKernelSpec(collective_params, collective_cliques, inputs, results,
-                      *resources, device_state, device_ordinal));
+  ASSIGN_OR_RETURN((auto [cfg, comm]),
+                   BuildKernelSpec(collective_params, collective_cliques,
+                                   inputs, results, *resources, device_state));
 
   if (comm != nullptr) {
     XLA_VLOG_DEVICE(6, device_ordinal) << "Starting multi-GPU barrier";
@@ -1982,6 +2013,10 @@ absl::Status MosaicGpuExecute(
     RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
     XLA_VLOG_DEVICE(6, device_ordinal) << "Finished multi-GPU barrier";
   }
+
+  TF_RET_CHECK(device_state.kernel_handle != nullptr)
+      << "InternalError: kernel_handle is null; MosaicGpuInitialize must run "
+         "before MosaicGpuExecute";
 
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuExecute launching kernel with name: " << kernel->kernel_name

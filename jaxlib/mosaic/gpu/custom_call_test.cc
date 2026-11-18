@@ -454,7 +454,7 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                                           serialized, std::nullopt, {}));
     EXPECT_OK(ExecuteSync(executable1.get()));
     std::vector<std::string> logs = collector.Stop();
-    // Should not hit the cache during Prepare.
+    // Should not hit the cache during Initialize.
     EXPECT_THAT(logs, Not(Contains("Found Mosaic GPU kernel in cache")));
     EXPECT_THAT(logs,
                 Not(Contains(
