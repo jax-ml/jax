@@ -417,6 +417,7 @@ def _broadcast_input_output_aliases(
 
 
 def _batch_with_explicit_loop(
+    axis_size: int,
     args: Sequence[jax_typing.Array],
     dims: Sequence[int | batching.NotMapped],
     *,
@@ -443,15 +444,6 @@ def _batch_with_explicit_loop(
   to the current iteration index and dynamic_updates an (initially empty) output
   allocation.
   """
-  if not dims:
-    raise NotImplementedError("vmapping pallas_call with no arguments.")
-
-  (axis_size,) = {
-      arg.shape[dim]
-      for arg, dim in zip(args, dims)
-      if dim is not None
-  }
-
   args, dims = _broadcast_input_output_aliases(
       args,
       dims,
@@ -619,6 +611,7 @@ def _pallas_call_batching_rule(
     if ema:
       raise NotImplementedError()
     return _batch_with_explicit_loop(
+        axis_size=axis_size,
         args=dynamic_grid_args + args,
         dims=dynamic_grid_dims + dims,
         jaxpr=jaxpr,
@@ -657,6 +650,7 @@ def _pallas_call_batching_rule(
       if ema:
         raise NotImplementedError()
       return _batch_with_explicit_loop(
+          axis_size=axis_size,
           args=scalar_args + args,
           dims=scalar_bdims + bdims,
           jaxpr=jaxpr,
