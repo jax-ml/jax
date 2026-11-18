@@ -2919,9 +2919,12 @@ def _emit_pipeline_lowering_rule(
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
   # Check that the index_maps jaxpr or consts are not high.
-  if (any(bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings)
-      or any(any(c.is_high for c in bm.index_map_jaxpr.consts)
-             for bm in grid_mapping.block_mappings)):
+  if any(
+      bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings
+  ) or any(
+      any(jax_core.typeof(c).is_high for c in bm.index_map_jaxpr.consts)
+      for bm in grid_mapping.block_mappings
+  ):
     raise NotImplementedError("Grid mapping with hijax index maps are not"
                               f" currently supported. Got {grid_mapping=}")
 
