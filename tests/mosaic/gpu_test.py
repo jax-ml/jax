@@ -2571,25 +2571,19 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       n=(64, 128, 192, 256),
-      scale_jax_dtype_and_block_size=(
-          (jnp.float8_e8m0fnu, 16),
-          (jnp.float8_e8m0fnu, 32),
-          (jnp.float8_e4m3fn, 16),
-          (jnp.float8_e4m3fn, 32),
-          *(
-              [(jnp.float8_e5m3fnu, 16), (jnp.float8_e5m3fnu, 32)]
-              if dtypes.float8_e5m3fnu is not None
-              else []
-          ),
+      scale_jax_dtype=(
+          jnp.float8_e8m0fnu,
+          jnp.float8_e4m3fn,
+          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
       ),
+      block_size=(16, 32),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_fp4_k_steps(
-      self, n, scale_jax_dtype_and_block_size, k_steps
+      self, n, scale_jax_dtype, block_size, k_steps
   ):
     # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
     # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
-    scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
     self._run_mma_block_scaled(
         m=128,
         n=n,
@@ -3001,20 +2995,15 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       n=(64, 128, 192, 256),
-      scale_jax_dtype_and_block_size=(
-          (jnp.float8_e8m0fnu, 16),
-          (jnp.float8_e8m0fnu, 32),
-          (jnp.float8_e4m3fn, 16),
-          (jnp.float8_e4m3fn, 32),
-      ),
+      scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      block_size=(16, 32),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_collective_fp4_k_steps(
-      self, n, scale_jax_dtype_and_block_size, k_steps
+      self, n, scale_jax_dtype, block_size, k_steps
   ):
     # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
     # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
-    scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
     if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
       self.skip_unless_sm107f()
     self._run_mma_block_scaled_collective(
