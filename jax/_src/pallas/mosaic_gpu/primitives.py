@@ -4955,7 +4955,10 @@ def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
         "Must signal int32 values, but got"
         f" {[aval.dtype for aval in value_avals]}"
     )
-  effs = set()
+  effs: set[jax_core.Effect] = {
+      pallas_primitives.sem_effect,
+      *(state.WriteEffect(i) for i in range(len(sem_avals))),
+  }
   for device_id in device_id_avals:
     if device_id is not None:
       device_id_flat_avals = tree_util.tree_leaves(device_id)
@@ -5803,7 +5806,11 @@ def _semaphore_signal_multicast_abstract_eval(
   pallas_primitives.check_sem_avals(
       sem_aval, transform_avals, "semaphore_signal_multicast"
   )
-  return (), {pallas_core.comms_effect}
+  return (), {
+      pallas_primitives.sem_effect,
+      pallas_core.comms_effect,
+      state.WriteEffect(0),
+  }
 
 
 @lowering.register_lowering_rule(
@@ -6151,6 +6158,8 @@ prod = functools.partial(_reduce, reduce_prod_p)
 
 
 get_barrier_semaphore_p = jax_core.Primitive("get_barrier_semaphore")
+get_barrier_semaphore_p.ref_primitive = True
+get_barrier_semaphore_p.ref_allocating = True
 
 
 @get_barrier_semaphore_p.def_abstract_eval

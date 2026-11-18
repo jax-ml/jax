@@ -11121,6 +11121,28 @@ class SemaphoreTest(PallasTest):
 
     np.testing.assert_array_equal(run(), jnp.array([3, 7], jnp.int32))
 
+  def test_persistent_semaphore_across_kernels(self):
+    @self.kernel()
+    def signal_kernel(sem_ref):
+      pl.semaphore_signal(sem_ref, inc=3)
+
+    @self.kernel()
+    def wait_kernel(sem_ref):
+      pl.semaphore_wait(sem_ref, value=2)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((), jnp.int32))
+    def read_kernel(sem_ref, out_ref):
+      out_ref[...] = pl.semaphore_read(sem_ref)
+
+    @jax.jit
+    def run():
+      sem = plgpu.alloc_semaphore(())
+      signal_kernel(sem)
+      wait_kernel(sem)
+      return read_kernel(sem)
+
+    np.testing.assert_array_equal(run(), jnp.int32(1))
+
   def test_kernel_rejects_semaphore_array_operand(self):
     @self.kernel(
         out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
