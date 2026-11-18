@@ -116,9 +116,12 @@ def get(
           lambda hash_obj: _hash_serialized_compile_options(
               hash_obj,
               compile_options,
-              # In case of GPU multi-process tasks we need to strip device
+              # In case of multi-process tasks we need to strip device
               # assignment to use cache key as invariant between processes.
-              strip_device_assignment=(backend.platform == "gpu"),
+              # Single-device compilations otherwise pin the compiling
+              # process's local device (e.g. CPU device id 0 vs 2048), so
+              # processes in one job compute different cache keys.
+              strip_device_assignment=(backend.platform in ("gpu", "cpu")),
           ),
       ),
       (
@@ -267,13 +270,210 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
+# The type URL of the platform-specific topology embedded in a
+# PjRtTopologyDescriptionProto for CPU (xla.CpuTopologyProto, see
+# xla/pjrt/plugin/xla_cpu/cpu_topology.proto).
+_CPU_TOPOLOGY_TYPE_URL = b"type.googleapis.com/xla.CpuTopologyProto"
+
+
+def _read_protobuf_varint(data: bytes, pos: int) -> tuple[int, int]:
+  result = 0
+  shift = 0
+  while True:
+    if pos >= len(data):
+      raise ValueError("truncated varint")
+    byte = data[pos]
+    pos += 1
+    result |= (byte & 0x7F) << shift
+    if not (byte & 0x80):
+      return result, pos
+    shift += 7
+    if shift >= 70:
+      raise ValueError("varint too long")
+
+
+def _encode_protobuf_varint(value: int) -> bytes:
+  out = bytearray()
+  while True:
+    byte = value & 0x7F
+    value >>= 7
+    if value:
+      out.append(byte | 0x80)
+    else:
+      out.append(byte)
+      return bytes(out)
+
+
+def _parse_protobuf_fields(
+    data: bytes,
+) -> list[tuple[int, int, bytes]]:
+  """Parse protobuf wire format into (field number, wire type, value) triples.
+
+  The value is the raw value bytes, excluding the tag: the varint bytes for
+  varint fields, the payload for length-delimited fields, and the raw bytes
+  for fixed32/fixed64 fields. Raises ValueError on malformed input.
+  """
+  fields = []
+  pos = 0
+  while pos < len(data):
+    tag, pos = _read_protobuf_varint(data, pos)
+    field_no, wire_type = tag >> 3, tag & 7
+    if field_no == 0:
+      raise ValueError("field number 0")
+    if wire_type == 0:
+      start = pos
+      _, pos = _read_protobuf_varint(data, pos)
+      fields.append((field_no, wire_type, data[start:pos]))
+    elif wire_type == 2:
+      length, pos = _read_protobuf_varint(data, pos)
+      if pos + length > len(data):
+        raise ValueError("truncated length-delimited field")
+      fields.append((field_no, wire_type, data[pos:pos + length]))
+      pos += length
+    elif wire_type == 1:
+      if pos + 8 > len(data):
+        raise ValueError("truncated fixed64 field")
+      fields.append((field_no, wire_type, data[pos:pos + 8]))
+      pos += 8
+    elif wire_type == 5:
+      if pos + 4 > len(data):
+        raise ValueError("truncated fixed32 field")
+      fields.append((field_no, wire_type, data[pos:pos + 4]))
+      pos += 4
+    else:
+      raise ValueError(f"unsupported wire type {wire_type}")
+  return fields
+
+
+def _encode_protobuf_fields(fields: list[tuple[int, int, bytes]]) -> bytes:
+  out = bytearray()
+  for field_no, wire_type, value in fields:
+    out += _encode_protobuf_varint((field_no << 3) | wire_type)
+    if wire_type == 2:
+      out += _encode_protobuf_varint(len(value))
+    out += value
+  return bytes(out)
+
+
+def _strip_cpu_topology_process_index(serialized: bytes) -> bytes | None:
+  """Remove CpuDevice process_index fields from a serialized topology.
+
+  The CPU topology (xla.CpuTopologyProto) lists one CpuDevice per local
+  device, each carrying the process_index of the process that owns it. Two
+  processes in one multi-process job therefore serialize different
+  topologies for identical hardware, and their topology fingerprints (and
+  hence their compilation cache keys) differ. The process_index identifies
+  *which* process a device belongs to, not *how* to compile for it -- the
+  compilation-relevant machine description (target_machine_options: CPU
+  model and features) is preserved -- so it is stripped here, making the
+  topology fingerprint invariant between processes.
+
+  Returns the canonicalized bytes, or None if the input does not contain a
+  CPU topology (other platforms are unaffected) or fails to parse.
+  """
+  try:
+    outer_fields = _parse_protobuf_fields(serialized)
+  except ValueError:
+    return None
+  found_cpu_topology = False
+  new_outer_fields = []
+  for field_no, wire_type, value in outer_fields:
+    if wire_type == 2:
+      try:
+        new_value = _strip_cpu_topology_any(value)
+      except ValueError:
+        return None
+      if new_value is not None:
+        found_cpu_topology = True
+        value = new_value
+    new_outer_fields.append((field_no, wire_type, value))
+  if not found_cpu_topology:
+    return None
+  return _encode_protobuf_fields(new_outer_fields)
+
+
+def _strip_cpu_topology_any(value: bytes) -> bytes | None:
+  """Strip process_index from a google.protobuf.Any holding a CPU topology.
+
+  Returns the re-encoded Any, or None if the value is not a CPU topology
+  Any. Raises ValueError if it is a CPU topology Any that fails to parse.
+  """
+  try:
+    fields = _parse_protobuf_fields(value)
+  except ValueError:
+    return None
+  type_url = None
+  topology_value = None
+  topology_index = None
+  for i, (field_no, wire_type, field_value) in enumerate(fields):
+    if field_no == 1 and wire_type == 2:
+      type_url = field_value
+    elif field_no == 2 and wire_type == 2:
+      topology_value = field_value
+      topology_index = i
+  if type_url != _CPU_TOPOLOGY_TYPE_URL or topology_value is None:
+    return None
+  new_fields = list(fields)
+  new_fields[topology_index] = (
+      2,
+      2,
+      _strip_cpu_devices_process_index(topology_value),
+  )
+  return _encode_protobuf_fields(new_fields)
+
+
+def _strip_cpu_devices_process_index(topology_value: bytes) -> bytes:
+  """Return a CpuTopologyProto with CpuDevice.process_index removed."""
+  fields = _parse_protobuf_fields(topology_value)
+  new_fields = []
+  for field_no, wire_type, value in fields:
+    if field_no == 1 and wire_type == 2:
+      # A CpuDevice entry. Field 2 is process_index; dropping it is
+      # equivalent to process_index 0, which proto3 omits on serialization.
+      device_fields = _parse_protobuf_fields(value)
+      value = _encode_protobuf_fields(
+          [(f, w, v) for (f, w, v) in device_fields if f != 2]
+      )
+    new_fields.append((field_no, wire_type, value))
+  return _encode_protobuf_fields(new_fields)
+
+
+def _canonical_topology_fingerprint(topology) -> int:
+  """Fingerprint of a topology, canonicalized across processes.
+
+  Falls back to topology.fingerprint() when the topology is not a CPU
+  topology or cannot be canonicalized. Canonicalization is a no-op for
+  topologies whose process_index fields are already 0 (e.g. single-process
+  runs), so their cache keys are unchanged.
+  """
+  try:
+    serialized = topology.serialize()
+  except Exception:
+    return topology.fingerprint()
+  canonical = _strip_cpu_topology_process_index(serialized)
+  if canonical is None or canonical == serialized:
+    return topology.fingerprint()
+  try:
+    return type(topology).deserialize(canonical).fingerprint()
+  except Exception:
+    logger.debug(
+        "get (_canonical_topology_fingerprint): unable to fingerprint "
+        "canonicalized topology, falling back to topology fingerprint"
+    )
+    return topology.fingerprint()
+
+
 def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
   try:
     topology = xla_client.get_topology_for_devices(accelerator_devices)
-    hash_obj.update(topology.fingerprint().to_bytes(8, byteorder="big"))
+    hash_obj.update(
+        _canonical_topology_fingerprint(topology).to_bytes(
+            8, byteorder="big"
+        )
+    )
   except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized
     # PjRtTopologyDescription as yet.
