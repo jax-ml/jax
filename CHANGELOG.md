@@ -17,95 +17,503 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
-  * Added a `with_logs` option to {func}`jax.grad` and
+* Breaking changes
+* Deprecations
+* Changes
+* Bug fixes
+
+## JAX 0.12.1 (November 18, 2026)
+
+* New features
+  * Pallas APIs are now available under `jax.pallas` (`jax.pallas`,
+    `jax.pallas.tpu`, `jax.pallas.tpu_sc`, `jax.pallas.mosaic_gpu`, and
+    `jax.pallas.fuser`, via explicit `import jax.pallas`). Existing imports from
+    `jax.experimental.pallas` remain valid, while `triton` and `ops` stay under
+    `jax.experimental.pallas`. See {ref}`pallas-changelog` for Pallas-specific
+    changes.
+  * Added a keyword-only `with_logs` option to {func}`jax.grad` and
     {func}`jax.value_and_grad`, returning backward-pass logs alongside
-    gradients without calling {func}`jax.vjp` directly.
-  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
-    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
-    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
-    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
-  * When neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
-    `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, the GPU client now selects XLA's
-    `0.75+` memory policy. The default preallocated spatial BFC pool starts at
-    75% of total GPU memory and can grow for ordinary buffers as needed, up to
-    available device memory. Set `XLA_CLIENT_MEM_FRACTION=0.75` to retain the
-    previous fixed limit. Explicit XLA memory-policy flags take precedence;
-    allocator modes that do not support growth retain their existing behavior.
-  * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
-    to specify device-local layouts (such as linear layout `tiling=((1,),)` for
-    `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
-  * Added {func}`jax.scipy.special.gammaincinv` and
-    {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
-    incomplete gamma functions, with gradients with respect to both arguments.
-  * Added {func}`jax.scipy.special.jn`, {func}`jax.scipy.special.yn`,
-    {func}`jax.scipy.special.iv`, and {func}`jax.scipy.special.kn`,
-    providing accurate evaluation of integer-order Bessel functions and
-    modified Bessel functions of the first and second kind.
+    gradients without calling {func}`jax.vjp` directly. With `with_logs=True`,
+    `grad` returns `(grad, logs)` (or `(grad, aux, logs)` when `has_aux=True`),
+    and `value_and_grad` returns `(val, (grad, logs))` (or
+    `((val, aux), (grad, logs))`).
+  * Added `jax.avals` (along with `Mesh.axes` and `AbstractMesh.axes`) for
+    concise construction of abstract array types (`ShapedArray`) with
+    optional sharding annotations, such as `f32[3@X]` and `f32[()]`.
+  * On Python 3.14 and later, {func}`jax.debug.print` now accepts PEP 750
+    template strings (for example, `jax.debug.print(t"hello {x}")`)
+    ({jax-issue}`#41565`).
+  * Added `F8E4M3FN_F8E4M3FN_F32_X3` and `F8E4M3FN_F8E4M3FN_F32_X4` to
+    {class}`jax.lax.DotAlgorithmPreset` (and `jax_default_matmul_precision`)
+    for emulating `bfloat16` precision matrix multiplications on `bfloat16` or
+    `float32` inputs using 3 or 4 `float8_e4m3fn` products accumulated in
+    `float32`.
+  * Added CPU support for `jax.lax.DotAlgorithmPreset.F16_F16_F32`, fixing
+    {func}`jax.nn.dot_product_attention` with `implementation="xla"` and
+    `float16` inputs under `jit` and `grad` on CPU.
+  * Added {func}`jax.lax.fma` and {func}`jax.lax.fmuladd` for fused
+    multiply-add (`a * b + c`). `fma` performs a single-rounding fused
+    multiply-add where supported; `fmuladd` uses fused multiply-add when
+    available and falls back safely otherwise ({jax-issue}`#23919`).
+    {func}`jax.lax.polynomial` now uses `fmuladd` for floating-point evaluation.
   * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
     {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
     `tan(pi * x)` more accurately than multiplying by `pi` first. They return
     exact values at integers and half-integers and stay accurate for large
-    inputs.
-  * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
-    {func}`jax.scipy.special.log_ndtr`, with custom forward- and reverse-mode
-    derivatives.
+    inputs. Window functions ({func}`jax.numpy.blackman`,
+    {func}`jax.numpy.hamming`, {func}`jax.numpy.hanning`),
+    {func}`jax.scipy.signal.stft`, {func}`jax.scipy.special.fresnel`, and
+    Lanczos {func}`jax.image.resize` now use them for better accuracy.
   * Added {func}`jax.lax.asinpi`, {func}`jax.lax.acospi`,
     {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
     inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
     `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
   * Added {func}`jax.lax.exp2m1` and {func}`jax.lax.log2p1`, which compute
     `2**x - 1` and `log2(1 + x)` without losing precision near `x = 0`.
+  * Added {func}`jax.scipy.special.gammaincinv` and
+    {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
+    lower and upper incomplete gamma functions, with gradients with respect to
+    both arguments ({jax-issue}`#5350`).
+  * Added {func}`jax.scipy.special.jn`, {func}`jax.scipy.special.yn`,
+    {func}`jax.scipy.special.iv`, and {func}`jax.scipy.special.kn`, providing
+    accurate evaluation of integer-order Bessel functions and modified Bessel
+    functions of the first and second kind (for static integer orders, with
+    support for real and complex inputs and automatic differentiation).
+  * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
+    {func}`jax.scipy.special.log_ndtr` (`ndtri(exp(y))` without underflow or
+    cancellation in log-probability space), supporting accurate forward-,
+    reverse-, and higher-order differentiation.
+  * {func}`jax.numpy.histogram_bin_edges` and {func}`jax.numpy.histogram` now
+    accept `bins="sqrt"` and `bins="sturges"` to choose bin counts
+    automatically, matching NumPy ({jax-issue}`#42199`).
+  * Added the keyword-only `device` argument to {func}`jax.numpy.logspace` and
+    {func}`jax.numpy.geomspace` ({jax-issue}`#41659`).
+  * Added the keyword-only `correction` argument (NumPy 2.0 alias for `ddof`)
+    to {func}`jax.numpy.nanvar` and {func}`jax.numpy.nanstd`
+    ({jax-issue}`#41696`).
+  * Added an optional `mode` keyword argument to {func}`jax.random.normal`
+    (controlled by the new `jax_random_normal_mode` config option, default
+    `"low"`). `"low"` keeps existing behavior (truncating around ±5.3 standard
+    deviations in `float32`); `"high"` uses more random bits per sample (~±6.3
+    in `float32`, ±9.4 in `float64`), and `"highest"` uses two random streams
+    to reach roughly ±9.1 in `float32` without enabling `x64`.
+  * Added an optional keyword-only `mode` argument to
+    {func}`jax.random.truncated_normal` (default `"low"`). Setting `mode="high"`
+    improves tail accuracy and eliminates boundary clamping spikes at extreme
+    truncation bounds and in 16-bit floating-point types.
+  * Added a keyword-only `num_streams` argument to {func}`jax.random.bits` to
+    generate a tuple of `1`, `2`, or `4` independent unsigned integer arrays in
+    parallel from the underlying generator's native bit streams.
+  * Added optional `out_sharding` support to {func}`jax.lax.scatter` (and
+    `scatter_add`, `scatter_sub`, `scatter_mul`, `scatter_min`, `scatter_max`,
+    `scatter_apply`), {func}`jax.lax.gather`, {func}`jax.numpy.take`
+    (`Array.take`), {func}`jax.numpy.take_along_axis`, {func}`jax.numpy.sum`,
+    {func}`jax.numpy.max`, {func}`jax.numpy.quantile`,
+    {func}`jax.numpy.nanquantile`, and {func}`jax.numpy.nanpercentile` (and
+    native pass-through in {func}`jax.numpy.percentile`).
+  * {func}`jax.lax.top_k`, {func}`jax.lax.approx_max_k`, and
+    {func}`jax.lax.approx_min_k` now support sharded reduction axes under
+    explicit sharding.
+  * {func}`jax.dlpack.from_dlpack` (and {func}`jax.numpy.from_dlpack`) now
+    accept `jax.experimental.layout.Format` in their `device` argument to
+    specify device-local layouts (such as a linear layout `tiling=((1,),)` for
+    TPU pinned host memory buffers, `kDLTPUHost`; `Layout.AUTO` is not
+    supported). When `copy=None`, importing `kDLTPUHost` buffers now falls back
+    to copying if zero-copy sharing is not possible.
+  * {func}`jax.experimental.serialize_executable.serialize` now supports saving
+    and loading compiled functions that capture large constant arrays (see
+    Breaking changes regarding format version).
+  * [ROCm] Added `pip` extras (`jax[rocm]`, `jax[rocm7]`, `jax[rocm10]`, and
+    per-GPU-target `jax[rocm7-device-<gfxNNN>]` /
+    `jax[rocm10-device-<gfxNNN>]`) to install AMD's TheRock ROCm wheels directly
+    from AMD's package index without a pre-installed system ROCm
+    (`jax[rocm7-local]` remains for pre-installed ROCm) ({jax-issue}`#41331`).
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
-    by default. This changes the handling of closed-over constants in Jaxpr.
-    See [here](https://docs.jax.dev/en/latest/internals/constants.html) for
-    more details, including how to recognize a breakage and migrate your code.
-    The flag will be removed in a future release.
+    by default. Non-scalar constant arrays captured from outside a jitted
+    function are now passed as separate inputs to compiled executables rather
+    than embedded inline, reducing executable size and avoiding host copies
+    during lowering. See {ref}`constants-note` for details, including how to
+    recognize a breakage and migrate your code. You can temporarily set
+    `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=False` to restore the previous behavior;
+    the flag will be removed in a future release.
+  * Removed support for the legacy GSPMD partitioner
+    (`jax_use_shardy_partitioner=False`). JAX now always uses the Shardy
+    partitioner, which has been the default for about a year. Custom
+    partitioning rules in `jax.experimental.custom_partitioning` that only
+    implement legacy GSPMD callbacks (instead of `sharding_rule`) now raise
+    `NotImplementedError`.
+  * Updated the binary format written by
+    {func}`jax.experimental.serialize_executable.serialize` to version 3 to
+    support captured constant arrays. Loading executables saved with JAX
+    `0.12.0` or earlier via
+    {func}`jax.experimental.serialize_executable.deserialize_and_load` now
+    raises `ValueError`.
+  * `jax.random` samplers now propagate `out_sharding` directly per shard
+    instead of falling back to automatic sharding or inserting hidden
+    all-gathers. Requesting an `out_sharding` that shards non-key dimensions
+    now requires a partitionable generator (`threefry2x32`, `rbg`, or
+    `unsafe_rbg`, with `jax_threefry_partitionable=True`), raising
+    `NotImplementedError` otherwise. Conflicting parameter shardings or
+    sharding non-batch axes in composite samplers (`permutation`,
+    `categorical`, `multivariate_normal`, `orthogonal`, `poisson`) now raise
+    `ShardingTypeError`.
+  * {func}`jax.random.poisson` with `method="exact"` (the default) now keeps
+    the first accepted sample per element so draws do not depend on how the
+    array is sharded across devices. This can change the exact integer values
+    drawn for multi-element arrays when `lam >= 10`.
+  * {func}`jax.numpy.histogram` now requires `out_sharding` to be fully
+    replicated (raising `ShardingTypeError` otherwise) and, under explicit
+    sharding, requires `weights` to match the sharding of `a`.
+  * {func}`jax.scipy.signal.welch` and {func}`jax.scipy.signal.csd` (as well as
+    {func}`jax.scipy.signal.stft` when explicitly passed `nperseg=None`) now
+    default `nperseg` to `256` when `window` is a string or tuple, matching
+    SciPy and the documentation. Previously, inputs longer than `256` used the
+    full signal length, so output shapes and values may change
+    ({jax-issue}`#40012`).
 
 * Deprecations
-  * `jax.sharding.SingleDeviceSharding` is deprecated; use
-    `jax.sharding.make_single_device_sharding` or
-    `jax.sharding.is_single_device_sharding` instead.
+  * {class}`jax.sharding.SingleDeviceSharding` is deprecated. Use
+    `jax.sharding.make_single_device_sharding` to construct a single-device
+    sharding, and `jax.sharding.is_single_device_sharding` to check whether a
+    sharding targets a single device (replacing
+    `isinstance(..., SingleDeviceSharding)`).
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
-    a no-op. JAX always lowers to Shardy, and the flag will be removed in a
-    future release.
-  * The `jax.scipy.special.bessel_jn` function is deprecated; use the new
-    `jax.scipy.special.jn` instead, which is more accurate and provides
-    direct evaluation of only the nth bessel function.
+    a no-op (setting it to `False` is silently ignored). JAX always uses the
+    Shardy partitioner, and the flag will be removed in a future release.
+  * `jax.scipy.special.bessel_jn` is deprecated; use
+    {func}`jax.scipy.special.jn` instead, which is more accurate and evaluates
+    only the single `n`-th Bessel function directly (note that `bessel_jn`
+    returned all orders `0..v`, whereas `jn(n, z)` returns only order `n`).
 
 * Changes
+  * On GPU, when neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
+    `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, JAX now preallocates 75% of GPU
+    memory at startup and allows the default GPU memory pool to grow up to
+    available device memory as needed for ordinary (non-collective) buffers
+    (XLA's `0.75+` policy). Set `XLA_CLIENT_MEM_FRACTION=0.75` to keep the
+    previous fixed limit. Explicit XLA memory-policy flags take precedence, and
+    allocator modes that do not support growth retain their existing behavior
+    ({jax-issue}`#41831`).
+  * Cached per-primitive compiled wrappers when running {func}`jax.shard_map`
+    eagerly (outside `jax.jit` or under `jax.disable_jit()`), avoiding repeated
+    recompilation ({jax-issue}`#42470`).
+  * {meth}`jax.sharding.NamedSharding.shard_shape` now supports meshes with
+    manual axes.
+  * Enabled the custom derivative rule for {func}`jax.nn.softmax` (and
+    {func}`jax.scipy.special.softmax`) by default
+    (`jax_softmax_custom_jvp=True`), improving memory use and numerical
+    stability during differentiation. Set
+    `jax.config.update("jax_softmax_custom_jvp", False)` to temporarily restore
+    the previous behavior.
+  * On CPU, {func}`jax.lax.log` and {func}`jax.lax.log1p` now use vectorized
+    kernels on x86-64 (AVX2/AVX-512) and ARM64 (NEON), speeding up `float64` by
+    1.7×–4.4× and `float32` by 19%–37%. This improves `float32` accuracy for
+    `log1p`, `log10`, `logit`, `acosh`, `asinh`, and `atanh`, and relaxes
+    `float64` CPU `log` max error from 0.5 to 1.5 units in the last place
+    (ULPs), matching GPU; CPU tests expecting bit-exact `float64` `log` may see
+    ~1 ULP shifts.
+  * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
+    {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
+    {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
+    {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum`, and
+    {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
+    boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+  * {func}`jax.scipy.fft.dct` and {func}`jax.scipy.fft.idct`
+    ({func}`jax.scipy.fft.idctn`) now use real FFTs (`rfft` / `irfft`) instead
+    of full complex FFTs, speeding up batched `idct` by up to 2.7× on GPU and
+    9.4× on CPU ({jax-issue}`#42467`, {jax-issue}`#42583`).
+  * Simplified gradients of {func}`jax.numpy.logaddexp` and
+    {func}`jax.numpy.logaddexp2` using {func}`jax.lax.logistic`, making
+    gradient evaluation ~2–3× faster on CPU. Note that the gradient at
+    `(inf, inf)` now returns `nan` instead of `1.0` ({jax-issue}`#41914`).
+  * Replaced large elementwise computations for {func}`jax.lax.lgamma`
+    ({func}`jax.scipy.special.gammaln`) and {func}`jax.lax.digamma`
+    ({func}`jax.scipy.special.digamma`) with dedicated vectorized CPU kernels
+    (using `highway`, added as a `MODULE.bazel` dependency) and GPU kernels
+    (CUDA/ROCm), improving compile time and speed while keeping error within
+    0.5 ULP (`bfloat16`) and 1.0 ULP (`float16`, `float32`, `float64`) across
+    CPU, GPU, and TPU. Also preserves very small (subnormal) inputs on GPU
+    instead of returning `±inf`.
   * Mixed real and complex {func}`jax.numpy.add`, {func}`jax.numpy.subtract`,
     {func}`jax.numpy.multiply`, and {func}`jax.numpy.true_divide`
     (`complex / real`) no longer convert the real input to complex before
     operating. This avoids unnecessary operations on zeros and fixes edge cases
     with infinities and signed zeros (for example, `0.5 * (inf + 1j)` now
     returns `inf + 0.5j` instead of `inf + nan*j`).
+  * Enabled a more accurate default implementation of {func}`jax.lax.erfc` (and
+    {func}`jax.scipy.special.erfc`) (`jax_accurate_default_erfc=True`). It uses
+    fewer operations, preserves very small (subnormal) outputs on CPU and GPU,
+    returns `1.0` at `±0.0`, and reduces worst-case rounding error (`float32`:
+    from ~66 down to ≤7.0 ULPs on CPU, ≤7.5 on GPU, ≤9.5 on TPU v6e/7x, and
+    ≤69.0 on TPU v2–v5p; `float64`: from ≥350 down to ≤10.0 on CPU and GPU).
+    With `accuracy=jax.lax.AccuracyMode.HIGHEST`, worst-case error drops to
+    ≤1.5–2.0 ULPs with fewer operations, and `bfloat16` drops from 63 to 25 ops
+    with identical results. Set `jax_accurate_default_erfc=False` to temporarily
+    restore the previous behavior.
+  * Enabled the more accurate implementation of {func}`jax.lax.erf_inv` by
+    default (`jax_accurate_erf_inv=True`), fixing large precision loss near
+    `|x| = 1` (`float32`: ~65 down to ≤2.0 ULPs on CPU, ≤2.5 on GPU/TPU v6e/7x,
+    and ≤5.5 on TPU v5p; `float64`: ~500,000 down to ≤2.5 ULPs on CPU and GPU).
+    Also improved first- and higher-order derivative accuracy near `|x| = 1`.
+    Callers such as {func}`jax.scipy.special.erfinv`,
+    {func}`jax.scipy.special.ndtri`, and default normal random samplers may see
+    small last-bit numerical changes; set `jax_accurate_erf_inv=False` to
+    temporarily restore the previous behavior.
+  * {func}`jax.lax.exp2` / {func}`jax.numpy.exp2` and {func}`jax.lax.log2` /
+    {func}`jax.numpy.log2` now lower directly to native operations and support
+    `accuracy=jax.lax.AccuracyMode.HIGHEST`, greatly reducing rounding error
+    across dtypes and backends (for example, `exp2` `float32` CPU: 68.5 → 0.5
+    ULP, GPU: 69.0 → 2.5 ULP; `float64` CPU: 719.0 → 0.5 ULP, GPU: 719.0 → 1.0
+    ULP).
+  * Improved numerical accuracy across several math and special functions:
+    * {func}`jax.scipy.special.gamma` and {func}`jax.scipy.special.factorial`:
+      ≤0.5 ULP (`bfloat16`) and ≤1.0 ULP (`float16`/`float32`/`float64`) across
+      CPU, GPU, and TPU; exact `factorial` up to `34!` (`float32`) and `170!`
+      (`float64`); preserves subnormal inputs on GPU.
+    * {func}`jax.lax.sinh` and {func}`jax.lax.cosh`: vectorized CPU/TPU
+      implementations cut `float32` error to ≤1.0 ULP (down from 25 ULPs on CPU
+      and up to ~1794 ULPs on TPU) and `float64` CPU error from 496 to ≤2.0
+      ULPs, and fix premature `sinh` overflow near `±89.4`.
+    * {func}`jax.lax.asin` and {func}`jax.lax.acos`: improved CPU and TPU
+      `float32` error to ≤1.0 ULP and stopped flushing tiny normal inputs to
+      zero in `asin` on TPU.
+    * {func}`jax.lax.rsqrt`: tightened `float32` CPU error to ≤1.0 ULP on AVX
+      x86-64 CPUs (≤1.5 ULP on ARM) by always running two refinement steps on
+      both Intel and AMD CPUs.
+    * {func}`jax.lax.bessel_i0e` and {func}`jax.lax.bessel_i1e`: faster
+      implementation (~32 vs 85 ops in `float32`) cutting `float32` error from
+      8.0 / 15.5 down to ≤2.0–3.0 ULPs and `float64` from 7.5–10.5 down to ≤2.0
+      ULPs.
+    * {func}`jax.scipy.special.logit`: fixed severe precision loss near `0.5`
+      and `1` (≤2.0–3.0 ULPs in `float32`, ≤1.5 ULPs in `float64` on CPU/GPU).
+    * {func}`jax.scipy.special.betaln` and {func}`jax.scipy.stats.t.logpdf`:
+      rewritten `betaln` improves accuracy for extreme ratios and negative or
+      tiny inputs (raising `ValueError` for complex inputs), and `t.logpdf`
+      avoids catastrophic cancellation for large degrees of freedom and in
+      `float32` on TPU ({jax-issue}`#38243`, {jax-issue}`#39106`,
+      {jax-issue}`#41203`).
+    * {func}`jax.scipy.special.ndtr` and {func}`jax.scipy.special.log_ndtr`:
+      fixed large negative-tail error, positive-input precision loss, premature
+      overflow, and derivative `NaN`s, with accurate higher-order derivatives
+      ({jax-issue}`#41676`).
+    * {func}`jax.lax.logistic` ({func}`jax.nn.sigmoid`,
+      {func}`jax.scipy.special.expit`): avoids overflow for large negative
+      inputs on GPU and in `float16` across all backends, preserving very small
+      (subnormal) outputs instead of flushing prematurely to `0.0`.
   * JAX now uses Bazel 9.3.1 to build from source.
-  * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
-    {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
-    {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
-    {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
-    {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
-    boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+  * Linux and macOS source builds now compile with C++20 (Windows remains on
+    C++17). Linux wheels are built with LLVM 22, statically linked `libc++`,
+    and a `glibc 2.27` (`manylinux_2_27`) sysroot. Hermetic CUDA 13 builds
+    upgraded from CUDA `13.0.0` to `13.4.1`, and CUDA 12 source builds now
+    compile device code with Clang.
+  * Bumped the pinned `libtpu` dependency for `jax[tpu]` from `0.0.50.*` to
+    `0.0.53.*` ({jax-issue}`#42544`).
+  * Added support for building `jaxlib` against 64-bit integer BLAS/LAPACK
+    libraries (`-DJAX_LAPACK_ILP64`), and fixed
+    {func}`jax.scipy.linalg.lu_solve` when SciPy uses 64-bit integer LAPACK
+    with `jax_enable_x64=True`.
+  * [oneAPI] Plugin wheels are now built with C++20 and target
+    `manylinux_2_31` (`glibc 2.31`), allowing installation on older Linux
+    distributions ({jax-issue}`#42568`).
 
 * Bug fixes
-  * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
-    `max_iterations` and accepts `eps`, as documented; previously
-    `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
-    Both arguments are now static, so passing a traced value for either raises
-    an error.
+  * Fixed separate {func}`jax.jit` instances of the same function that differ
+    only in `static_argnums`, `static_argnames`, or `keep_unused` sharing
+    internal dispatch cache entries, which could run the executable compiled
+    for one instance with the arguments of another and return wrong results
+    ({jax-issue}`#42313`).
+  * Added `jax_high_dynamic_range_gumbel` to the `jax.jit` cache key
+    ({jax-issue}`#40609`).
+  * Fixed collective operations inside CPU loops ({func}`jax.lax.while_loop`)
+    and conditionals ({func}`jax.lax.cond`) overlapping with later collectives,
+    which could swap messages across processes or crash.
+  * Fixed a thread-pool deadlock when multiple batched CPU linear algebra
+    (LAPACK) calls run concurrently.
+  * Fixed a crash (`SIGSEGV`) during complex GPU eigendecomposition
+    ({func}`jax.lax.linalg.eig` / {func}`jax.numpy.linalg.eig`) when using
+    MAGMA due to insufficient host buffer alignment.
+  * Fixed a crash (`std::bad_function_call`) in `jaxlib` when transferring
+    duplicate host shards with forced copying enabled (for example,
+    `jax.device_put(..., may_alias=False)`).
+  * Fixed a potential crash when registering multi-stage foreign function
+    interface (FFI) targets via {func}`jax.ffi.register_ffi_target` (where the
+    `record` callback pointer was left uninitialized), and added support for
+    the `"record"` handler stage.
+  * Fixed CPU Python callbacks ({func}`jax.pure_callback`,
+    {func}`jax.experimental.io_callback`, and
+    `jax.experimental.buffer_callback`) flushing very small (subnormal)
+    floating-point values to zero.
+  * Fixed XLA compiler and runtime issues shipped in `jaxlib`:
+    * Out-of-memory failures for large GPU allocations (> 1 GiB) on WSL
+      despite sufficient free memory, by falling back to 1 GiB physical chunks
+      mapped into one contiguous virtual address range
+      (https://github.com/openxla/xla/pull/52820).
+    * Wrong numerical results on CPU when fusing a matrix multiplication with a
+      broadcasted constant right-hand operand and a reduction
+      ({jax-issue}`#41414`, {jax-issue}`#42549`).
+    * Wrong numerical results on ARM64 SME/SME2 CPUs when fusing a matrix
+      multiplication with a constant left-hand operand and a reduction
+      ({jax-issue}`#42651`).
+    * Wrong results on Hopper/Blackwell NVIDIA GPUs (`sm_90+`, CUDA 13.4+) for
+      large-stride `float64` column scatter overwrites ({jax-issue}`#41888`).
+    * Crash compiling a full-slice update (`.at[:].set(...)`) immediately
+      followed by reversing the array (`[::-1]`) ({jax-issue}`#41497`).
+    * `lax.log(lax.pow(a, b))` returning finite values instead of `NaN` for
+      negative bases under `jax.jit` ({jax-issue}`#41261`).
+    * Properly marks donated CPU buffers as deleted when an active host view
+      forces a copy, and marks multi-device arrays as deleted when donating a
+      non-first shard ({jax-issue}`#41256`).
+  * Fixed {func}`jax.lax.pmean` and constant {func}`jax.lax.psum` dividing or
+    multiplying every group by the first group's size when `axis_index_groups`
+    has uneven group sizes ({jax-issue}`#41132`).
+  * Fixed batching, autodiff, and sharding bugs in
+    {func}`jax.lax.ragged_all_to_all` ({jax-issue}`#41697`).
+  * Fixed {func}`jax.lax.while_loop` seeing stale values or dropping final
+    writes when `cond_fun` reads or writes a mutable `Ref`
+    ({jax-issue}`#41073`).
+  * Fixed {func}`jax.lax.polynomial` errors inside {func}`jax.shard_map` with
+    mixed constant and varying inputs ({jax-issue}`#41853`).
+  * Prevented silent wrong results (counting constants once per device) when
+    mixing unreduced or reduced arrays (under explicit sharding or `shard_map`)
+    with replicated constants in `pad`, `concatenate`/`stack`, and `select_n`.
+  * Fixed `out_sharding` being silently ignored when array indexing lowers to
+    static or dynamic slicing.
+  * Fixed `full_like` / `empty_like` in partially manual {func}`jax.shard_map`,
+    mesh context mismatches when differentiating `jax.jit` with `explicit_axes`,
+    and false-positive `ForbiddenCollectiveError` in
+    `jax.sharding.no_collectives` on 3-operand `einsum`.
+  * Fixed `jax.ref.new_ref(..., pin=True)` errors when reading/writing pinned
+    references ({jax-issue}`#41846`) or pinning buffers to TPU VMEM
+    ({jax-issue}`#41843`).
+  * Fixed sharded `philox2x32` / `philox4x32` (`lax.mulhi`) forward-compatibility
+    export and compatibility with older `jaxlib` builds.
+  * Fixed `jax.export` dropping `weak_type` on outputs across `serialize` and
+    `deserialize` (bumping serialization format from 12 to 13,
+    backward-compatible with older payloads) ({jax-issue}`#41007`), baking
+    caller stack traces into exported MLIR modules (causing non-deterministic
+    exports and cache misses), and lowering `jax.lax.platform_dependent`
+    branches for incompatible platforms during multi-platform export.
+  * Fixed gradient `Ref` accumulator forwarding in
+    `jax.custom_vjp.defvjp_with_accums` and
+    `jax.custom_gradient(with_accums=...)` through `checkpoint`, `jit`, `scan`,
+    and `checkify`; also fixed `remat` with tuple `prevent_cse` and closed-over
+    constants, improved leaked-tracer error messages, and avoided copying in
+    {func}`jax.numpy.moveaxis` when no axes move ({jax-issue}`#41717`).
+  * Fixed {func}`jax.vmap` of {func}`jax.numpy.stack` emitting an unnecessary
+    transpose when stacking along the batched axis ({jax-issue}`#41794`).
+  * Fixed out-of-bounds unsigned integer indices (such as large `uint64` or
+    `uint32` values) wrapping around modulo `2**32` instead of clamping when
+    cast to signed `int32` during indexing ({jax-issue}`#42657`).
+  * Fixed overflow when wrapping negative indices of narrow signed integer
+    dtypes (such as `int8(-1)`) on long axes across indexing, dynamic slicing,
+    {func}`jax.numpy.take`, and {func}`jax.numpy.put`; also made `jax.ds`
+    slices consistent between eager and `jit` execution ({jax-issue}`#42354`,
+    {jax-issue}`#42377`).
+  * Fixed {func}`jax.numpy.interp` returning `nan` at and around sample points
+    whose `fp` value is infinite; it now returns the sample value or the signed
+    infinity, matching NumPy. For complex `fp`, the real and imaginary parts
+    are now interpolated separately, as in NumPy ({jax-issue}`#42318`). Also
+    fixed `interp` mishandling narrow intervals, duplicate trailing `xp`
+    coordinates, `NaN` query inputs, and `NaN` derivatives at narrow or
+    duplicate boundaries ({jax-issue}`#42650`).
   * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
     infinite inputs; it now returns a signed zero, matching NumPy
     ({jax-issue}`#41102`).
-  * Fixed {func}`jax.jit` instances of the same function that differ only in
-    `static_argnums`, `static_argnames` or `keep_unused` sharing C++ dispatch
-    cache entries, which could run the executable compiled for one instance
-    with the arguments of another and return wrong results.
-  * Fixed {func}`jax.numpy.interp` returning `nan` at and around knots whose
-    `fp` value is infinite; it now returns the knot value or the signed
-    infinity, matching NumPy. For complex `fp`, the real and imaginary parts
-    are now interpolated separately, as in NumPy.
+  * Fixed {func}`jax.numpy.nonzero`, {func}`jax.numpy.flatnonzero`, and
+    {func}`jax.numpy.argwhere` ignoring `fill_value` on empty arrays
+    ({jax-issue}`#42233`).
+  * Fixed {func}`jax.numpy.nan_to_num` overwriting custom replacement values a
+    second time when replacing `NaN` with infinity ({jax-issue}`#42406`).
+  * Fixed infinite loops in {func}`jax.numpy.gcd` and {func}`jax.numpy.lcm` for
+    minimum representable signed integers such as `int32(-2**31)`
+    ({jax-issue}`#40840`).
+  * Fixed {func}`jax.numpy.choose` wrapping indices when the number of choices
+    exceeds a narrow index dtype's maximum ({jax-issue}`#42464`).
+  * Fixed {func}`jax.numpy.kron` and {func}`jax.numpy.vander` failing on
+    boolean inputs ({jax-issue}`#42462`).
+  * Fixed weighted {func}`jax.numpy.quantile`, {func}`jax.numpy.nanquantile`,
+    {func}`jax.numpy.percentile`, and {func}`jax.numpy.nanpercentile` (with
+    `method="inverted_cdf"`) returning zero-weight elements at `q=0`
+    ({jax-issue}`#42190`).
+  * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
+    `max_iterations` and accepts `eps`, as documented; previously
+    `max_iterations` was silently ignored and any non-`None` `eps` raised a
+    `ValueError`. Both `eps` and `max_iterations` are now static arguments of
+    `polar` (for all `method` values), so passing a traced value for either
+    raises an error ({jax-issue}`#41917`).
+  * Fixed wrong forward-mode derivatives (`jvp`) of pivoted QR decomposition
+    ({func}`jax.lax.linalg.qr`, {func}`jax.scipy.linalg.qr`) for wide matrices
+    (`m < n`) ({jax-issue}`#42634`).
+  * Fixed {func}`jax.scipy.linalg.toeplitz` and {func}`jax.scipy.linalg.hankel`
+    spreading a single `NaN` or `inf` across the entire output matrix
+    ({jax-issue}`#38635`, {jax-issue}`#38636`).
+  * Fixed {func}`jax.scipy.sparse.linalg.cg` producing `NaN`s or stopping early
+    when the right-hand side or initial guess has very small or very large
+    magnitude (for example, during differentiation with a preconditioner)
+    ({jax-issue}`#40254`).
+  * Fixed {func}`jax.scipy.signal.convolve`, `convolve2d`, `correlate`, and
+    `correlate2d` raising `ValueError` on mixed-size multidimensional arrays
+    for `mode="full"` and `mode="same"`, matching SciPy ({jax-issue}`#42063`).
+  * Fixed wrong derivatives for padded entries in
+    {func}`jax.experimental.sparse.coo_fromdense` and
+    {func}`jax.experimental.sparse.csr_fromdense` (`COO`/`CSR`/`CSC.fromdense`)
+    when `nse > nnz` ({jax-issue}`#40624`).
+  * Fixed {func}`jax.experimental.sparse.bcoo_reshape` (`BCOO.reshape`)
+    miscomputing shapes for sparse arrays with dense dimensions
+    ({jax-issue}`#24795`).
+  * Fixed overflow and underflow in derivatives of division (`x / y`,
+    {func}`jax.lax.div`) for very large or very small denominators
+    ({jax-issue}`#37909`).
+  * Fixed overflow, cancellation in higher-order derivatives, and `NaN`
+    gradients at single-axis infinities for complex {func}`jax.numpy.abs`,
+    {func}`jax.numpy.hypot`, and {func}`jax.numpy.arctan2`
+    ({func}`jax.lax.atan2`) ({jax-issue}`#25681`).
+  * Fixed {func}`jax.nn.soft_sign` returning `NaN` at `±inf` (now returns `±1`)
+    and losing derivative accuracy for large inputs.
+  * Fixed {func}`jax.nn.softmax` with `where` leaking `NaN` into gradients when
+    masked-out positions have `NaN` or infinite tangents/cotangents.
+  * Fixed overflow and out-of-domain derivatives in {func}`jax.nn.log1mexp`.
+  * Fixed overflow and precision loss in {func}`jax.nn.squareplus` for large
+    inputs in `float16` ({jax-issue}`#41647`).
+  * Fixed a shape/broadcasting error in
+    {func}`jax.nn.get_scaled_dot_general_config` for `'nvfp4'`
+    ({jax-issue}`#42025`).
+  * Fixed wrong higher-order derivatives of {func}`jax.scipy.special.fresnel`
+    at odd integers and `0`.
+  * Fixed premature overflow in {func}`jax.scipy.special.i0`
+    ({func}`jax.numpy.i0`) and {func}`jax.scipy.special.i1` for large finite
+    inputs ({jax-issue}`#39770`, {jax-issue}`#39772`).
+  * Fixed {func}`jax.scipy.special.expi` returning `NaN` instead of `inf` at
+    `+inf` ({jax-issue}`#38519`).
+  * Fixed {func}`jax.scipy.special.loggamma` returning `NaN` instead of `inf` at
+    `0.0` and `-0.0` ({jax-issue}`#38240`).
+  * Fixed {func}`jax.scipy.special.zeta` and
+    {func}`jax.scipy.special.polygamma` for large or infinite `q`
+    ({jax-issue}`#41366`).
+  * Fixed `NaN` gradients in {mod}`jax.scipy.stats.pareto` methods outside the
+    distribution's domain ({jax-issue}`#41445`).
+  * Fixed `float32` precision loss in {func}`jax.scipy.stats.nbinom.logpmf`
+    ({jax-issue}`#42145`).
+  * Fixed `logpmf` and `pmf` for discrete distributions in `jax.scipy.stats`
+    (`betabinom`, `bernoulli`, `binom`, `geom`, and `nbinom`) to return `-inf`
+    (`0` for `pmf`) for non-integer `k - loc`, matching SciPy; also fixed `loc`
+    bound checks in `betabinom` ({jax-issue}`#41745`, {jax-issue}`#41960`).
+  * Fixed {func}`jax.random.poisson` returning undefined values or raising
+    under `jax.debug_nans(True)` when `lam` is infinite or non-finite
+    ({jax-issue}`#38335`).
+  * Fixed {func}`jax.random.multivariate_normal` with `method="eigh"` returning
+    `NaN` on singular or near-singular covariance matrices ({jax-issue}`#14345`).
+  * Fixed {func}`jax.random.choice` dropping other array dimensions when
+    drawing zero samples ({jax-issue}`#42429`).
+  * Fixed {func}`jax.debug.breakpoint` with `backend="web"` crashing under
+    `web-pdb` 2.x.
+  * Preserved operation name (`op_name`) metadata in compiled HLO when
+    `jax_include_full_tracebacks_in_locations=False` ({jax-issue}`#41587`).
+  * Fixed crashes in `jax_explain_cache_misses=True` when `debug_info` is
+    passed as a keyword argument ({jax-issue}`#41455`) or argument names are
+    unknown.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 

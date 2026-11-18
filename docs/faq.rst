@@ -82,20 +82,20 @@ so different ways of computing the same expression may have subtly different res
 Other times, XLA's optimizations may lead to even more drastic differences.
 Consider the following example:
 
->>> def f(x):
-...   return jnp.log(jnp.power(x, 100.0))
->>> x = 10.0
->>> print(f(x))
-inf
+>>> def f(mask, x):
+...   return mask.astype(jnp.float32) * x
+>>> mask = jnp.array(False)
+>>> x = jnp.inf
+>>> print(f(mask, x))
+nan
 
->>> print(jit(f)(x))
-230.25851
+>>> print(jit(f)(mask, x))
+0.0
 
-In non-JIT-compiled op-by-op mode, the result is ``inf`` because ``jnp.power(x, 100.0)``
-overflows and returns ``inf``, resulting in ``log(inf) = inf``. Under JIT,
-however, XLA simplifies the expression to ``100.0 * log(x)`` and computes the
-result ``230.25851`` without the intermediate overflow. In this case, JIT compilation
-produces a more accurate floating point approximation of the real result.
+In non-JIT-compiled op-by-op mode, ``mask.astype(jnp.float32)`` first evaluates to
+``0.0``, and then ``0.0 * inf = nan``. Under JIT, however, XLA simplifies
+``convert(mask) * x`` to ``select(mask, x, 0.0)`` and returns ``0.0`` without
+evaluating ``0.0 * inf``.
 
 Unfortunately the full list of XLA's algebraic simplifications is not well
 documented, but if you're familiar with C++ and curious about what types of
