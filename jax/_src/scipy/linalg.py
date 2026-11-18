@@ -1787,18 +1787,21 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   if not eigvals_only and key is None:
     key = random.key(42)
 
-  def _sturm(alpha, beta_sq, pivmin, alpha0_perturbation, x):
+  def _sturm(alpha, beta_sq, pivmin, x):
     """Implements the Sturm sequence recurrence."""
     n = alpha.shape[0]
     zeros = jnp.zeros(x.shape, dtype=np.int32)
     ones = jnp.ones(x.shape, dtype=np.int32)
 
-    # The first step in the Sturm sequence recurrence
-    # requires special care if x is equal to alpha[0].
+    # The first step uses the same pivot safeguard as the subsequent steps,
+    # as in LAPACK's dlaebz (called by dstebz): a pivot q <= pivmin is
+    # counted and replaced by min(q, -pivmin). This keeps the next step's
+    # division well defined when x == alpha[0] and beta_sq[0] is zero
+    # (or underflows).
     def sturm_step0():
       q = alpha[0] - x
-      count = jnp.where(q < 0, ones, zeros)
-      q = jnp.where(alpha[0] == x, alpha0_perturbation, q)
+      count = jnp.where(q <= pivmin, ones, zeros)
+      q = jnp.where(q <= pivmin, jnp.minimum(q, -pivmin), q)
       return q, count
 
     # Subsequent steps all take this form:
@@ -1875,7 +1878,6 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   one = np.ones([], dtype=alpha.dtype)
   safemin = np.maximum(one / finfo.max, (one + finfo.eps) * finfo.tiny)
   pivmin = safemin * jnp.maximum(1, jnp.amax(beta_sq))
-  alpha0_perturbation = jnp.square(finfo.eps * beta_abs[0])
   abs_tol = finfo.eps * t_norm
   if tol is not None:
     abs_tol = jnp.maximum(tol, abs_tol)
@@ -1918,7 +1920,6 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   upper = jnp.broadcast_to(upper, shape=target_shape)
   mid = 0.5 * (upper + lower)
   pivmin = jnp.broadcast_to(pivmin, target_shape)
-  alpha0_perturbation = jnp.broadcast_to(alpha0_perturbation, target_shape)
 
   # Start parallel binary searches.
   def cond(args):
@@ -1929,7 +1930,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
 
   def body(args):
     i, lower, mid, upper = args
-    counts = _sturm(alpha, beta_sq, pivmin, alpha0_perturbation, mid)
+    counts = _sturm(alpha, beta_sq, pivmin, mid)
     lower = jnp.where(counts <= target_counts, mid, lower)
     upper = jnp.where(counts > target_counts, mid, upper)
     mid = 0.5 * (lower + upper)

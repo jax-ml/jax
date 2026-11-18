@@ -106,6 +106,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `fp` value is infinite; it now returns the knot value or the signed
     infinity, matching NumPy. For complex `fp`, the real and imaginary parts
     are now interpolated separately, as in NumPy.
+  * Fixed {func}`jax.scipy.linalg.eigh_tridiagonal` returning wrong
+    eigenvalues and eigenvectors when the first off-diagonal element is zero
+    (or its square underflows) and a bisection point lands exactly on `d[0]`,
+    which is common for integer diagonals.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 
