@@ -217,6 +217,14 @@ class BaseMesh:
   def axes(self) -> tuple[MeshAxis, ...]:
     return tuple(MeshAxis(n) for n in self.axis_names)
 
+  @contextlib.contextmanager
+  def jax_partitioning(self, val: bool = True):
+    if not self.are_all_axes_explicit_or_manual:
+      raise ValueError('`jax_partitioning` requires all mesh `axis_types` to'
+                       f' be `Explicit` or `Manual`, got {self!r}.')
+    with jax_config.jax_partitioning(val):
+      yield
+
 
 class _HashableDeviceArray:
   __slots__ = ('array', 'device_list', '_hash')

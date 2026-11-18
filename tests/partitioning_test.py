@@ -68,7 +68,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
       return y
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
 
@@ -126,7 +126,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         f.lower(arr)
       return
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
 
@@ -217,7 +217,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     for op_name in absent_ops:
       self.assertNotIn(op_name, lowered_text)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = reshard_out(u)
       expected_grad = grad_fn(x, w)
 
@@ -244,7 +244,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           jax.typeof(y).sharding.spec, P(None, 'y', unreduced={'z'}))
       return jax.reshard(y, P(None, 'y'))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = partial_reduce(x)
 
     out = partial_reduce(x)
@@ -274,7 +274,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       z = lax.pmax(y, 'm')
       return lax.reduce_sum(z, axes=(0,))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(arr)
 
     out = f(arr)
@@ -286,7 +286,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f_idx_psum():
       return lax.psum(lax.axis_index('m'), 'm')
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_idx = f_idx_psum()
 
     out_idx = f_idx_psum()
@@ -298,7 +298,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f_ag_unsharded_dim(x):
       return lax.all_gather(x, 'm', axis=0, tiled=True, to='invarying')
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_ag = f_ag_unsharded_dim(arr)
 
     out_ag = f_ag_unsharded_dim(arr)
@@ -311,7 +311,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       c = lax.pcast(np.ones((1, 4), dtype=np.float32), 'm', to='varying')
       return lax.all_gather(c, 'm', axis=1, tiled=True, to='invarying')
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_ag_const = f_ag_const()
 
     out_ag_const = f_ag_const()
@@ -341,7 +341,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(y).sharding.spec, in_spec)
       return y
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_np = jnp_op(np_inp)
       expected_eager = f(arr)
 
@@ -352,7 +352,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     f_jit = jax.jit(f)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f_jit.lower(arr).as_text())
       expected_jit = f_jit(arr)
 
@@ -368,7 +368,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       def vjp_fn(x, ct):
         return jax.vjp(f, x)[1](ct)
 
-      with config.jax_partitioning(False):
+      with mesh.jax_partitioning(False):
         expected_grad, = vjp_fn(arr, arr)
 
       grad, = vjp_fn(arr, arr)
@@ -393,7 +393,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     f = jax.jit(jnp.subtract)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr_x, arr_y).as_text())
       expected = f(arr_x, arr_y)
 
@@ -432,7 +432,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     batched = jax.device_put(
         np.stack([np_inp, np_inp + 10]), P(None, 'x', None))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_eager = f(arr)
       expected_jit = f_jit(arr)
       expected_vmap = f_vmap(batched)
@@ -479,7 +479,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
       return y
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
 
     lowered = f.lower(arr).as_text()
@@ -504,7 +504,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       # XLA:CPU and XLA:GPU AllReduce do not implement xor reductions.
       return
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(arr)
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
@@ -562,7 +562,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
       self.assertArraysEqual(expected, out)
 
@@ -618,7 +618,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       hlo = f.lower(x).as_text()
       out = f(x)
 
-      with config.jax_partitioning(False):
+      with jax.sharding.get_abstract_mesh().jax_partitioning(False):
         expected = f(x)
 
     self.assertEqual(hlo.count('stablehlo.collective_permute'), 1)
@@ -652,7 +652,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     self.assertArraysEqual(out, expected)
@@ -671,7 +671,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(x):
       return lax.slice(x, start, limit, strides)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
 
@@ -701,7 +701,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(*xs):
       return lax.concatenate(xs, dimension=dim)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(*arrs).as_text())
       expected = f(*arrs)
 
@@ -739,7 +739,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       y = lax.slice(x, (0, 0, 1), (2, 8, 3))
       return lax.concatenate([y, y], dimension=2)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(arr)
 
     self.assertNotIn('all_gather', f.lower(arr).as_text())
@@ -757,7 +757,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def lit_fn(x):
       return lax.concatenate([x, lit], 1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_lit = lit_fn(rep)
 
     lit_out = lit_fn(rep)
@@ -948,7 +948,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(x):
       return lax.reshape(x, out_shape, out_sharding=out_sharding)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
 
@@ -1040,7 +1040,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           lowered_txt.count(f'stablehlo.{op}'), expected_collectives.get(op, 0),
           msg=op)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
 
@@ -1063,7 +1063,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       dx, = vjp_fn(y * 2)
       return y, dx
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_y, expected_dx = f(arr)
 
     txt = f.lower(arr).as_text()
@@ -1162,7 +1162,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           a, b, dnums, precision=lax.Precision.HIGHEST, out_sharding=out_spec
       )
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(lhs, rhs).as_text())
       expected = f(lhs, rhs)
 
@@ -1206,7 +1206,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return with_layout_constraint(a * 2, Layout(major_to_minor=(1, 0)))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
 
@@ -1242,7 +1242,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           vec, (4, 2), (0,), out_sharding=P(('y', 'x'), None))
       return b0, b1, b2, b3
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(*args).as_text())
       expected = f(*args)
 
@@ -1266,7 +1266,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.squeeze(a, dimensions=(1,))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1287,7 +1287,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a, b):
       return lax.transpose(a, (2, 0, 1)), lax.transpose(b, (1, 0))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp0, exp1 = f(x, y)
 
     out0, out1 = f(x, y)
@@ -1305,7 +1305,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.split(a, (2, 4), axis=1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp0, exp1 = f(x)
 
     out0, out1 = f(x)
@@ -1334,7 +1334,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a, b):
       return jnp.stack([a, b], axis=1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x, y)
 
     out = f(x, y)
@@ -1365,7 +1365,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return jnp.unstack(a, axis=1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     for out, exp in zip(f(x), expected):
@@ -1384,7 +1384,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.pad(a, jnp.float32(0.0), ((0, 0, 0), (1, 2, 1), (0, 0, 0)))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
 
@@ -1407,7 +1407,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.tile(a, (1, 2, 1))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1428,7 +1428,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a, l):
       return lax.clamp(l, a, jnp.float32(12.0))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x, lo)
 
     out = f(x, lo)
@@ -1448,7 +1448,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.select_n(a > 7.0, a * 2, c)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1473,7 +1473,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (g,) = vjp_fn((b, b))
       return ad_util.add_jaxvals_p.bind(g, b)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x, y)
 
     out = f(x, y)
@@ -1493,7 +1493,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f():
       return lax.broadcasted_iota(dtype, shape, dimension, out_sharding=spec)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower().as_text())
       expected = f()
 
@@ -1524,7 +1524,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.top_k(a, k=k, axis=axis)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_v, exp_i = f(x)
 
     out_v, out_i = f(x)
@@ -1545,7 +1545,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return (lax.top_k(a, k=k, axis=axis)[0] * w).sum()
 
     exp_g = jax.grad(loss)(distinct)
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       sdy_g = jax.jit(jax.grad(loss))(xd)
     self.assertEqual(sdy_g.sharding, xd.sharding)
     self.assertArraysEqual(sdy_g, exp_g)
@@ -1579,7 +1579,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.reduce_precision(a, exponent_bits=8, mantissa_bits=7)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1602,7 +1602,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           k, k + np.uint32(1), c0 + cs, c1)
       return r0, r1
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp0, exp1 = f(k, c_sharded)
 
     out0, out1 = f(k, c_sharded)
@@ -1624,7 +1624,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return jax.random.bits(
           k, shape, dtype=dtype, num_streams=ns, out_sharding=spec)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(key)
     self.assertIn('sdy.manual_computation', f.lower(key).as_text())
     out = f(key)
@@ -1649,7 +1649,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       )
 
     for s2 in (False, True):
-      with (config.jax_partitioning(s2),
+      with (mesh_1slice.jax_partitioning(s2),
             jax.remove_size_one_mesh_axis_from_type(True),
             jax.set_mesh(mesh_1slice)):
         keys_1s = jax.device_put(
@@ -1660,6 +1660,16 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     auto_mesh = jtu.create_mesh(
         (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    with self.assertRaisesRegex(
+        ValueError, 'requires all mesh `axis_types` to be `Explicit` or `Manual`'
+    ):
+      with auto_mesh.jax_partitioning(True):
+        pass
+    with self.assertRaisesRegex(
+        ValueError, 'requires all mesh `axis_types` to be `Explicit` or `Manual`'
+    ):
+      with jax.sharding.get_abstract_mesh().jax_partitioning(True):
+        pass
     ctx_mesh = jax.sharding.AbstractMesh(
         (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
     keys_auto = jax.device_put(
@@ -1709,7 +1719,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         return jax.random.bits(
             k, (4, 6), dtype=jnp.uint64, out_sharding=P('x', 'y'))
 
-      with config.jax_partitioning(False):
+      with mesh.jax_partitioning(False):
         exp64 = f64(key)
       self.assertArraysEqual(f64(key), exp64)
 
@@ -1721,7 +1731,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           jax.random.fold_in(k, lax.axis_index('x')), (2, 6),
           dtype=jnp.uint32, out_sharding=P(None, 'y'))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_partial = partial_shmap(key)
     out_partial = partial_shmap(key)
     self.assertEqual(out_partial.sharding, s2d)
@@ -1733,7 +1743,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return jax.random.bits(k, (4,), dtype=jnp.uint32, out_sharding=P('y'))
 
     f_vmap = jax.jit(jax.vmap(bits_1d))
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_vmap = f_vmap(sh_keys)
     self.assertArraysEqual(f_vmap(sh_keys), exp_vmap)
 
@@ -1794,7 +1804,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
               k, lx, shape=(2, 4), replace=True, out_sharding=P('y', 'x')),
       )
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(key, p_sh, p_1d, arr_x, logits_x)
 
     self.assertIn(
@@ -1852,7 +1862,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return a.astype(dt).astype(jnp.int8)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1871,7 +1881,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f():
       return lax.empty(shape, jnp.float32, out_sharding=spec)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower().as_text())
       expected = f()
 
@@ -1905,7 +1915,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     f_jit = jax.jit(f)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f_jit.lower(x, y).as_text())
       expected = f_jit(x, y)
 
@@ -1932,7 +1942,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (grad_a,) = vjp_fn(a)
       return grad_a
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1956,7 +1966,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (grad_a,) = vjp_fn(a)
       return grad_a
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1972,7 +1982,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return a ** 3
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -1988,7 +1998,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return jnp.copy(a)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     out = f(x)
@@ -2004,7 +2014,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def g(a):
       return jnp.sum(a * 2, axis=0)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       ref_exported = jax.export.export(g)(x)
       expected = ref_exported.call(x)
 
@@ -2028,7 +2038,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       wide = lax.bitcast_convert_type(a16, np.int32)
       return same, narrow, wide
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x32, x16)
 
     for out, exp in zip(f(x32, x16), expected):
@@ -2060,7 +2070,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return jnp.argmin(a, axis=axis), jnp.argmax(a, axis=axis)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_min, exp_max = f(x)
 
     out_min, out_max = f(x)
@@ -2082,7 +2092,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(k, v):
       return lax.sort(k, dimension=1), lax.sort((k, v), dimension=1, num_keys=1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_s, (exp_k, exp_v) = f(keys, vals)
 
     out_s, (out_k, out_v) = f(keys, vals)
@@ -2115,7 +2125,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return jnp.cumsum(a, axis=1), jnp.cumprod(a, axis=1)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_sum, exp_prod = f(x)
 
     out_sum, out_prod = f(x)
@@ -2137,7 +2147,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a, i):
       return lax.dynamic_slice(a, (i, i, i), (4, 1, 4))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x, off).as_text())
       expected = f(x, off)
 
@@ -2162,7 +2172,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a, u, i):
       return lax.dynamic_update_slice(a, u, (i, i, i))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x, upd, off)
 
     out = f(x, upd, off)
@@ -2197,7 +2207,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
       return lax.scan(body, c, None, length=3)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected_carry, expected_ys = run_scan(c0)
 
     carry, ys = run_scan(c0)
@@ -2234,7 +2244,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           out_sharding=P(None, None, 'y'))
       return vds, emb, tbl[i], sh_col, sh_2d, sh_bool, sh_xy, taa
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x, table, xy_vec, sharded_idx, idx)
 
     for out, exp in zip(f(x, table, xy_vec, sharded_idx, idx), expected):
@@ -2282,7 +2292,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     args = (x, upd, idx, bx, bupd, bidx, full_upd)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(*args)
 
     for out, exp in zip(f(*args), expected):
@@ -2349,7 +2359,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       min_v, min_i = lax.approx_min_k(a, k=k, reduction_dimension=axis)
       return max_v, max_i, min_v, min_i
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     for out, exp in zip(f(x), expected):
@@ -2366,7 +2376,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return ((max_v - 2 * min_v) * w).sum()
 
     exp_g = jax.grad(loss)(vals)
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       sdy_g = jax.jit(jax.grad(loss))(x)
     self.assertEqual(sdy_g.sharding, x.sharding)
     self.assertArraysEqual(sdy_g, exp_g)
@@ -2399,7 +2409,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         np.sin(np.arange(1, 2049, dtype=np.float32)).reshape(2, 1024),
         P(None, ('x', 'y')))
     f10 = jax.jit(lambda a: lax.approx_max_k(a, k=10))
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_v, exp_i = f10(big)
     out_v, out_i = f10(big)
     self.assertArraysEqual(out_v, exp_v)
@@ -2415,7 +2425,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertNotIn(
         'PartialReduce',
         f400.trace(big).lower(lowering_platforms=('tpu',)).as_text('hlo'))
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp400_v, exp400_i = f400(big)
     out400_v, out400_i = f400(big)
     self.assertArraysEqual(out400_v, exp400_v)
@@ -2521,7 +2531,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         ('compute_on', f_compute_on),
     ):
       with self.subTest(case=name):
-        with config.jax_partitioning(False):
+        with mesh.jax_partitioning(False):
           expected = fn(x, y)
         self.assertIn('sdy.manual_computation', fn.lower(x, y).as_text())
         out = fn(x, y)
@@ -2538,7 +2548,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     x_xy = jax.device_put(np_x, P('x', 'y'))
     y_xy = jax.device_put(np_y, P('x', 'y'))
     grad_fn = jax.jit(jax.grad(metadata_loss, argnums=(0, 1)))
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_gx, exp_gy = grad_fn(x_xy, y_xy)
     self.assertIn('sdy.manual_computation', grad_fn.lower(x_xy, y_xy).as_text())
     out_gx, out_gy = grad_fn(x_xy, y_xy)
@@ -2558,7 +2568,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     sample = jax.jit(jax.vmap(sample_one))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = sample(seeds)
 
     self.assertIn('sdy.manual_computation', sample.lower(seeds).as_text())
@@ -2586,7 +2596,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           c_in, c_in + np.uint32(2), c_rep, c_in)
       return p2[0] ^ p4[0] ^ t4[0]
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = run_all(k, c_xy)
 
     out = run_all(k, c_xy)
@@ -2610,7 +2620,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def f(a):
       return lax.rev(a, dims)
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f(x)
 
     lowered_text = f.lower(x).as_text()
@@ -2630,7 +2640,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     def loss(a):
       return (lax.rev(a, dims) * w).sum()
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_grad = jax.jit(jax.grad(loss))(x)
 
     out_grad = jax.jit(jax.grad(loss))(x)
@@ -2649,7 +2659,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       u, v = lax.optimization_barrier((a, b))
       return u + v
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       expected = f_arrays(x, y)
 
     lowered_text = f_arrays.lower(x, y).as_text()
@@ -2665,7 +2675,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     grad_fn = jax.jit(jax.grad(loss, argnums=(0, 1)))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_gx, exp_gy = grad_fn(x, y)
 
     out_gx, out_gy = grad_fn(x, y)
@@ -2680,7 +2690,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       _, a2 = lax.optimization_barrier((tok, a))
       return a2
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_tok = f_token(x)
 
     tok_lowered_text = f_token.lower(x).as_text()
@@ -2708,7 +2718,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       c_rep = jax.device_put(const_np, NamedSharding(mesh, P()))
       return a_host, b_dev + b_dev2 + c_rep
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_host, exp_dev = f(x, y_host)
 
     out_host, out_dev = f(x, y_host)
@@ -2733,7 +2743,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     grad_fn = jax.jit(jax.grad(loss, argnums=(0, 1)))
 
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_ga, exp_gb = grad_fn(x, y_host)
 
     out_ga, out_gb = grad_fn(x, y_host)
@@ -2758,7 +2768,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return remat_step(a).sum()
 
     remat_grad_fn = jax.jit(jax.grad(remat_loss))
-    with config.jax_partitioning(False):
+    with mesh.jax_partitioning(False):
       exp_remat_grad = remat_grad_fn(x)
 
     out_remat_grad = remat_grad_fn(x)
