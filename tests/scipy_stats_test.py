@@ -224,67 +224,43 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfHighPrecisionAndFloat32Maximum(self, dtype):
-    # SciPy's double-precision lgamma expression loses several millilog
-    # units near 1e12, so these references are independently evaluated at
-    # 100 decimal digits after rounding inputs to the target dtype.
-    cases = {
-        np.dtype(np.float32): (
-            np.asarray(
-                [1e12] * 5 + [1e36, 1e37, 1e38], dtype=np.float32),
-            np.asarray(
-                [
-                    999996981248.0, 999999012864.0, 999999995904.0,
-                    1000000978944.0, 1000003010560.0,
-                    1e36, 1e37, 1e38,
-                ],
-                dtype=np.float32,
-            ),
-            np.asarray(
-                [
-                    -19.278527565852926, -15.217632578709662,
-                    -14.73444908912103, -15.217633245090314,
-                    -19.27852144795942,
-                ] + list(
-                    -0.5 * (
-                        np.log(2 * np.pi)
-                        + np.log(np.asarray([1e36, 1e37, 1e38], dtype=np.float64))
-                    )
-                ),
-                dtype=np.float64,
-            ),
-            2e-5,
-        ),
-        np.dtype(np.float64): (
-            np.asarray([1e12] * 5, dtype=np.float64),
-            np.asarray(
-                [
-                    999997000000.0, 999999000000.0, 1000000000000.0,
-                    1000001000000.0, 1000003000000.0,
-                ],
-                dtype=np.float64,
-            ),
-            np.asarray(
-                [
-                    -19.23445209117353, -15.23444875783553,
-                    -14.73444909116903, -15.234449424502197,
-                    -19.23444609117353,
-                ],
-                dtype=np.float64,
-            ),
-            1e-8,
-        ),
-    }
-    mu, k, expected, atol = cases[np.dtype(dtype)]
+    # Independently evaluated high-precision values cover the large-rate
+    # central region where SciPy's direct lgamma expression loses accuracy.
+    if dtype == np.float32:
+      mu = np.asarray([1e12] * 5 + [1e36, 1e37, 1e38], dtype=dtype)
+      k = np.asarray([
+          999996981248.0, 999999012864.0, 999999995904.0,
+          1000000978944.0, 1000003010560.0, 1e36, 1e37, 1e38,
+      ], dtype=dtype)
+      expected = np.asarray([
+          -19.278527565852926, -15.217632578709662,
+          -14.73444908912103, -15.217633245090314,
+          -19.27852144795942,
+          *(-0.5 * (np.log(2 * np.pi)
+                     + np.log(np.asarray([1e36, 1e37, 1e38],
+                                         dtype=np.float64)))),
+      ], dtype=np.float64)
+      atol = 2e-5
+    else:
+      mu = np.asarray([1e12] * 5, dtype=dtype)
+      k = np.asarray([
+          999997000000.0, 999999000000.0, 1000000000000.0,
+          1000001000000.0, 1000003000000.0,
+      ], dtype=dtype)
+      expected = np.asarray([
+          -19.23445209117353, -15.23444875783553,
+          -14.73444909116903, -15.234449424502197,
+          -19.23444609117353,
+      ], dtype=np.float64)
+      atol = 1e-8
 
     def args_maker():
       return [k, mu]
 
-    actual = lsp_stats.poisson.logpmf(k, mu)
-    self.assertAllClose(
-        actual, expected, check_dtypes=False, rtol=0.0, atol=atol)
-    self._CompileAndCheck(
-        lsp_stats.poisson.logpmf, args_maker,
-        check_dtypes=False, rtol=0.0, atol=atol)
+    self.assertAllClose(lsp_stats.poisson.logpmf(k, mu), expected,
+                        check_dtypes=False, rtol=0.0, atol=atol)
+    self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
+                          check_dtypes=False, rtol=0.0, atol=atol)
 
   @jtu.sample_product(derivative_order=[1, 2], use_jit=[False, True])
   def testPoissonLogPmfTinyRateDerivatives(
