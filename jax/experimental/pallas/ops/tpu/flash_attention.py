@@ -638,12 +638,16 @@ def _flash_attention_impl(
           q_seq_index, block_q, kv_seq_index, block_k_major
       )
       # If the ab block is skipped, prefetch the next valid ab block, i.e. the
-      # 0th kv to be used for the next block_q rows.
+      # 0th kv to be used for the next block_q rows. The grid has
+      # pl.cdiv(q_seq_len, block_q) q blocks (block_q need not divide
+      # q_seq_len), so the wrap-around must use the same ceiling.
       next_q_index = lax.select(
           should_run,
           q_seq_index,
           lax.select(
-              q_seq_index == (q_seq_len // block_q) - 1, 0, q_seq_index + 1
+              q_seq_index == pl.cdiv(q_seq_len, block_q) - 1,
+              0,
+              q_seq_index + 1,
           ),
       )
       next_kv_index = lax.select(should_run, kv_seq_index, 0)
