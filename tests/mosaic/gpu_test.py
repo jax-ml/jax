@@ -2995,9 +2995,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     if (
         scale_jax_dtype == jnp.float8_e4m3fn
         and block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
+        and not jtu.is_sm107f()
     ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+      self.skipTest("e4m3fn scale with block size != 16 requires sm_107f.")
     self._run_mma_block_scaled_collective(
         m=m,
         n=n,
@@ -3056,9 +3056,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     if (
         scale_jax_dtype == jnp.float8_e4m3fn
         and block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
+        and not jtu.is_sm107f()
     ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+      self.skipTest("e4m3fn scale with block size != 16 requires sm_107f.")
     self._run_mma_block_scaled_collective(
         m=256,
         n=128,
@@ -3758,9 +3758,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     if (
         scale_jax_dtype == jnp.float8_e4m3fn
         and base_block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
+        and not jtu.is_sm107f()
     ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+      self.skipTest("e4m3fn scale with block size != 16 requires sm_107f.")
     self._run_mma_block_scaled_sparse_f4(
         m=m,
         n=n,
@@ -6403,10 +6403,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
 
     # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rz) support added in PTX ISA
     # 9.4 (CUDA 13.4) on sm_107f. f8e5m3fnu supports .rz and .rp on sm_107f.
-    if (
-        jtu.is_cuda_compute_capability_equal("10.7")
-        and jtu.is_cuda_version_at_least(13, 4)
-    ):
+    if jtu.is_sm107f() and jtu.is_cuda_version_at_least(13, 4):
       uint_dtype = jnp.uint4 if dst_dtype == jnp.float4_e2m1fn else jnp.uint8
       rn_bits = expected_rn.view(uint_dtype)
       rounded_away = np.abs(expected_rn.astype(np.float32)) > np.abs(
@@ -7446,7 +7443,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
     shape = (elems_per_thread * 128,)
     x = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
     y = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
-    if not jtu.is_cuda_compute_capability_equal("10.7"):
+    if not jtu.is_sm107f():
       with self.assertRaisesRegex(
           NotImplementedError,
           "Packed 8-bit integer ALU instructions require sm_107f",
