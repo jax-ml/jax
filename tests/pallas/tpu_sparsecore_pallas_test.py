@@ -208,6 +208,33 @@ class PallasSCTest(jtu.JaxTestCase):
     if self.USE_TC_TILING:
       self.skipTest(f"TC tiling is not supported. {reason}")
 
+  def _unaligned_num_offsets(self, offset_kind: str) -> int:
+    nl = self.num_lanes
+    return {"sub_vreg": nl - 3, "two_vregs": nl + nl // 4}[offset_kind]
+
+  @staticmethod
+  def _load_indirect_indices(
+      idx_ref, num_offsets: int, index_mode: str, sentinel: int | None
+  ):
+    if index_mode == "load_slice":
+      idx = idx_ref[:num_offsets]
+    elif index_mode == "vec_slice":
+      idx = idx_ref[...][:num_offsets]
+    else:
+      idx = idx_ref[...]
+    return (
+        plsc.Indices(idx, ignored_value=sentinel)
+        if sentinel is not None
+        else idx
+    )
+
+  @staticmethod
+  def _pad_indices(
+      active_idx: np.ndarray, padded_rows: int, pad_modulus: int
+  ) -> np.ndarray:
+    pad = np.arange(padded_rows - len(active_idx), dtype=np.int32) % pad_modulus
+    return np.concatenate([active_idx, pad])
+
 
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
@@ -908,6 +935,112 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(
         kernel(x, indices), x[indices[:indices.size // 2]]
     )
+
+  _UNALIGNED_INDIRECT_DMA_CASES = (
+      ((), False, "load_slice"),
+      ((), True, "vec_slice"),
+      ((128,), False, "vec_slice"),
+      ((128,), True, "load_slice"),
+      ((256,), False, "direct"),
+  )
+
+  @parameterized.product(
+      offset_kind=["sub_vreg", "two_vregs"],
+      case=_UNALIGNED_INDIRECT_DMA_CASES,
+  )
+  def test_unaligned_gather_array(self, offset_kind, case):
+    slice_shape, filter_indices, index_mode = case
+    if not slice_shape and jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
+    nl = self.num_lanes
+    num_offsets = self._unaligned_num_offsets(offset_kind)
+    has_canary_tail = index_mode != "direct"
+    buf_rows = 2 * nl if has_canary_tail else num_offsets
+    table_rows = 4 * nl
+    table_shape = (table_rows, *slice_shape)
+    buf_shape = (buf_rows, *slice_shape)
+    canary, sentinel = -777, (-1 if filter_indices else None)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=buf_shape, dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ),
+    )
+    def kernel(table_hbm_ref, idx_ref, init_hbm_ref, o_ref):
+      @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.DMA)
+      def _(sem):
+        pltpu.async_copy(init_hbm_ref, o_ref, sem).wait()
+        dst = o_ref.at[:num_offsets] if has_canary_tail else o_ref
+        indices = self._load_indirect_indices(
+            idx_ref, num_offsets, index_mode, sentinel
+        )
+        pltpu.async_copy(table_hbm_ref.at[indices], dst, sem).wait()
+
+    table = np.arange(math.prod(table_shape), dtype=jnp.int32).reshape(
+        table_shape
+    )
+    active_idx = np.random.default_rng(42).integers(
+        0, table_rows, size=(num_offsets,), dtype=np.int32
+    )
+    if filter_indices:
+      active_idx[[1, -1]] = sentinel
+    idx = self._pad_indices(active_idx, buf_rows, table_rows)
+    init = np.full(buf_shape, canary, dtype=np.int32)
+
+    expected = init.copy()
+    valid = active_idx != sentinel
+    expected[:num_offsets][valid] = table[active_idx[valid]]
+    np.testing.assert_array_equal(kernel(table, idx, init), expected)
+
+  @parameterized.product(
+      offset_kind=["sub_vreg", "two_vregs"],
+      case=_UNALIGNED_INDIRECT_DMA_CASES,
+  )
+  def test_unaligned_scatter_array(self, offset_kind, case):
+    slice_shape, filter_indices, index_mode = case
+    if not slice_shape and jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
+    nl = self.num_lanes
+    num_offsets = self._unaligned_num_offsets(offset_kind)
+    # Cover scattering from a slice of a larger VMEM buffer.
+    slice_source = index_mode != "direct"
+    buf_rows = 2 * nl if slice_source else num_offsets
+    table_rows = 4 * nl
+    table_shape = (table_rows, *slice_shape)
+    buf_shape = (buf_rows, *slice_shape)
+    canary, sentinel = -777, (-1 if filter_indices else None)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=table_shape, dtype=jnp.int32),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(updates_ref, idx_ref, dst_init_ref, o_hbm_ref):
+      pltpu.sync_copy(dst_init_ref, o_hbm_ref)
+      src = updates_ref.at[:num_offsets] if slice_source else updates_ref
+      indices = self._load_indirect_indices(
+          idx_ref, num_offsets, index_mode, sentinel
+      )
+      pltpu.sync_copy(src, o_hbm_ref.at[indices])
+
+    updates = np.arange(1, math.prod(buf_shape) + 1, dtype=np.int32).reshape(
+        buf_shape
+    )
+    # Reserve [0, nl) as poison rows targeted only by padding slots.
+    active_idx = np.random.default_rng(99).permutation(
+        np.arange(nl, table_rows, dtype=np.int32)
+    )[:num_offsets]
+    if filter_indices:
+      active_idx[[0, -1]] = sentinel
+    idx = self._pad_indices(active_idx, buf_rows, nl)
+    dst_init = np.full(table_shape, canary, dtype=np.int32)
+
+    expected = dst_init.copy()
+    valid = active_idx != sentinel
+    expected[active_idx[valid]] = updates[:num_offsets][valid]
+    np.testing.assert_array_equal(kernel(updates, idx, dst_init), expected)
 
   def test_gather_1d_with_dynamically_sized_ref(self):
     if jtu.is_device_tpu(8, "i"):
@@ -2571,6 +2704,108 @@ class VectorSubcoreTest(PallasSCTest):
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
+  @parameterized.product(
+      offset_kind=["sub_vreg", "two_vregs"],
+      trailing_shape=[(), (128,)],
+      filter_indices=[False, True],
+  )
+  def test_unaligned_gather_add_array(
+      self, offset_kind, trailing_shape, filter_indices
+  ):
+    if not trailing_shape and jtu.is_device_tpu(8, "i"):
+      self.skipTest("Sub-32-byte HBM gather is not supported on TPU v8i")
+    nl = self.num_lanes
+    num_offsets = self._unaligned_num_offsets(offset_kind)
+    table_shape = (4 * nl, *trailing_shape)
+    buf_shape = (2 * nl, *trailing_shape)
+    sentinel = -1 if filter_indices else None
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(buf_shape, jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, init_hbm_ref, o_ref):
+      pltpu.sync_copy(init_hbm_ref, o_ref)
+      indices = self._load_indirect_indices(
+          indices_ref, num_offsets, "load_slice", sentinel
+      )
+      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref.at[:num_offsets], add=True)
+
+    x = np.arange(1, math.prod(table_shape) + 1, dtype=np.int32).reshape(
+        table_shape
+    )
+    active_idx = np.random.default_rng(7).integers(
+        0, 4 * nl, size=(num_offsets,), dtype=np.int32
+    )
+    if filter_indices:
+      active_idx[[0, -1]] = sentinel
+    indices = self._pad_indices(active_idx, 2 * nl, 4 * nl)
+    init = np.full(buf_shape, -777, dtype=np.int32)
+    init[:num_offsets] = 10
+
+    expected = init.copy()
+    valid = active_idx != sentinel
+    expected[:num_offsets][valid] += x[active_idx[valid]]
+    np.testing.assert_array_equal(kernel(x, indices, init), expected)
+
+  @parameterized.product(
+      offset_kind=["sub_vreg", "two_vregs"],
+      trailing_shape=[(), (128,)],
+      filter_indices=[False, True],
+  )
+  def test_unaligned_scatter_add_array(
+      self, offset_kind, trailing_shape, filter_indices
+  ):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("VMEM_SHARED is not supported on TPU v8i.")
+    nl = self.num_lanes
+    num_offsets = self._unaligned_num_offsets(offset_kind)
+    table_shape = (3 * nl, *trailing_shape)
+    buf_shape = (2 * nl, *trailing_shape)
+    sentinel = -1 if filter_indices else None
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(table_shape, jnp.float32),
+        scratch_shapes=(pltpu.VMEM_SHARED(table_shape, jnp.float32),),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core",
+            subcore_axis_name="subcore",
+            num_cores=1,
+            num_subcores=1,
+        ),
+    )
+    def kernel(init_ref, updates_ref, indices_ref, o_ref, shared_ref):
+      pltpu.sync_copy(init_ref, shared_ref)
+      indices = self._load_indirect_indices(
+          indices_ref, num_offsets, "load_slice", sentinel
+      )
+      pltpu.sync_copy(
+          updates_ref.at[:num_offsets], shared_ref.at[indices], add=True
+      )
+      pltpu.sync_copy(shared_ref, o_ref)
+
+    init = np.full(table_shape, 10.0, dtype=np.float32)
+    updates = np.arange(1, math.prod(buf_shape) + 1, dtype=np.float32).reshape(
+        buf_shape
+    )
+    # Include duplicate target rows and reserve [0, nl) as poison rows.
+    active_idx = np.array(
+        [nl + (i % max(1, num_offsets // 2)) for i in range(num_offsets)],
+        dtype=np.int32,
+    )
+    if filter_indices:
+      active_idx[[1, -1]] = sentinel
+    indices = self._pad_indices(active_idx, 2 * nl, nl)
+
+    expected = init.copy()
+    valid = active_idx != sentinel
+    np.add.at(expected, active_idx[valid], updates[:num_offsets][valid])
+    np.testing.assert_array_equal(kernel(init, updates, indices), expected)
+
   def test_scatter_add_hbm(self):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
@@ -3580,6 +3815,64 @@ class PipelineTest(PallasSCTest):
 
     np.testing.assert_array_equal(
         kernel(x, indices), jnp.take(x, indices, axis=0)
+    )
+
+  @parameterized.parameters("sub_vreg", "two_vregs")
+  def test_unaligned_gather_via_indirect(self, offset_kind):
+    self.skip_if_tc_tiling()
+    if plsc.get_sparse_core_info().num_cores < 2:
+      self.skipTest("Test requires at least 2 SparseCores.")
+    nl = self.num_lanes
+    num_offsets = self._unaligned_num_offsets(offset_kind)
+    num_rows, num_steps = 4 * nl, 4
+    x = jnp.arange(num_rows * nl, dtype=jnp.int32).reshape(num_rows, nl)
+    active_indices = np.random.default_rng(42).integers(
+        0, num_rows, size=(num_steps, num_offsets), dtype=np.int32
+    )
+    padded_indices = np.stack([
+        self._pad_indices(row, 2 * nl, num_rows) for row in active_indices
+    ])
+
+    @self.kernel(
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=2
+        ),
+        out_type=jax.ShapeDtypeStruct(
+            shape=(num_steps, num_offsets, nl), dtype=jnp.int32
+        ),
+        scratch_types=dict(
+            indices_ref=pltpu.VMEM(padded_indices.shape, padded_indices.dtype),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_hbm_ref, o_hbm_ref, *, indices_ref):
+      pltpu.sync_copy(indices_hbm_ref, indices_ref)
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=(
+              pl.BlockSpec(
+                  (pl.Indirect(num_offsets), nl),
+                  lambda i: (indices_ref[i, :num_offsets], 0),
+              ),
+          ),
+          out_specs=pl.BlockSpec(
+              (pl.Squeezed(), num_offsets, nl), lambda i: (i, 0, 0)
+          ),
+          tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
+      )
+      def pipeline(step, x_ref, o_ref):
+        del step
+
+        @pl.loop(0, num_offsets)
+        def _(j):
+          o_ref[j] = x_ref[j]
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(
+        kernel(x, padded_indices), jnp.take(x, active_indices, axis=0)
     )
 
   def test_explicit_sc_tiling_1d(self):
