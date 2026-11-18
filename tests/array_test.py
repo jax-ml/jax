@@ -16,6 +16,7 @@ import concurrent.futures
 import contextlib
 import math
 import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,6 +26,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.interpreters import pxla
 from jax._src.lib import _jax
 from jax._src.lib import xla_version
 from jax._src.lib import jaxlib_extension_version
@@ -1568,6 +1570,45 @@ class ShardingTest(jtu.JaxTestCase):
   def test_mesh_with_axis_name_none(self):
     with self.assertRaisesRegex(ValueError, 'Mesh axis names cannot be None.'):
       jax.sharding.Mesh(jax.devices(), (None, 'x'))
+
+  @jtu.thread_unsafe_test()
+  def test_abstract_to_concrete_mesh_reuses_interned_mesh(self):
+    shape = (2, 2) if jax.device_count() >= 4 else (1,)
+    axis_types = (AxisType.Explicit, AxisType.Auto)[:len(shape)]
+    devices = np.array(
+        jax.devices()[:math.prod(shape)], dtype=object).reshape(shape)
+    device_list = xc.DeviceList(tuple(devices.flat))
+
+    cold_names = ('a', 'b')[:len(shape)]
+    cold = pxla._abstract_to_concrete_mesh(
+        AbstractMesh(shape, cold_names, axis_types), device_list)
+    np.testing.assert_array_equal(cold.devices, devices)
+    self.assertFalse(cold.devices.flags.writeable)
+    self.assertIs(cold, Mesh(devices, cold_names, axis_types))
+    self.assertIs(
+        pxla._abstract_to_concrete_mesh(
+            AbstractMesh((1,), 'z', AxisType.Auto),
+            xc.DeviceList((devices.flat[0],))),
+        Mesh(devices.flat[:1], 'z'))
+
+    warm_names = ('x', 'y')[:len(shape)]
+    expected = Mesh(devices, warm_names, axis_types)
+    s_abs = NamedSharding(expected.abstract_mesh, P(warm_names[0]))
+    compiled = (
+        jax.jit(lambda x: x + 1, in_shardings=s_abs, out_shardings=s_abs)
+        .trace(jax.ShapeDtypeStruct((4,), np.int32))
+        .lower(lowering_platforms=(devices.flat[0].platform,))
+        .compile(device_assignment=device_list)
+    )
+    self.assertIs(compiled.output_shardings.mesh, expected)
+
+    pxla._abstract_to_concrete_mesh.cache_clear()
+    with mock.patch.object(
+        np, 'fromiter', autospec=True,
+        side_effect=AssertionError('unexpected np.fromiter')):
+      self.assertIs(
+          pxla._abstract_to_concrete_mesh(expected.abstract_mesh, device_list),
+          expected)
 
   def test_mesh_axis_types_mismatch(self):
     with self.assertRaisesRegex(

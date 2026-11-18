@@ -227,19 +227,21 @@ class BaseMesh:
 
 
 class _HashableDeviceArray:
-  __slots__ = ('array', 'device_list', '_hash')
+  __slots__ = ('array', 'device_list', 'shape', '_hash')
 
-  def __init__(self, array: np.ndarray, device_list: xc.DeviceList):
+  def __init__(self, array: np.ndarray | None, device_list: xc.DeviceList,
+               shape: tuple[int, ...]):
     self.array = array
     self.device_list = device_list
-    self._hash = hash((array.shape, device_list))
+    self.shape = shape
+    self._hash = hash((shape, device_list))
 
   def __hash__(self) -> int:
     return self._hash
 
   def __eq__(self, other: Any) -> bool:
     return (isinstance(other, _HashableDeviceArray)
-            and self.array.shape == other.array.shape
+            and self.shape == other.shape
             and self.device_list == other.device_list)
 
 
@@ -284,9 +286,14 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   @staticmethod
   @weak_value_interner
-  def _create(hashable_devices, axis_names, axis_types, size):
+  def _create(hashable_devices, axis_names, axis_types):
     devices = hashable_devices.array
+    if devices is None:
+      dl = hashable_devices.device_list
+      devices = np.fromiter(dl, dtype=object, count=len(dl)).reshape(
+          hashable_devices.shape)
     devices.flags.writeable = False
+    size = 0 if not axis_names and devices.item() is None else devices.size
     obj = object.__new__(Mesh)
     object.__setattr__(obj, 'devices', devices)
     object.__setattr__(obj, 'axis_names', axis_names)
@@ -315,10 +322,16 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     devices_flat = tuple(devices.flat)
     axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh',
                                        AxisType.Auto)
-    empty = not axis_names and devices_flat[0] is None
-    size = 0 if empty else math.prod(devices.shape)
-    hashable_devices = _HashableDeviceArray(devices, xc.DeviceList(devices_flat))
-    return cls._create(hashable_devices, axis_names, axis_types, size)
+    hashable_devices = _HashableDeviceArray(
+        devices, xc.DeviceList(devices_flat), devices.shape)
+    return cls._create(hashable_devices, axis_names, axis_types)
+
+  @classmethod
+  def _from_abstract_mesh(cls, abstract_mesh: AbstractMesh,
+                          device_list: xc.DeviceList) -> Mesh:
+    return cls._create(
+        _HashableDeviceArray(None, device_list, abstract_mesh.axis_sizes),
+        abstract_mesh.axis_names, abstract_mesh.axis_types)
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -519,9 +532,12 @@ class AbstractMesh(BaseMesh):
     object.__setattr__(obj, 'size', math.prod(axis_sizes) if axis_sizes else 0)
     return obj
 
-  def __new__(cls, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
+  def __new__(cls, axis_sizes: tuple[int, ...], axis_names: str | Sequence[str],
                axis_types: AxisType | tuple[AxisType, ...] | None = None,
                *, abstract_device=None):
+    if isinstance(axis_names, str):
+      axis_names = (axis_names,)
+    axis_names = tuple(axis_names)
     axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh',
                                        AxisType.Explicit)
     return AbstractMesh._create(axis_sizes, axis_names, axis_types, abstract_device)
