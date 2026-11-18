@@ -19,7 +19,6 @@ update these tests.
 
 import functools
 import math
-import unittest
 
 from absl.testing import absltest
 import jax
@@ -30,7 +29,6 @@ from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosa
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_matmul
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_boolean_constant
-from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -48,26 +46,6 @@ class CompatTest(bctu.CompatTestBase):
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
     super().setUp()
-
-  @unittest.skip("This test is checking backwards compatibility "
-                 "of Triton IR, but Triton doesn't promise backwards "
-                 "compatibility for its IR, and we have since removed "
-                 "the corresponding custom call from the guaranteed stable list.")
-  def test_triton_add_one(self):
-    if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      self.skipTest("Only works on GPUs with capability >= sm80")
-
-    def func(x):
-      def add_one(x_ref, o_ref):
-        o_ref[0] = x_ref[0] + 1
-      return pl.pallas_call(add_one,
-                            out_shape=jax.ShapeDtypeStruct((8,), jnp.float32),
-                            in_specs=[pl.BlockSpec((1,), lambda i: i)],
-                            out_specs=pl.BlockSpec((1,), lambda i: i),
-                            grid=8)(x)
-    data = self.load_testdata(triton_add_one.data_2024_05_02)
-
-    self.run_one_test(func, data)
 
   @jtu.ignore_warning(
       category=DeprecationWarning,

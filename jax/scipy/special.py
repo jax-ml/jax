@@ -51,8 +51,10 @@ from jax._src.scipy.special import (
   i0e as i0e,
   i1 as i1,
   i1e as i1e,
+  iv as iv,
   jn as jn,
   kl_div as kl_div,
+  kn as kn,
   log_ndtr as log_ndtr,
   log_softmax as log_softmax,
   loggamma as loggamma,
@@ -63,6 +65,7 @@ from jax._src.scipy.special import (
   multigammaln as multigammaln,
   ndtr as ndtr,
   ndtri as ndtri,
+  ndtri_exp as ndtri_exp,
   owens_t as owens_t,
   poch as poch,
   polygamma as polygamma,
@@ -74,6 +77,7 @@ from jax._src.scipy.special import (
   wofz as wofz,
   xlog1py as xlog1py,
   xlogy as xlogy,
+  yn as yn,
   zeta as zeta,
 )
 

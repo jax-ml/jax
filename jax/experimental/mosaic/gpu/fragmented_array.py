@@ -1745,7 +1745,7 @@ class FragmentedArray:
       return self._pointwise(arith.negf, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       if utils.bitwidth(self.mlir_dtype) == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1766,7 +1766,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1805,7 +1805,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1831,7 +1831,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -2086,7 +2086,7 @@ class FragmentedArray:
       width = utils.bitwidth(self.mlir_dtype)
       sign = "s" if self.is_signed else "u"
       if width == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -2119,7 +2119,7 @@ class FragmentedArray:
       width = utils.bitwidth(self.mlir_dtype)
       sign = "s" if self.is_signed else "u"
       if width == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -2260,6 +2260,8 @@ class FragmentedArray:
         mask = (1 << (bitwidth - 1)) - 1
         res_i = i_arr & mask
         return res_i.bitcast(self.mlir_dtype)
+      elif isinstance(self.mlir_dtype, ir.Float8E5M3FNUType):
+        return self
       return self._pointwise(absf)
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       if self.is_signed:
@@ -2521,6 +2523,7 @@ class FragmentedArray:
     f8e4m3fn = ir.Float8E4M3FNType.get()
     f8e5m2 = ir.Float8E5M2Type.get()
     f8e8m0fnu = ir.Float8E8M0FNUType.get()
+    f8e5m3fnu = ir.Float8E5M3FNUType.get()
     f4e2m1fn = ir.Float4E2M1FNType.get()
 
     cur_dtype = self.mlir_dtype
@@ -3067,7 +3070,10 @@ class FragmentedArray:
     # TODO(apaszke): Figure out proper satfinite control.
     arch = utils.get_arch()
     supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
-        f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
+        f8e4m3fn: (f16,),
+        f8e5m2: (f16,),
+        f8e8m0fnu: (bf16,),
+        f8e5m3fnu: (bf16, f16),
     }
     if ptx_isa_version >= 92 and arch >= utils.BLACKWELL:
       # Technically those downcasts are already supported in 91, but the casts
@@ -3075,7 +3081,10 @@ class FragmentedArray:
       supported_f8_f16[f8e4m3fn] += (bf16,)
       supported_f8_f16[f8e5m2] += (bf16,)
     f8_ptx_names: dict[ir.Type, str] = {
-        f8e4m3fn: "e4m3", f8e5m2: "e5m2", f8e8m0fnu: "ue8m0"
+        f8e4m3fn: "e4m3",
+        f8e5m2: "e5m2",
+        f8e8m0fnu: "ue8m0",
+        f8e5m3fnu: "ue5m3",
     }
     f16_ptx_names: dict[ir.Type, str] = {f16: "f16", bf16: "bf16"}
     f8_types = f8_ptx_names.keys()
@@ -3084,6 +3093,8 @@ class FragmentedArray:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
+    if f8e5m3fnu in {cur_dtype, new_dtype} and not arch.is_sm107f:
+      raise ValueError("f8e5m3fnu type only supported on sm_107f GPUs")
 
     def check_supported_rounding(allowed_roundings, hw_limitation: bool = True):
       if rounding is None:
@@ -3102,13 +3113,21 @@ class FragmentedArray:
         if rounding is None:
           return Rounding.TO_POSITIVE_INFINITY.ptx
         allowed_rounding = (Rounding.TO_ZERO, Rounding.TO_POSITIVE_INFINITY)
+      elif narrow_type == f8e5m3fnu:
+        if rounding is None:
+          return Rounding.TO_NEAREST_EVEN.ptx
+        allowed_rounding = (
+            Rounding.TO_NEAREST_EVEN,
+            Rounding.TO_ZERO,
+            Rounding.TO_POSITIVE_INFINITY,
+        )
       else:
         if rounding is None:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
         # .rz rounding for cvt.{e4m3x2,e5m2x2,e2m1x2}.{f32,f16x2,bf16x2} was
         # added in PTX ISA 9.4 and is only supported on sm_107f.
-        if arch == utils.RUBIN and ptx_isa_version >= 94:
+        if arch.is_sm107f and ptx_isa_version >= 94:
           allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx
@@ -3183,11 +3202,9 @@ class FragmentedArray:
         new_dtype == f4e2m1fn and cur_dtype in f8_ptx_names
     ):
       f8_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
-      if f16 in supported_f8_f16[f8_type]:
-        return self.astype(f16).astype(new_dtype, rounding=rounding)
-      if ptx_isa_version >= 92:
-        assert bf16 in supported_f8_f16[f8_type]
-        return self.astype(bf16).astype(new_dtype, rounding=rounding)
+      f16_type = supported_f8_f16[f8_type][0]
+      if f16_type == f16 or ptx_isa_version >= 92:
+        return self.astype(f16_type).astype(new_dtype, rounding=rounding)
       return self.astype(f32).astype(new_dtype, rounding=rounding)
     if cur_dtype == f4e2m1fn and new_dtype == f32:
       return self.astype(f16).astype(f32)

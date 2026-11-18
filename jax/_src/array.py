@@ -131,19 +131,6 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 
 @cache(max_size=4096, trace_context_in_key=False)
-def _cached_index_calc(s, shape):
-  map_ = s.addressable_devices_indices_map(shape)
-  seen_h_indices = set()
-  l = []
-  for array_index, index in enumerate(map_.values()):
-    h_index = hashed_index(index)
-    if h_index not in seen_h_indices:
-      seen_h_indices.add(h_index)
-      l.append((array_index, index))
-  return l
-
-
-@cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
   if s.is_fully_replicated and s.has_addressable_devices:
     return True
@@ -307,7 +294,10 @@ class ArrayImpl(basearray.Array):
 
   @property
   def sharding(self):
-    return self._sharding
+    s = self._sharding
+    if isinstance(s, NamedSharding):
+      assert not s.spec.unreduced
+    return s
 
   @property
   def device(self):
@@ -365,10 +355,8 @@ class ArrayImpl(basearray.Array):
     return self._value.tolist()
 
   def __format__(self, format_spec):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices):
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices):
       # Simulates behavior of https://github.com/numpy/numpy/pull/9883
       return format(self._value if self.ndim else self._value[()], format_spec)
     else:
@@ -397,9 +385,7 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name}'
 
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return f"Array(shape={self.shape}, {dtype_str}, sharding={self.sharding})"
-    elif self.is_fully_addressable or self.is_fully_replicated:
+    if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
@@ -417,10 +403,8 @@ class ArrayImpl(basearray.Array):
       return f"{prefix}shape={self.shape}, {dtype_str})"
 
   def __str__(self):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)
@@ -1208,7 +1192,13 @@ class UnreducedArray(basearray.Array):
   @property
   def format(self):
     lo_f = getattr(self._lo_val, 'format', None)
-    return Format(lo_f.layout, self.sharding) if lo_f is not None else None
+    if lo_f is None:
+      return None
+    lo_l = lo_f.layout
+    if isinstance(lo_l, Layout) and (k := len(self._hi_aval.sharding.spec.unreduced)):
+      lo_l = lo_l.update(
+          major_to_minor=tuple(m - k for m in lo_l.major_to_minor if m >= k))
+    return Format(lo_l, self.sharding)
 
   @property
   def addressable_shards(self):

@@ -270,7 +270,9 @@ bool PyDeviceList::IsFullyAddressable() {
   if (!is_fully_addressable_.has_value()) {
     ProcessIndices();
     CHECK(process_indices_.has_value());
-    if (process_indices_->size() > 1) {
+    if (process_indices_->empty()) {
+      is_fully_addressable_ = true;
+    } else if (process_indices_->size() > 1) {
       is_fully_addressable_ = false;
     } else {
       CHECK_EQ(process_indices_->size(), 1);

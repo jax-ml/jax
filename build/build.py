@@ -532,6 +532,8 @@ async def main():
   }
   if args.target_cpu is not None:
     target_cpu = wheel_cpus[args.target_cpu]
+  elif any("darwin_arm64" in opt for opt in args.bazel_options):
+    target_cpu = "arm64"
   elif any(
       "aarch64" in opt
       or "arm64" in opt
@@ -539,7 +541,7 @@ async def main():
       or opt == "--cpu=arm64"
       for opt in args.bazel_options
   ):
-    target_cpu = "aarch64"
+    target_cpu = "aarch64" if os_name == "linux" else "arm64"
   elif any(
       "x86_64" in opt
       or "amd64" in opt
@@ -609,7 +611,7 @@ async def main():
 
   if not args.disable_mkl_dnn:
     logging.debug("Enabling MKL DNN")
-    if target_cpu == "aarch64":
+    if target_cpu == "aarch64" and os_name == "linux":
       wheel_build_command_base.append("--config=mkl_aarch64_threadpool")
     else:
       wheel_build_command_base.append("--config=mkl_open_source_only")

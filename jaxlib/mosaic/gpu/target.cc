@@ -118,9 +118,12 @@ GetAssemblyToBinaryCompilationProvider() {
       absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
       compilation_provider([]() {
         constexpr bool enable_driver_compilation = false;
-        // Defaults mirror those used in `xla/debug_options_flags.cc`.
+        // Defaults mirror those used in `xla/debug_options_flags.cc`, except
+        // that nvJitLink is disabled because Mosaic GPU compiles a single
+        // self-contained PTX module and nvJitLink's relocatable compilation
+        // causes ptxas to ignore `setmaxnreg` (C7504).
         se::cuda::CompilationProviderOptions opts(
-            se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto,
+            se::cuda::CompilationProviderOptions::NvJitLinkMode::kDisabled,
             /*enable_libnvptxcompiler=*/se::IsLibNvPtxCompilerSupported(),
             enable_driver_compilation, std::string(kDefaultCudaDataDir));
         return se::cuda::AssembleCompilationProvider(opts);

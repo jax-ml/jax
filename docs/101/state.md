@@ -266,6 +266,46 @@ final = jax.freeze(x_ref)
 final
 ```
 
+(jax-101-ds)=
+### Dynamic slicing with `jax.ds`
+
+Inside traced code like {func}`jax.jit` or {func}`jax.lax.fori_loop`, a slice's
+length must be known statically so JAX can determine shapes at trace time.
+Standard Python slice syntax like `x_ref[start : stop]` fails when the bounds
+are traced values—for instance, when iterating over fixed-size blocks in a
+loop—even though each slice has constant length `4`:
+
+```{code-cell}
+:tags: [raises-exception]
+
+buf = jax.new_ref(jnp.ones(12))
+
+def step_bad(i, _):
+  prev = buf[(i - 1) * 4 : i * 4]
+  buf[i * 4 : (i + 1) * 4] += prev
+
+jax.lax.fori_loop(1, 3, step_bad, None)
+```
+
+Use {func}`jax.ds(start, size) <jax.ds>` to slice `size` starting at a `start`
+index using dynamic values (when creating new JAX `Array`s under `jit`, `size`
+must still be static). It works for both reading and writing `Ref`s (as well as
+slicing and `.at` updates on ordinary `Array`s; see {ref}`jax-101-arrays`):
+
+```{code-cell}
+@jax.jit
+def block_cumsum(x_ref):
+  block_size = 4
+  def step(i, _):
+    prev = x_ref[jax.ds((i - 1) * block_size, block_size)]
+    x_ref[jax.ds(i * block_size, block_size)] += prev
+
+  jax.lax.fori_loop(1, x_ref.shape[0] // block_size, step, None)
+
+block_cumsum(buf)
+print(buf)
+```
+
 ### Refs and purity
 
 How do refs square with the purity condition from

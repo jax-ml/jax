@@ -24,15 +24,15 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import lax
 from jax._src import numpy as jnp
-from jax._src.lax import lax
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import promote_dtypes_inexact
 
 
 def _fill_lanczos_kernel(radius, x):
-  y = radius * jnp.sin(np.pi * x) * jnp.sin(np.pi * x / radius)
+  y = radius * lax.sinpi(x) * lax.sinpi(x / radius)
   #  out = y / (np.pi ** 2 * x ** 2) where x >1e-3, 1 otherwise
   out = jnp.where(x > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
   return jnp.where(x > radius, 0., out)

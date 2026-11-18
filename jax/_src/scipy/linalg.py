@@ -800,7 +800,8 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   lu, pivots = lu_and_piv
   lu, b = promote_dtypes_inexact(jnp.asarray(lu), jnp.asarray(b))
   m, _ = lu.shape[-2:]
-  perm = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  perm = lax_linalg.lu_pivots_to_permutation(
+      jnp.asarray(pivots, dtype=np.int32), m)
   if b.ndim == 1:
     signature = "(n,n),(n),(n)->(n)"
   elif lu.ndim == b.ndim + 1 and lu.shape[-1] == b.shape[-1]:

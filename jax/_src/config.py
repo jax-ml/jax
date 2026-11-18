@@ -1496,7 +1496,7 @@ use_direct_linearize = bool_state(
 
 use_simplified_jaxpr_constants = bool_state(
     name='jax_use_simplified_jaxpr_constants',
-    default=False,
+    default=True,
     help=('Enable a simplification of the handling of closed-over constants '
           'in Jaxpr. The value `True` enables the new behavior. '
           'This flag will exist only briefly, while we transition '
@@ -1555,7 +1555,7 @@ _check_vma = bool_state(
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
           'improve memory usage and stability. Set True to use new '
@@ -1954,7 +1954,8 @@ allow_f16_reductions = bool_state(
     help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
           'Defaults to True.'),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
 
 
 traceback_filtering = enum_state(
@@ -2382,6 +2383,27 @@ use_high_dynamic_range_gumbel = bool_state(
     include_in_trace_context=True,
 )
 
+random_normal_mode = enum_state(
+    name='jax_random_normal_mode',
+    enum_values=['low', 'high', 'highest'],
+    default='low',
+    help='Default precision mode for jax.random.normal.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+legacy_random_uniform = bool_state(
+    name='jax_legacy_random_uniform',
+    default=True,
+    help=(
+        'If True, jax.random.uniform uses the legacy nmant-bit mantissa '
+        'bitcast conversion. If False, it uses the (nmant + 1)-bit '
+        'shift-and-scale conversion.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 jax_dump_ir_to = string_flag(
     name='jax_dump_ir_to',
     default=os.getenv('JAX_DUMP_IR_TO', ''),
@@ -2508,7 +2530,7 @@ distributed_verify_secure_credentials = bool_state(
 
 jax_accurate_erf_inv = bool_state(
     name='jax_accurate_erf_inv',
-    default=False,
+    default=True,
     help=(
         'Temporary flag enabling more accurate erf_inv lowering near'
         ' ``|x| = 1``.'
@@ -2517,10 +2539,44 @@ jax_accurate_erf_inv = bool_state(
     include_in_trace_context=True,
 )
 
-hijax_unreduced = bool_state(
-    name='hijax_unreduced',
+jax_tanh_sech_jvp = bool_state(
+    name='jax_tanh_sech_jvp',
     default=False,
-    help='Lower unreduced shardings via HiJAX instead of MLIR/Shardy.',
+    help=(
+        'Temporary flag enabling closed ``(tanh, sech^2)`` JVP for'
+        ' ``AccuracyMode.HIGHEST`` ``tanh`` and ``logistic``.'
+    ),
     include_in_jit_key=True,
     include_in_trace_context=True,
+)
+
+jax_accurate_logistic = bool_state(
+    name='jax_accurate_logistic',
+    default=False,
+    help=(
+        'Temporary flag enabling ``exp(-|x|)`` lowering for'
+        ' ``AccuracyMode.HIGHEST`` ``lax.logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_accurate_default_erfc = bool_state(
+    name='jax_accurate_default_erfc',
+    default=True,
+    help=(
+        'Temporary flag enabling single-branch polynomial default lowering'
+        ' for ``lax.erfc`` with subnormal support.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_partitioning = bool_state(
+    name='jax_partitioning',
+    default=False,
+    help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
 )

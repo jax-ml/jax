@@ -108,10 +108,10 @@ class RemTest(jtu.JaxTestCase):
 
     bounds = []
     input_ftz = [
-        (["cpu", "gpu"], False),
+        ("cpu", False),
     ]
     output_ftz = [
-        (["cpu", "gpu"], False),
+        ("cpu", False),
     ]
     util.check_nary_precision(
         self,

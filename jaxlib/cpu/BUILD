@@ -45,6 +45,7 @@ cc_library(
         "//jaxlib:ffi_helpers",
         "//jaxlib:tridiagonal_solve_perturbed",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",

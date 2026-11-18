@@ -22,7 +22,6 @@ import typing
 from jax.pallas.tpu import *  # noqa: F403
 
 # Deprecated APIs not exported from jax.pallas.tpu.
-from jax._src.pallas.mosaic.core import create_tensorcore_mesh as _deprecated_create_tensorcore_mesh
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as _deprecated_BufferedRefBase
 
 
@@ -33,11 +32,12 @@ _deprecations = {
         " implementation and should not be used.",
         _deprecated_BufferedRefBase,
     ),
-    # Added June 30, 2026
+    # Finalized in JAX v0.13.0
+    # TODO(slebedev): remove these for JAX v0.14.0.
     "create_tensorcore_mesh": (
         "pltpu.create_tensorcore_mesh is deprecated, use pltpu.TensorCoreMesh"
         " instead.",
-        _deprecated_create_tensorcore_mesh,
+        None,
     ),
     # Finalized in JAX v0.12.0
     # TODO(slebedev): remove these for JAX v0.13.0.
@@ -50,7 +50,6 @@ _deprecations = {
 
 if typing.TYPE_CHECKING:
   BufferedRefBase = _deprecated_BufferedRefBase
-  create_tensorcore_mesh = _deprecated_create_tensorcore_mesh
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

@@ -50,6 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.numpy import ufuncs as jnp_ufuncs
 from jax._src.util import safe_zip, tuple_update
 
@@ -359,7 +360,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -393,7 +394,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=nonempty_nonscalar_array_shapes,
+    shape=nonzerodim_shapes,
     dtype=all_dtypes,
     fill_value=[None, -1, 10, (-1,), (10,)],
     size=[1, 5, 10],
@@ -425,7 +426,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -633,6 +634,74 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
     self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
     self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testMatmulBroadcastOperandReduce(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41414
+    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
+      self.skipTest("Requires xla_version >= 84")
+    x = jnp.ones((64, 8), dtype=dtype)
+    y = jax.jit(lambda x: (x @ jnp.ones((8, 64), dtype)).sum())(x)
+    tol = {np.float16: 1e-2, jnp.bfloat16: 2e-2}
+    self.assertAllClose(y, np.asarray(32768.0, dtype=dtype), atol=tol, rtol=tol)
+
+  def testMatmulBroadcastOperandGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41414
+    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
+      self.skipTest("Requires xla_version >= 84")
+    rng = jtu.rand_default(self.rng())
+    x = rng((1000, 16), np.float32)
+    grad_fn = jax.jit(jax.grad(lambda s, x: jnp.sum(x.T @ (s * x))))
+    actual = grad_fn(np.float32(1.0), x)
+    expected = np.sum(x.T @ x)
+    tol = 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    self.assertAllClose(actual, expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape_and_transpose=[(16, 16, 256, False), (13, 13, 316, True)],
+      dtype=float_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  def testMatmulConstantLhsReduce(self, shape_and_transpose, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42651
+    if jtu.test_device_matches(["cpu"]) and jaxlib_extension_version < 525:
+      self.skipTest("Requires jaxlib_extension_version >= 525")
+    m, k, n, transpose_rhs = shape_and_transpose
+    rng = jtu.rand_default(self.rng())
+    tol = {
+        np.float16: 5e-2,
+        jnp.bfloat16: 2e-1,
+        np.float32: 1e-3,
+        np.float64: 1e-12,
+    }
+    c_np = (rng((m, k), dtype) * 0.25).astype(dtype)
+    rhs_shape = (n, k) if transpose_rhs else (k, n)
+    x_np = (rng(rhs_shape, dtype) * 0.25).astype(dtype)
+    c = jnp.asarray(c_np)
+    x = jnp.asarray(x_np)
+    x_mat = x_np.T if transpose_rhs else x_np
+    expected_dot = c_np.astype(np.float64) @ x_mat.astype(np.float64)
+    expected_col_sum = expected_dot.sum(axis=0).astype(dtype)
+    expected_total_sum = np.asarray(expected_dot.sum(), dtype=dtype)
+
+    def col_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def col_sum_const(rhs):
+      return (c_np @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def total_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum()
+
+    self.assertAllClose(
+        jax.jit(col_sum_arr)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(col_sum_const)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(total_sum_arr)(x), expected_total_sum, atol=tol, rtol=tol
+    )
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
@@ -2405,6 +2474,99 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               rtol=3e-3, atol=1e-3)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    fp=[
+      [0., np.inf, 1.],      # +inf at an interior knot
+      [0., -np.inf, 1.],     # -inf at an interior knot
+      [np.inf, 0., 1.],      # +inf at the left end knot
+      [-np.inf, 0., 1.],     # -inf at the left end knot
+      [0., 1., np.inf],      # +inf at the right end knot
+      [0., 1., -np.inf],     # -inf at the right end knot
+      [np.inf, np.inf, 1.],  # equal infinite values on both ends of an interval
+      [-np.inf, np.inf, 1.], # opposite infinities: interior stays NaN
+      [0., np.nan, 1.],      # NaN in fp must still propagate
+    ],
+    period=[None, 3.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpInfiniteFp(self, fp, period, left, right, dtype):
+    # Regression test: jnp.interp returned NaN at every point in or next to an
+    # interval with an infinite fp value, where numpy returns the knot value
+    # or +/-inf. The x values include every knot, interval midpoints, points
+    # outside [xp[0], xp[-1]], and a NaN.
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, np.nan], dtype),
+      np.array([0., 1., 2.], dtype),
+      np.array(fp, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    fp=[
+      [0., complex(np.inf, 1), 1.],                   # infinite real part
+      [0., complex(1, np.inf), 2.],                   # infinite imaginary part
+      [complex(np.inf, 2), complex(1, 3), 0.],        # infinite real part at the left end
+      [complex(1, 1), complex(np.inf, np.inf), 2.],   # both parts infinite
+      [complex(-np.inf, 0), complex(np.inf, 0), 1.],  # opposite infinities: interior stays NaN
+      [1j, complex(np.nan, 1), 2.],                   # NaN in one part propagates in that part
+      [complex(np.nan, 1), complex(2, np.inf), 3.],   # the rules apply per component
+      [complex(1, 2), complex(3, -1), complex(2, 0.5)],  # finite complex values
+    ],
+    period=[None, 3.0],
+    left=[None, 0, 1 + 2j],
+    right=[None, 1, -1j],
+    dtype=jtu.dtypes.complex,
+  )
+  def testInterpComplexFp(self, fp, period, left, right, dtype):
+    # numpy applies the infinite/NaN handling to the real and imaginary parts
+    # separately, so the result can be infinite in one part and finite in the
+    # other. The x values are the same as in testInterpInfiniteFp.
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    real_dtype = np.finfo(dtype).dtype
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, np.nan], real_dtype),
+      np.array([0., 1., 2.], real_dtype),
+      np.array(fp, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+    # For a NaN x, numpy returns nan+0j; the comparison above skips the
+    # imaginary part of NaN entries, so check it explicitly.
+    self.assertEqual(float(jnp_fun(*args_maker()).imag[-1]), 0.)
+
+  @jtu.sample_product(
+    period=[None, 5.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpGradFiniteFp(self, period, left, right, dtype):
+    # For finite fp, the gradient with respect to x is the slope of the
+    # interval containing x (the interval to the right of x at a knot).
+    kwds = dict(period=period, left=left, right=right)
+    xp = np.array([0., 1., 2., 4.], dtype)
+    fp = np.array([1., 3., 2., 6.], dtype)
+    x = np.array([0., 0.25, 1., 1.5, 2., 3., 4.], dtype)
+    g = jax.vmap(jax.grad(lambda z: jnp.interp(z, xp, fp, **kwds)))(x)
+    if period is None:
+      xp_ref, fp_ref, x_ref = xp, fp, x
+    else:
+      # numpy wraps the table around by one knot on each side.
+      xp_ref = np.concatenate([xp[-1:] - period, xp, xp[:1] + period])
+      fp_ref = np.concatenate([fp[-1:], fp, fp[:1]])
+      x_ref = x % period
+    i = np.clip(np.searchsorted(xp_ref, x_ref, side='right'), 1, len(xp_ref) - 1)
+    expected = (np.diff(fp_ref) / np.diff(xp_ref))[i - 1]
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1}.get(dtype, 1e-5)
+    self.assertAllClose(g, expected.astype(dtype), check_dtypes=False,
+                        rtol=tol, atol=tol)
+
   @jtu.sample_product([
     dict(x=0.5, left='extrapolate', expected=5),
     dict(x=1.5, left='extrapolate', expected=15),
@@ -2416,6 +2578,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     fp = jnp.array([10.0, 20.0, 30.0])
     actual = jnp.interp(x, xp, fp, **kwargs)
     self.assertAlmostEqual(actual, expected)
+
+  def testInterpLeftRightNotShared(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42317: calls
+    # with different static left/right must not share a dispatch cache entry.
+    xp = jnp.array([0., 1., 2.])
+    fp = jnp.array([10., 20., 30.])
+    x = jnp.array([-1., 0.5, 3.])
+    self.assertArraysEqual(jnp.interp(x, xp, fp, left=0),
+                           jnp.array([0., 15., 30.]))
+    self.assertArraysEqual(jnp.interp(x, xp, fp, right=1),
+                           jnp.array([10., 15., 1.]))
 
   def testInterpErrors(self):
     with self.assertRaisesWithLiteralMatch(
@@ -2457,6 +2630,113 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = dtype(np.exp(np.linspace(-90, -20, 1000)))
     g = jax.grad(lambda z: jnp.sum(jnp_fun(z, z, jnp.ones_like(z))))(x)
     np.testing.assert_equal(np.all(np.isfinite(g)), True)
+    _, tangent = jax.jvp(
+        lambda z: jnp_fun(z, x, jnp.ones_like(x)), (x,), (jnp.ones_like(x),))
+    np.testing.assert_equal(np.all(np.isfinite(tangent)), True)
+
+    # Subnormal knot spacing at x == xp[0] should not produce NaN in grad wrt xp.
+    sub_step = np.nextafter(dtype(0), dtype(1))
+    if sub_step > 0:
+      xp_sub = np.array([0., 1., 2.], dtype)
+      xp_sub[1] = sub_step
+      fp_sub = np.array([0., 1., 2.], dtype)
+      g_xp = jax.grad(lambda xp_: jnp_fun(dtype(0), xp_, fp_sub))(xp_sub)
+      np.testing.assert_equal(np.any(np.isnan(g_xp)), False)
+
+  @jtu.sample_product(
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.all_floating,
+  )
+  def testInterpSmallDx(self, dtype, left, right):
+    # Regression test for https://github.com/jax-ml/jax/issues/42650:
+    # knot spacing smaller than eps**2 must still interpolate linearly and
+    # return fp[-1] at x == xp[-1].
+    kwds = dict(left=left, right=right)
+    np_fun = lambda x, xp, fp: np.interp(
+        x.astype(np.float64), xp.astype(np.float64), fp.astype(np.float64), **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    step = dtype(2.0 ** (2 * dtypes.finfo(dtype).machep - 1))
+    xp = np.array([0., 1., 2., 3.], dtype) * step
+    fp = np.array([1., 2., 4., 8.], dtype)
+    x = np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, 3., 3.5, np.nan], dtype) * step
+    args_maker = lambda: [x, xp, fp]
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1}.get(dtype, 1e-5)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            rtol=tol, atol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+    fp_grad = fp * dtypes.finfo(dtype).eps
+    x_mid = np.array([0.5, 1.5, 2.5], dtype) * step
+    g = jax.vmap(jax.grad(lambda z: jnp.interp(z, xp, fp_grad, **kwds)))(x_mid)
+    expected = np.diff(fp_grad) / np.diff(xp)
+    self.assertAllClose(g, expected, check_dtypes=False, rtol=tol, atol=tol)
+
+    # Out-of-bounds clamped x on a tiny boundary interval must have zero (non-NaN)
+    # gradient with respect to xp.
+    x_oob = np.array([-10., 10.], dtype)
+    g_oob = jax.grad(lambda xp_: jnp.sum(jnp.interp(x_oob, xp_, fp, **kwds)))(xp)
+    self.assertAllClose(g_oob, np.zeros_like(xp), check_dtypes=False)
+
+  @jtu.sample_product(
+    xp_fp=[
+      ([0., 0., 1.], [10., 20., 30.]),
+      ([0., 1., 1., 2.], [10., 20., 30., 40.]),
+      ([0., 1., 1.], [10., 20., 30.]),
+      ([0., 1., 1.], [10., 20., np.nan]),
+      ([0., 1., 1.], [10., np.nan, 30.]),
+      ([0., 1., 1.], [10., np.inf, 30.]),
+      ([1., 1., 1.], [10., 20., 30.]),
+    ],
+    period=[None, 3.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpDuplicateKnots(self, xp_fp, period, left, right, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42650:
+    # duplicate knots (dx == 0), including at the right endpoint, must match
+    # numpy.interp, propagate NaN in x, and produce finite gradients.
+    xp_list, fp_list = xp_fp
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.5, 1., 1.5, 2., 2.5, np.nan], dtype),
+      np.array(xp_list, dtype),
+      np.array(fp_list, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+    if period is None:
+      xp_arr = np.array(xp_list, dtype)
+      fp_arr = np.array(fp_list, dtype)
+      if np.all(np.isfinite(fp_arr)):
+        x_fin = np.array([-0.5, 0., 0.5, 1., 1.5, 2., 2.5], dtype)
+        gx, gxp, gfp = jax.grad(
+            lambda x_, xp_, fp_: jnp.sum(jnp_fun(x_, xp_, fp_)),
+            argnums=(0, 1, 2))(x_fin, xp_arr, fp_arr)
+        self.assertTrue(np.all(np.isfinite(gx)))
+        self.assertTrue(np.all(np.isfinite(gxp)))
+        self.assertTrue(np.all(np.isfinite(gfp)))
+      elif np.isfinite(fp_arr[-1]):
+        # When fp[-2] is NaN/Inf on a duplicate right endpoint, primal at x=1.0
+        # selects finite fp[-1] and must still have finite gradients.
+        gx, gxp, gfp = jax.grad(
+            lambda x_, xp_, fp_: jnp_fun(x_, xp_, fp_),
+            argnums=(0, 1, 2))(dtype(1.0), xp_arr, fp_arr)
+        self.assertTrue(np.all(np.isfinite(gx)))
+        self.assertTrue(np.all(np.isfinite(gxp)))
+        self.assertTrue(np.all(np.isfinite(gfp)))
+
+    # Duplicate +/-inf knots exercise the x_arr == xp_right check in f_alt.
+    if period is None:
+      for xp_inf in ([0., np.inf, np.inf], [-np.inf, -np.inf, 1.]):
+        args_inf = lambda xp_inf=xp_inf: [
+            np.array([-np.inf, -1., 0., 0.5, 1., 2., np.inf, np.nan], dtype),
+            np.array(xp_inf, dtype),
+            np.array([10., 20., 30.], dtype)]
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_inf, check_dtypes=False)
 
   @jtu.sample_product(
     [dict(x1_shape=x1_shape, x2_shape=x2_shape)
@@ -2889,6 +3169,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+    name=['blackman', 'bartlett', 'hamming', 'hanning'],
+    size=[1, 2, 3, 4, 5, 10, 16, 17],
+  )
+  def testWindowFunctionSymmetry(self, name, size):
+    w = getattr(jnp, name)(size)
+    self.assertArraysEqual(w, w[::-1])
+    if size % 2 == 1:
+      self.assertArraysEqual(w[size // 2], jnp.array(1, dtype=w.dtype))
+    if name in ('blackman', 'hanning') and size >= 2:
+      self.assertArraysEqual(w[0], jnp.array(0, dtype=w.dtype))
+      self.assertArraysEqual(w[-1], jnp.array(0, dtype=w.dtype))
+
+  @jtu.sample_product(
     [dict(shape=shape, fill_value_shape=fill_value_shape)
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_shape in _compatible_shapes(shape)],
@@ -3290,22 +3583,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
     # We only test explicit integer-valued bin edges because in other cases
     # rounding errors lead to flaky tests.
-    bins=[np.arange(-5, 6), np.array([-5, 0, 3])],
+    bins=[np.arange(-5, 6), np.array([-5, 0, 3]), 'sqrt', 'sturges'],
     density=[True, False],
     weights=[True, False],
   )
   def testHistogram(self, shape, dtype, bins, density, weights):
+    # Skip exact integers for string bins to avoid XLA boundary drift
+    if isinstance(bins, str) and not np.issubdtype(dtype, np.floating):
+      self.skipTest("XLA integer boundary drift with string estimators")
     rng = jtu.rand_default(self.rng())
     _weights = lambda w: abs(w) if weights else None
     def np_fun(a, w):
       # Numpy can't handle bfloat16
       a = a.astype('float32') if a.dtype == jnp.bfloat16 else a
       w = w.astype('float32') if w.dtype == jnp.bfloat16 else w
-      return np.histogram(a, bins=bins, density=density, weights=_weights(w))
+      with np.errstate(divide='ignore', invalid='ignore'):
+        return np.histogram(a, bins=bins, density=density, weights=_weights(w))
     jnp_fun = lambda a, w: jnp.histogram(a, bins=bins, density=density,
                                          weights=_weights(w))
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
-    tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
+    # 1. Gracefully catch NumPy's strict rule against weighted strings
+    if isinstance(bins, str) and weights:
+      with self.assertRaisesRegex(TypeError, "Automated estimation"):
+        jnp_fun(*args_maker())
+      return
+    tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1, np.float32: 5E-2, np.float64: 5E-2}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -3325,6 +3627,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda a: np.histogram_bin_edges(a, bins=bins)
     jnp_fun = lambda a: jnp.histogram_bin_edges(a, bins=bins)
     args_maker = lambda: [jnp.array([], dtype='float32')]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(size=[0, 10, 100], estimator=['sqrt', 'sturges'])
+  def testHistogramBinEdgesString(self, size, estimator):
+    np_fun = lambda a: np.histogram_bin_edges(a, bins=estimator)
+    jnp_fun = lambda a: jnp.histogram_bin_edges(a, bins=estimator)
+    args_maker = lambda: [np.arange(size, dtype='float32')]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4151,6 +4461,52 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jax.jit(jnp_fun)(*args_maker())
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      dtype=[jnp.uint8, jnp.int8, jnp.int16],
+      mode=['raise', 'wrap', 'clip'],
+      jit=[False, True],
+  )
+  def testChooseNarrowDtypeLargeN(self, dtype, mode, jit):
+    # Regression test for https://github.com/jax-ml/jax/issues/42464:
+    # `N = len(choices)` must not wrap when it does not fit in `a`'s dtype.
+    # uint8 and int16 use 300 choices (300 does not fit in uint8, but does
+    # fit in int16); int8 uses 128 choices (128 does not fit in int8).
+    if dtype == jnp.int8:
+      n_choices, last_idx = 128, 120
+    else:
+      n_choices, last_idx = 300, 250
+    choices = jnp.arange(3 * n_choices).reshape(n_choices, 3)
+    a = jnp.array([50, 1, last_idx], dtype=dtype)
+    expected = jnp.array([150, 4, 3 * last_idx + 2])
+    fun = partial(jnp.choose, mode=mode)
+    if jit:
+      fun = jax.jit(fun)
+    if jit and mode == 'raise':
+      msg = ("The error occurred because jnp.choose was jit-compiled"
+             " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
+      with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+        fun(a, choices)
+    else:
+      self.assertArraysEqual(fun(a, choices), expected)
+
+  @jtu.sample_product(
+    mode=['raise', 'wrap', 'clip'],
+  )
+  def testChooseLargeNOutOfBounds(self, mode):
+    # Out-of-bounds indices must still wrap/clip/raise as before, when the
+    # index dtype is large enough for the number of choices (no cast).
+    choices = jnp.arange(900).reshape(300, 3)
+    a = jnp.array([50, 301, 0], dtype=jnp.int16)
+    if mode == 'wrap':
+      self.assertArraysEqual(jnp.choose(a, choices, mode=mode),
+                             jnp.array([150, 4, 2]))
+    elif mode == 'clip':
+      self.assertArraysEqual(jnp.choose(a, choices, mode=mode),
+                             jnp.array([150, 898, 2]))
+    else:
+      with self.assertRaisesRegex(ValueError, "invalid entry in choice array"):
+        jnp.choose(a, choices, mode=mode)
 
   @jtu.sample_product(
     shape=nonempty_nonscalar_array_shapes,
@@ -5124,7 +5480,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(expected, actual)
 
   @jtu.sample_product(
-    dtype=inexact_dtypes,
+    dtype=all_dtypes,
     shape=[0, 5],
     n=[2, 4],
     increasing=[False, True],
@@ -5139,7 +5495,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.vander seems to return float64 for all floating types. We could obey
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                            tol={np.float32: 1e-3, np.complex64: 1e-3})
+                            tol={np.float32: 1e-3, np.complex64: 1e-3,
+                                 np.complex128: 1e-14})
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
@@ -5163,6 +5520,38 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp.nan_to_num, args_maker,
                             check_dtypes=check_dtypes)
     self._CompileAndCheck(jnp.nan_to_num, args_maker,
+                          check_dtypes=check_dtypes)
+
+  @jtu.sample_product(
+    shape=array_shapes,
+    dtype=all_dtypes,
+  )
+  def testNanToNumCustomSubstitutions(self, shape, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42406
+    rng = jtu.rand_some_inf_and_nan(self.rng())
+    dtype = np.dtype(dtypes.canonicalize_dtype(dtype)).type
+    def np_fun(x):
+      with np.errstate(invalid='ignore'):
+        if dtype == jnp.bfloat16:
+          res = x.astype(np.float32)
+          isnan_mask = np.isnan(res)
+          isposinf_mask = np.isposinf(res)
+          isneginf_mask = np.isneginf(res)
+          res = np.where(isnan_mask, np.inf, res)
+          res = np.where(isposinf_mask, 1.0, res)
+          res = np.where(isneginf_mask, 2.0, res)
+          return res.astype(dtype)
+        else:
+          return np.nan_to_num(
+              x, nan=np.inf, posinf=1.0, neginf=2.0
+          ).astype(dtype)
+
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_fun = lambda x: jnp.nan_to_num(x, nan=np.inf, posinf=1.0, neginf=2.0)
+    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            check_dtypes=check_dtypes)
+    self._CompileAndCheck(jnp_fun, args_maker,
                           check_dtypes=check_dtypes)
 
   @jtu.sample_product(

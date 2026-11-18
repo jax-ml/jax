@@ -93,7 +93,12 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
-ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+# TODO(phawkins): Simplify fallback and remove ifrt_version once the minimum
+# jaxlib version defines _xla_version.
+xla_version: int = getattr(
+    xla_client, '_xla_version', getattr(xla_client, '_ifrt_version', 0)
+)
+ifrt_version: int = xla_version
 
 import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401

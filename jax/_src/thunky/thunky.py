@@ -15,6 +15,7 @@
 """Python interface for programming the XLA:GPU Thunk Executor directly."""
 
 from collections.abc import Callable, Mapping, Sequence
+import contextlib
 import functools
 import math
 import struct
@@ -26,6 +27,8 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
+from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -1452,6 +1455,16 @@ def _add_main_buffer_arg(
   return new_arg
 
 
+@contextlib.contextmanager
+def _reset_axis_env():
+  prev_axis_env = core.trace_ctx.axis_env
+  core.trace_ctx.set_axis_env(core.AxisEnv())
+  try:
+    yield
+  finally:
+    core.trace_ctx.set_axis_env(prev_axis_env)
+
+
 def _lower_call_jax(
     ctx: ir.Context,
     target_block: ir.Block,
@@ -1489,25 +1502,40 @@ def _lower_call_jax(
     return fn(*actual_args)
 
   active_mesh = jax.sharding.get_abstract_mesh()
-  if not active_mesh.empty:
-    _wrapped_fn = jax.shard_map(
-        _wrapped_fn,
-        mesh=active_mesh,
-        in_specs=tuple(jax.sharding.PartitionSpec() for _ in unique_avals),
-        out_specs=jax.sharding.PartitionSpec(),
-        check_vma=False,
-    )
+  concrete_mesh = mesh_lib.get_concrete_mesh()
 
-  compiled = (
-      jax.jit(_wrapped_fn)
-      .trace(*unique_avals)
-      .lower(
-          _private_parameters=mlir.LoweringParameters(
-              hoist_constants_as_args=False
+  with (
+      _reset_axis_env(),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
+    try:
+      traced = jax.jit(_wrapped_fn).trace(*unique_avals)
+    except NameError:
+      if active_mesh.empty:
+        raise
+      devices = (
+          concrete_mesh.devices.reshape(active_mesh.axis_sizes)
+          if not concrete_mesh.empty
+          else np.array(jax.devices()[: active_mesh.size]).reshape(
+              active_mesh.axis_sizes
           )
       )
-      .compile()
-  )
+      compile_mesh = jax.sharding.Mesh(devices, active_mesh.axis_names)
+      _wrapped_fn = jax.shard_map(
+          _wrapped_fn,
+          mesh=compile_mesh,
+          in_specs=tuple(jax.sharding.PartitionSpec() for _ in unique_avals),
+          out_specs=jax.sharding.PartitionSpec(),
+          check_vma=False,
+      )
+      traced = jax.jit(_wrapped_fn).trace(*unique_avals)
+
+    compiled = traced.lower(
+        _private_parameters=mlir.LoweringParameters(
+            hoist_constants_as_args=False
+        )
+    ).compile()
   callee_module = jax_executable_to_mlir(compiled, ctx=ctx)
 
   out_ir_vals: list[ir.Value] = []

@@ -128,6 +128,9 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       ABSL_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
       ABSL_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
       ABSL_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
+#if PJRT_API_GPU_EXTENSION_VERSION >= 4
+      ABSL_ASSIGN_OR_RETURN(args.handler_record, handler("record"));
+#endif
       RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
       return absl::OkStatus();
     }

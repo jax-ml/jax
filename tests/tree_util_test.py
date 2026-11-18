@@ -28,6 +28,7 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import flattree as ft
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
@@ -1308,6 +1309,58 @@ class StaticTest(parameterized.TestCase):
         jax.tree_util.default_registry,
         bytes.fromhex("0a0408011002")
       )
+
+  def test_unpickle_malformed_treedef(self):
+    if jaxlib_extension_version < 520:
+      self.skipTest("Requires jaxlib_extension_version >= 520")
+    registry = jax.tree_util.default_registry
+
+    def unpickle_treedef(state):
+      t = jax.tree_util.PyTreeDef.__new__(jax.tree_util.PyTreeDef)
+      t.__setstate__(state)
+      return t
+
+    # Failing mid-traversal after >1 nodes used to leak the partially
+    # constructed PyTreeDef under LeakSanitizer.
+    with self.assertRaises(RuntimeError):
+      unpickle_treedef((
+          registry,
+          [
+              (0, 0, None, None, 1, 1),
+              (0, 0, None, None, 1, 1),
+              (0,),
+          ],
+      ))
+
+    @dataclasses.dataclass
+    class DcNode:
+      x: int
+      tag: int = 0
+
+    tree_util.register_dataclass(DcNode, data_fields=["x"], meta_fields=["tag"])
+
+    malformed_traversals = [
+        [(99, 0, None, None, 0, 1)],  # invalid PyTreeKind
+        [(0, -1, None, None, 1, 1)],  # negative arity
+        [(0, 0, None, None, 1, 1), (0, 0, None, None, 1, 1)],  # forest
+        [(2, 1, None, None, 0, 1)],  # arity exceeds preceding subtrees
+        # Inconsistent num_nodes used to abort/segfault in Children().
+        [(0, 0, None, None, 1, -1), (2, 1, None, None, 1, 2)],
+        # Dict arity mismatch with sorted_dict_keys length used to abort in
+        # MakeNode().
+        [(0, 0, None, None, 1, 1), (5, 1, [], None, 1, 2)],
+        # Registration kind mismatch (kCustom pointing at non-kCustom, and
+        # kDataclass pointing at kCustom).
+        [(6, 0, None, tuple, 0, 1)],
+        [(0, 0, None, None, 1, 1), (7, 1, (1,), ATuple2, 1, 2)],
+        # kDataclass arity / meta_fields tuple mismatches.
+        [(7, 0, (7,), DcNode, 0, 1)],
+        [(0, 0, None, None, 1, 1), (7, 1, (), DcNode, 1, 2)],
+        [(0, 0, None, None, 1, 1), (7, 1, None, DcNode, 1, 2)],
+    ]
+    for traversal in malformed_traversals:
+      with self.assertRaises(ValueError):
+        unpickle_treedef((registry, traversal))
 
   def test_compare_pytreedef_with_registries(self):
     class MyCustomType:

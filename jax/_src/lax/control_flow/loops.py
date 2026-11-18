@@ -62,8 +62,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
-from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
-from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
@@ -693,17 +691,7 @@ def _scan_impl(*args, reverse, length, ft_in, ft_out, jaxpr,
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
-  # If any carry leaf is unreduced, we need to add a reshard to
-  # typeof(carry).sharding which inserts a sharding_constraint so that shardy
-  # knows not to AR at the boundary of while. This is a no-op at the trace level
-  # but during lowering time, it inserts an extra sharding constraint.
-  carry = tree_map(_constrain_unreduced, carry)
-  ys = tree_map(_constrain_unreduced, ys)
   return [*carry, *ys]
-
-def _constrain_unreduced(val):
-  val_s = core.typeof(val).sharding
-  return reshard(val, val_s) if val_s.spec.unreduced else val
 
 def _split_leading(sz, x):
   return (slicing.slice_in_dim(x, 0, sz),
@@ -1614,8 +1602,9 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-mlir.register_lowering(scan_p,
-                       mlir.lower_fun(_scan_impl, multiple_results=True))
+mlir.register_lowering(
+    scan_p, mlir.lower_fun(_scan_impl, multiple_results=True),
+    shard_map_collective_rule=lambda *_, **__: None)
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
@@ -2615,7 +2604,8 @@ ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
-mlir.register_lowering(while_p, _while_lowering)
+mlir.register_lowering(
+    while_p, _while_lowering, shard_map_collective_rule=lambda *_, **__: None)
 state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
 pe.dce_rules[while_p] = _while_dce_rule
 
@@ -2840,30 +2830,15 @@ def fori_loop(lower, upper, body_fun, init_val,
 ### map and miscellaneous rules
 
 def _scan_leaf(leaf, batch_elems, num_batches, batch_size):
-  def f(l):
-    return l[:batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:])
-
   aval = core.typeof(leaf)
-  if aval.sharding.spec[0] is not None:
+  if aval.sharding.spec.partitions[0] is not None:
     raise ValueError(
         '0th dimension of leaf passed to `jax.lax.map` should be replicated.'
         f' Got {aval.str_short(True, True)}')
-
-  out_s = aval.sharding.update(spec=P(None, None, *aval.sharding.spec[1:]))
-  out_s = canonicalize_sharding(out_s, 'lax.map')
-  if out_s is not None and out_s.mesh._any_axis_explicit:
-    return auto_axes(f, out_sharding=out_s, axes=out_s.mesh.explicit_axes)(leaf)
-  return f(leaf)
+  return leaf[:batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:])
 
 def _remainder_leaf(leaf, batch_elems):
-  def f(l):
-    return l[batch_elems:]
-  sharding = canonicalize_sharding(core.typeof(leaf).sharding, 'lax.map')
-  if sharding is not None and sharding.mesh._any_axis_explicit:
-    return auto_axes(
-        f, out_sharding=sharding, axes=sharding.mesh.explicit_axes
-    )(leaf)
-  return f(leaf)
+  return leaf[batch_elems:]
 
 def _batch_and_remainder(x, batch_size: int):
   leaves, treedef = tree_flatten(x)
@@ -3276,7 +3251,8 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
         reducer_p,
         mlir.lower_fun(fn, multiple_results=False),
         platform=platform,
-        inline=False)
+        inline=False,
+        shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
   # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
   register_lowering(

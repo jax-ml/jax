@@ -118,7 +118,12 @@ _philox2x32_lowering_rule = mlir.lower_fun(
 
 # TODO(jakevdp): we could potentially speed this up with device-specific
 #   lowerings that take advantage of native 64-bit instructions.
-mlir.register_lowering(philox2x32_p, _philox2x32_lowering_rule, inline=False)
+mlir.register_lowering(
+    philox2x32_p,
+    _philox2x32_lowering_rule,
+    inline=False,
+    shard_map_collective_rule=lax._naryop_collective_rule,
+)
 
 
 # -- PRNGImpl functions --

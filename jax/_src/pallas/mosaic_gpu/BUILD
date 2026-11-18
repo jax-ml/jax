@@ -142,6 +142,7 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:api",
         "//jax/_src:batching",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:deprecations",

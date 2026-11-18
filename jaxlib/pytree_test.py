@@ -21,6 +21,7 @@ import warnings
 
 from absl.testing import absltest, parameterized
 from jax.jaxlib import _jax
+from jax.jaxlib import xla_client
 
 pytree = _jax.pytree
 
@@ -295,6 +296,20 @@ class PyTreeTest(parameterized.TestCase):
     )
     self.assertEqual(reconstructed, treedef)
     self.assertEqual(reconstructed.unflatten(leaves), fd)
+
+  @parameterized.named_parameters(
+      ("pytree_registry", pytree.PyTreeRegistry),
+      ("pytree_def", pytree.PyTreeDef),
+      ("dict_key", pytree.DictKey),
+  )
+  def testUninitializedGcTraverseAndClear(self, cls):
+    if xla_client._version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    obj = cls.__new__(cls)
+    cycle = [obj]
+    cycle.append(cycle)
+    del obj, cycle
+    gc.collect()
 
 
 if __name__ == "__main__":

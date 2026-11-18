@@ -104,6 +104,14 @@ try:
 except ImportError:
   pass
 
+try:
+  from jax._src.numpy.scalar_types import (
+      bcomplex32 as bcomplex32,
+      complex32 as complex32,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.lax_numpy import (
     apply_along_axis as apply_along_axis,
     arange as arange,

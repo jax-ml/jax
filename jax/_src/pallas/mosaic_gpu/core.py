@@ -259,7 +259,7 @@ class SemaphoreType(enum.Enum):
   def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
 
-  def get_ref_aval(self) -> _Ref:
+  def get_ref_aval(self) -> state.AbstractRef:
     return self(()).get_ref_aval()
 
 def _check_no_semaphore_outputs(out_type) -> None:
@@ -524,26 +524,26 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     assert (self.layout is not None) == is_tmem
     assert (self.collective is not None) == is_tmem
 
-  def get_ref_aval(self) -> _Ref:
-    aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
-    physical_aval = state_types.transform_type(self.transforms, aval)
+  def get_ref_aval(self) -> state.AbstractRef:
+    aval = jax_core.ShapedArray(self.shape, self.dtype)
+    # Also validates that `self.transforms` are compatible with `aval`.
+    _ = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
-      aval = AbstractTMEMRef(
+      return AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
-      physical_ref_aval = AbstractTMEMRef(
-          physical_aval, self.memory_space, self.layout, self.collective
-      )
-    else:
-      aval = state.AbstractRef(aval, memory_space=self.memory_space)
-      physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
-    transforms: list[state_types.Transform] = pallas_core.undo_transforms(
-        aval, self.transforms
-    )
-    ref = state_types.TransformedRef(physical_ref_aval, tuple(transforms))
-    if not ref.transforms:
-      return ref.ref
-    return ref
+    return state.AbstractRef(aval, memory_space=self.memory_space)
+
+  # Return type is a union because `RefUnion` subclasses `GPUMemoryRef` and
+  # overrides this method to return one `tuple[Transform, ...]` per aliased
+  # member ref (while keeping `RefUnion.transforms == ()` for its backing ref).
+  def get_ref_transforms(
+      self,
+  ) -> (
+      tuple[state_types.Transform, ...]
+      | tuple[tuple[state_types.Transform, ...], ...]
+  ):
+    return tuple(self.transforms)
 
 
 def align_to(x: int, alignment: int):
@@ -577,20 +577,23 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
   return size
 
 
+def _tmem_cols_for_ref(ref: GPUMemoryRef | AbstractTMEMRef) -> int:
+  # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+  # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+  # on the collapsed shape.
+  shape = ref.shape
+  if len(shape) > 2:
+    shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+  assert ref.layout is not None
+  return ref.layout.cols_in_shape(shape, dtypes.itemsize_bits(ref.dtype))
+
+
 def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """Returns the total number of TMEM columns used by a group of aliased Refs.
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
-    # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
-    # on the collapsed shape.
-    shape = ref.shape
-    if len(shape) > 2:
-      shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
-    ref_ncols = ref.layout.cols_in_shape(shape,
-                                         dtypes.itemsize_bits(ref.dtype))
-    ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
+    ncols += align_to(_tmem_cols_for_ref(ref), TMEM_COL_ALIGNMENT)
   return ncols
 
 
@@ -624,15 +627,9 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       def unflatten(ref):
         nonlocal byte_offset
         byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
-        assert isinstance(ref, state.AbstractRef) or isinstance(
-            ref, pallas_core.TransformedRef
-        )
-        if not isinstance(ref, pallas_core.TransformedRef):
-          ref = pallas_core.TransformedRef(ref, transforms=())
-        transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset, group_idx)
-        result = pallas_core.TransformedRef(
-            ref_union, transforms=(transform, *ref.transforms)
-        )
+        assert isinstance(ref, state.AbstractRef)
+        transform = ExtractAliasedRef.from_ref(ref, byte_offset, group_idx)
+        result = pallas_core.TransformedRef(ref_union, transforms=(transform,))
         if jnp.issubdtype(ref.dtype, jnp.integer):
           nbits = jnp.iinfo(ref.dtype).bits
         elif jnp.issubdtype(ref.dtype, jnp.floating):
@@ -657,18 +654,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       def unflatten(ref):
         nonlocal col_offset
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
-        if not isinstance(ref, pallas_core.TransformedRef):
-          ref = pallas_core.TransformedRef(ref, transforms=())
-        # `ref.ref.shape` is the physical (collapsed to 2D) TMEM shape, whereas
-        # `ref.shape` may carry leading batch dimensions.
-        ncols = ref.layout.cols_in_shape(ref.ref.shape,
-                                         dtypes.itemsize_bits(ref.dtype))
-        transform = ExtractAliasedRef.from_transformed_ref(
-            ref, col_offset, group_idx, layout=ref.layout)
-        result = pallas_core.TransformedRef(
-            ref_union, transforms=(transform, *ref.transforms)
-        )
-        col_offset += ncols
+        assert isinstance(ref, AbstractTMEMRef)
+        transform = ExtractAliasedRef.from_ref(ref, col_offset, group_idx)
+        result = pallas_core.TransformedRef(ref_union, transforms=(transform,))
+        col_offset += _tmem_cols_for_ref(ref)
         return result
       flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_cols = max(union_cols, col_offset)
@@ -792,6 +781,14 @@ class RefUnion(GPUMemoryRef):
     refs_aval = jax.tree.map(lambda ref: ref.get_ref_aval(), self.refs)
     return AbstractRefUnion(inner_aval, refs_aval,
                             memory_space=self.memory_space)
+
+  def get_ref_transforms(
+      self,
+  ) -> tuple[tuple[state_types.Transform, ...], ...]:
+    # Flatten via `jax.tree.leaves` rather than preserving the PyTree structure
+    # with `jax.tree.map` because `self.refs` may contain unhashable containers
+    # (e.g. `list` or `dict`), whereas `run_scoped_p` params must be hashable.
+    return tuple(tuple(ref.transforms) for ref in jax.tree.leaves(self.refs))
 
 
 Index = mgpu.DynamicSlice | slice | int | ir.Value
@@ -1371,14 +1368,16 @@ class ExtractAliasedRef(state_types.Transform):
   layout: tcgen05.TMEMLayout | None = jax.tree.static()
 
   @classmethod
-  def from_transformed_ref(
+  def from_ref(
       cls,
-      ref: pallas_core.TransformedRef,
-      byte_offset: int,
+      ref: state.AbstractRef,
+      offset: int,
       alias_group_idx: int,
-      layout: tcgen05.TMEMLayout | None = None,
-  ):
-    return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, alias_group_idx, layout)
+  ) -> ExtractAliasedRef:
+    layout = ref.layout if isinstance(ref, AbstractTMEMRef) else None
+    return cls(
+        dtypes.dtype(ref.dtype), ref.shape, offset, alias_group_idx, layout
+    )
 
   def transform_type(self, x):
     match x:
@@ -1650,7 +1649,8 @@ class BlockSpec(pallas_core.BlockSpec):
           "collective_axes is not supported in pallas_call. Use plgpu.kernel"
           " with plgpu.emit_pipeline_warp_specialized instead."
       )
-    bm = super().to_block_mapping(
+    assert not self.transforms
+    return super().to_block_mapping(
         origin,
         array_aval,
         index_map_avals=index_map_avals,
@@ -1659,15 +1659,6 @@ class BlockSpec(pallas_core.BlockSpec):
         vmapped_dims=vmapped_dims,
         allow_captured_consts=allow_captured_consts,
         debug=debug,
-    )
-    block_inner_aval = bm.block_aval.inner_aval
-    for t in self.transforms:
-      block_inner_aval = t.transform_type(block_inner_aval)
-    return bm.replace(
-        transformed_block_aval=bm.block_aval.update(
-            inner_aval=block_inner_aval
-        ),
-        transforms=self.transforms,
     )
 
 

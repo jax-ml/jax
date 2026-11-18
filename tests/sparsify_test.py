@@ -61,8 +61,8 @@ class SparsifyTest(jtu.JaxTestCase):
 
     # Test a generic not implemented primitive.
     with self.assertRaisesRegex(NotImplementedError,
-        r"^sparse rule for complex is not implemented\.$"):
-      self.sparsify(lax.complex)(x, x)
+        r"^sparse rule for atan2 is not implemented\.$"):
+      self.sparsify(lax.atan2)(x, x)
 
   def testTracerIsInstanceCheck(self):
     @self.sparsify
@@ -306,6 +306,40 @@ class SparsifyTest(jtu.JaxTestCase):
     out, = spvalues_to_arrays(spenv, args_out)
 
     self.assertAllClose(out.todense(), x.todense() - y.todense())
+
+  def testSparseComplex(self):
+    x = BCOO.fromdense(jnp.array([0.0, 1.0, 0.0, 3.0], dtype='float32'))
+    y = BCOO.fromdense(jnp.array([0.0, 0.0, 2.0, 4.0], dtype='float32'))
+    expected = lax.complex(x.todense(), y.todense())
+
+    # Distinct indices
+    out = self.sparsify(lax.complex)(x, y)
+    self.assertEqual(out.nse, 4)  # uses concatenation.
+    self.assertArraysEqual(out.todense(), expected)
+
+    # Shared indices
+    z = BCOO.fromdense(expected.reshape(2, 2))
+    out = self.sparsify(lambda a: lax.complex(lax.real(a), lax.imag(a)))(z)
+    self.assertBcooIdentical(out, z)
+
+    # Sparse + dense and dense + sparse
+    d = jnp.ones((4,), dtype='float32')
+    self.assertArraysEqual(
+        self.sparsify(lax.complex)(x, d), lax.complex(x.todense(), d))
+    self.assertArraysEqual(
+        self.sparsify(lax.complex)(d, y), lax.complex(d, y.todense()))
+
+    msg = "Addition between a sparse array X and a dense array Y is not implemented"
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      self.sparsify(lax.complex)(x, jnp.float32(1.0))
+
+    # Mixed real/complex arithmetic on BCOO
+    w = BCOO.fromdense(expected)
+    with jax.numpy_dtype_promotion('standard'):
+      self.assertArraysEqual((x + w).todense(), x.todense() + expected)
+      self.assertArraysEqual((x - w).todense(), x.todense() - expected)
+      self.assertArraysEqual((x * w).todense(), x.todense() * expected)
+      self.assertArraysEqual(w + d, expected + d)
 
   def testSparsePow(self):
     x = jnp.arange(20.0).reshape(4, 5)

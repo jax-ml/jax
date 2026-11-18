@@ -913,11 +913,22 @@ def _launch(
           cols_used = 0
           for alloc in tmem_allocs:
             cols_used += alloc.alloc()
-          if cols_used > tcgen05.TMEM_MAX_COLS:
+          # TODO(olechwierowicz): Alternatively we should be able to thread in
+          # `exclusive` parameter to tmem_alloc. Revisit this if there's a need
+          # to expose it in the API.
+          if len(tmem_allocs) == 1 and tcgen05.supports_tmem_alloc_expanded_columns():
+            # A single allocation can be exclusive, which gives access to all
+            # the TMEM columns.
+            max_cols = tcgen05.TMEM_EXCLUSIVE_MAX_COLS
+          else:
+            # Separate allocations cannot be exclusive, they have to fit in
+            # `tcgen05.TMEM_MAX_COLS`.
+            max_cols = tcgen05.TMEM_MAX_COLS
+          if cols_used > max_cols:
             raise ValueError(
                 "Total TMEM allocation exceeds memory limit. "
                 f"Requested {cols_used} columns which exceeds limit of "
-                f"{tcgen05.TMEM_MAX_COLS}."
+                f"{max_cols}."
             )
           collective_types = {alloc.collective for alloc in tmem_allocs}
           if len(collective_types) > 1:

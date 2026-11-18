@@ -88,7 +88,6 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src.api import jit
 from jax._src.lax import lax
@@ -388,17 +387,11 @@ def _shift4_f2(c0, c1):
   return f2_div(num0, num1, den0, den1)
 
 
-def _classify_and_reflect(x, cfg: _DigammaConfig, use_optimization_barrier: bool):
+def _classify_and_reflect(x, cfg: _DigammaConfig):
   """Classifies special regions and splits `x in (all_int_below, 0.5)` into `n + delta`."""
   one = lax.full_like(x, 1.0)
   inf = lax.full_like(x, np.inf)
   half_neg = lax.full_like(x, -0.5)
-  # Work around an older XLA:TPU constant-folding bug in libtpu < 0.0.51.
-  # TODO(phawkins): Remove once minimum libtpu version is at least 0.0.51.
-  if use_optimization_barrier and not cloud_tpu_init.is_libtpu_at_least(
-      "0.0.51"
-  ):
-    one = lax.optimization_barrier(one)
 
   # Substitute finite placeholders (`1.0` on the positive path, `-0.5` on the
   # reflection path) so inactive lanes never divide by zero or overflow
@@ -444,6 +437,8 @@ def _restore_special_outputs(
     is_delta_zero,
     gt_int_lim,
     is_zero_or_sub,
+    *,
+    subnormals: bool = False,
 ):
   """Applies near-root overrides and restores special outputs for NaN, poles, +-0, and +inf."""
   for x_i, y_i in cfg.overrides:
@@ -454,11 +449,20 @@ def _restore_special_outputs(
   res = lax.select(is_nan_out, lax.full_like(x, np.nan), res)
   bits = lax.bitcast_convert_type(x, cfg.int_dtype)
   zero_inf = lax.select(bits < 0, inf, -inf)
-  res = lax.select(is_zero_or_sub, zero_inf, res)
+  if subnormals:
+    is_exact_zero = x == 0.0
+    x_sub = lax.select(
+        is_zero_or_sub & (~is_exact_zero), x, lax.full_like(x, 0.125)
+    )
+    q = lax.div(lax._const(x, -4.0), x_sub * lax._const(x, 8.0))
+    tiny_out = lax.select(is_exact_zero, zero_inf, q + q)
+  else:
+    tiny_out = zero_inf
+  res = lax.select(is_zero_or_sub, tiny_out, res)
   return lax.select(x == inf, inf, res)
 
 
-def _digamma_cpu_f32(x, *, use_optimization_barrier: bool = False):
+def _digamma_cpu_f32(x, *, subnormals: bool = False):
   """Computes float32 digamma(x) to <= 1 ULP on CPU using native float64."""
   x = lax.convert_element_type(x, np.float32)
   (
@@ -473,7 +477,7 @@ def _digamma_cpu_f32(x, *, use_optimization_barrier: bool = False):
       n,
       _,
       delta_nz,
-  ) = _classify_and_reflect(x, _F32_CFG, use_optimization_barrier)
+  ) = _classify_and_reflect(x, _F32_CFG)
 
   xd = lax.convert_element_type(x_safe, np.float64)
   dd = lax.convert_element_type(delta_nz, np.float64)
@@ -512,11 +516,15 @@ def _digamma_cpu_f32(x, *, use_optimization_barrier: bool = False):
       is_delta_zero,
       gt_int_lim,
       is_zero_or_sub,
+      subnormals=subnormals,
   )
 
 
 def _digamma_f2(
-    x, cfg: _DigammaConfig, *, use_optimization_barrier: bool = False
+    x,
+    cfg: _DigammaConfig,
+    *,
+    subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP using `(hi, lo)` pairs."""
   x = lax.convert_element_type(x, cfg.dtype)
@@ -534,7 +542,7 @@ def _digamma_f2(
       n,
       delta,
       delta_nz,
-  ) = _classify_and_reflect(x, cfg, use_optimization_barrier)
+  ) = _classify_and_reflect(x, cfg)
 
   # Since n <= 0 on all lanes and |n| <= -all_int_below, `1 - n >= 1 > 0.5 >=
   # |delta|` is an exact integer in `cfg.dtype`, so `fast_two_sum(1 - n, -delta)`
@@ -639,23 +647,21 @@ def _digamma_f2(
       is_delta_zero,
       gt_int_lim,
       is_zero_or_sub,
+      subnormals=subnormals,
   )
 
 
 @config.explicit_x64_dtypes("allow")
-@jit(static_argnames=["use_f64_for_f32", "use_optimization_barrier"])
+@jit(static_argnames=["use_f64_for_f32", "subnormals"])
 def digamma_impl(
-    x, *, use_f64_for_f32: bool = False, use_optimization_barrier: bool = False
+    x,
+    *,
+    use_f64_for_f32: bool = False,
+    subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP."""
   if x.dtype == np.float64:
-    return _digamma_f2(
-        x, _F64_CFG, use_optimization_barrier=use_optimization_barrier
-    )
+    return _digamma_f2(x, _F64_CFG, subnormals=subnormals)
   if use_f64_for_f32:
-    return _digamma_cpu_f32(
-        x, use_optimization_barrier=use_optimization_barrier
-    )
-  return _digamma_f2(
-      x, _F32_CFG, use_optimization_barrier=use_optimization_barrier
-  )
+    return _digamma_cpu_f32(x, subnormals=subnormals)
+  return _digamma_f2(x, _F32_CFG, subnormals=subnormals)

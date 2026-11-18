@@ -193,7 +193,6 @@ class CompatTest(bctu.CompatTestBase):
       "tpu_custom_call",  # tested separately
       "mosaic_gpu_v2",  # tested in pallas/export_back_compat_pallas_test.py
       "AllocateBuffer",  # tested in pallas/export_back_compat_pallas_test.py
-      "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
       "hip_digamma_ffi", "hip_lgamma_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",

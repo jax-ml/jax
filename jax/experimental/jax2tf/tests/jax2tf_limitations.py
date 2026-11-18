@@ -140,7 +140,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
   @classmethod
   def fft(cls, harness):
     return [
-        custom_numeric(tol=1e-5, modes=("eager", "graph", "compiled"),
+        custom_numeric(tol=3e-5, modes=("eager", "graph", "compiled"),
                        devices=("cpu",)),
     ]
 

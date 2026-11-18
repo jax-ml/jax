@@ -178,16 +178,6 @@ def _get_num_threads_sharing_collective_allocation(
 _SENTINEL = jnp.inf
 
 
-def apply_layout_transforms(
-    transforms: tuple[state_types.Transform, ...],
-    aval: jax_core.AbstractValue,
-) -> jax_core.AbstractValue:
-  """Returns the logical aval of a ref stored with `transforms`."""
-  if not all(isinstance(t, memory.LAYOUT_TRANSFORMS) for t in transforms):
-    raise ValueError("Unsupported transforms:", transforms)
-  return state_types.TransformedRef(aval, transforms).type
-
-
 def union_members(
     aval: mosaic_gpu_core.AbstractRefUnion,
 ) -> tuple[pallas_core.TransformedRef, ...]:
@@ -201,14 +191,9 @@ def union_members(
 
 def _member_inner_aval(member: pallas_core.TransformedRef) -> jax_core.ShapedArray:
   """The logical aval of a `RefUnion` member."""
-  extract, *layout_transforms = member.transforms
+  (extract,) = member.transforms
   assert isinstance(extract, mosaic_gpu_core.ExtractAliasedRef), extract
-  aval = apply_layout_transforms(
-      tuple(layout_transforms),
-      jax_core.ShapedArray(tuple(extract.shape), extract.dtype),
-  )
-  assert isinstance(aval, jax_core.ShapedArray), aval
-  return aval
+  return jax_core.ShapedArray(tuple(extract.shape), extract.dtype)
 
 
 def resolve_ref(
@@ -507,10 +492,11 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is primitives.run_scoped_p
 
-    def _allocate_for_aval(token,
-                           aval,
-                           transforms: tuple[state_types.Transform, ...],
-                           is_thread_block_axis_collective: bool):
+    def _allocate_for_aval(
+        token,
+        aval,
+        is_thread_block_axis_collective: bool,
+    ):
       _raise_if_unsupported_memory_space(aval.memory_space)
       ref_count = _get_num_threads_sharing_collective_allocation(
           self.thread_cluster_shape,
@@ -547,24 +533,10 @@ class JaxprInterpreter:
       match aval:
         # Must precede the `AbstractRef` case below, which this subclasses.
         case mosaic_gpu_core.AbstractRefUnion():
-          if transforms:
-            raise NotImplementedError(
-                f"Unsupported transforms on a `RefUnion`: {transforms}"
-            )
           return allocate_ref_union(token, aval, _allocate_buffer)
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
-          if transforms:
-            # The invar/aval's shape in the jaxpr may be the tiled shape, after
-            # tiling and/or swizzling transforms have been applied.  The
-            # elements of `transforms` -- to undo the swizzling and/or tiling --
-            # are applied any time the variable is used in the jaxpr.
-            #
-            # We want to allocate a buffer with the logical shape, instead of
-            # the tiled shape, so we undo the swizzing and/or tiling here to get
-            # the logical shape.
-            inner = apply_layout_transforms(transforms, inner)
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
@@ -673,7 +645,6 @@ class JaxprInterpreter:
 
     assert eqn.primitive is primitives.run_scoped_p
     collective_axes = eqn.params["collective_axes"]
-    ref_transforms = eqn.params["ref_transforms"]
 
     # Allocate a buffer or barrier for each element of
     # `eqn.params['jaxpr'].invars`. It is assumed that each thread runs the same
@@ -696,11 +667,10 @@ class JaxprInterpreter:
           self.mesh, self.are_thread_cluster_axes_collective(collective_axes)
       )
 
-    for v, transforms in safe_zip(invars, ref_transforms):
+    for v in invars:
       token, alloc = _allocate_for_aval(
           token,
           v.aval,
-          transforms,
           self.is_thread_block_axis_collective(collective_axes),
       )
 
@@ -1327,8 +1297,13 @@ class JaxprInterpreter:
       collective_axis,
       barrier_transforms_tree,
       has_user_predicate: bool = False,
+      commit_a_read_only: bool = False,
   ):
     assert eqn.primitive is gpu_primitives.tcgen05_commit_arrive_p
+    if commit_a_read_only:
+      raise NotImplementedError(
+          "Interpret mode does not support commit_a_read_only."
+      )
     if has_user_predicate:
       *flat_args, predicate = flat_args
     else:

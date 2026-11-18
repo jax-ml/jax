@@ -7,10 +7,10 @@ inputs:
     description: "Which python version should the artifact be downloaded for?"
     required: true
   rocm-version:
-    description: "ROCm version (e.g., 7.2.0). Major version is extracted for wheel filename matching."
-    default: "7.2.0"
+    description: "ROCm version (e.g., 10 or 10.1.0). Major version is extracted for wheel filename matching."
+    default: "10"
   rocm-release-version:
-    description: "Release version for S3 LATEST pointer resolution (e.g., 7.2.0 or therock-latest). Defaults to rocm-version."
+    description: "Release version for S3 LATEST pointer resolution (e.g., 10.1.0 or therock-latest). Defaults to rocm-version."
     default: ""
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"

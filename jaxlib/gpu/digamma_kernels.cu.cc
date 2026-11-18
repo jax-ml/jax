@@ -113,7 +113,7 @@ __device__ T DigammaF2Device(T x) {
   }
   const T ax = mi::AbsVal(x);
   if (ax < kTiny) {
-    return -mi::CopySignVal(mi::PosInf<T>(), x);
+    return mi::DivRn(T(-1), x);
   }
   if (x == mi::PosInf<T>()) {
     return mi::PosInf<T>();
@@ -263,7 +263,7 @@ __device__ float DigammaF32WithF64Device(float x) {
   }
   const float ax = mi::AbsVal(x);
   if (ax < mc::kDigammaTinyF32) {
-    return -mi::CopySignVal(mi::PosInf<float>(), x);
+    return mi::DivRn(-1.0f, x);
   }
   if (x == mi::PosInf<float>()) {
     return mi::PosInf<float>();

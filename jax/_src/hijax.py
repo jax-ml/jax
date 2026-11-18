@@ -259,11 +259,17 @@ class HiPrim:
     return str(_pp_hi_prim(self, core.JaxprPpContext(), core.JaxprPpSettings()))
 
   def __hash__(self):
-    return hash((self.__class__.__name__, tuple(self.params.items()), self.effects))
+    return hash((self.__class__.__name__, tuple(self.params.items()),
+                 self.effects, tuple(self.in_avals_flat), self.in_tree,
+                 tuple(self.out_avals_flat), self.out_tree))
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.params == other.params
-            and self.effects == other.effects)
+            and self.effects == other.effects
+            and self.in_avals_flat == other.in_avals_flat
+            and self.in_tree == other.in_tree
+            and self.out_avals_flat == other.out_avals_flat
+            and self.out_tree == other.out_tree)
 
 
 @contextmanager

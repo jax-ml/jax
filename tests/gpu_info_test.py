@@ -12,42 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import gpu_info
 from jax._src import test_util as jtu
-from jax._src.pallas.triton import gpu_info
 
-if sys.platform != "win32":
-  from jax.experimental.pallas import triton as plgpu
-
-  GpuVersion = plgpu.GpuVersion
-else:
-  plgpu = None
-  GpuVersion = gpu_info.GpuVersion
+GpuVersion = gpu_info.GpuVersion
 
 
 class GpuInfoTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not plgpu:
-      self.skipTest("GPU jaxlib is not available")
     if not jtu.is_device_cuda() and not jtu.is_device_rocm():
       self.skipTest("Needs a GPU device")
     try:
-      plgpu.get_gpu_info()
+      gpu_info.get_gpu_info()
     except ValueError:
       self.skipTest("Unsupported GPU device")
 
   def test_get_gpu_info(self):
     device = jax.devices()[0]
-    info = plgpu.get_gpu_info()
+    info = gpu_info.get_gpu_info()
     if info.gpu_version is None:
       self.skipTest("device has a free-form arch with no GpuVersion")
-    self.assertIsInstance(info, plgpu.GpuInfo)
+    self.assertIsInstance(info, gpu_info.GpuInfo)
     self.assertEqual(info.arch_name, device.compute_capability)
     expected_version = gpu_info.gpu_version_from_device_kind(device.device_kind)
     self.assertEqual(info.gpu_version, expected_version)
@@ -84,11 +74,14 @@ class GpuInfoTest(jtu.JaxTestCase):
         self.assertEqual(cc, 0)
 
   def test_get_gpu_info_given_gpu_version(self):
-    info = plgpu.get_gpu_info()
+    info = gpu_info.get_gpu_info()
     if info.gpu_version is None:
       self.skipTest("device has a free-form arch with no GpuVersion")
-    info_version = plgpu.get_gpu_info_from_version(info.gpu_version)
+    info_version = gpu_info.get_gpu_info_from_version(info.gpu_version)
     self.assertEqual(info, info_version)
+
+
+class GpuInfoStaticTest(jtu.JaxTestCase):
 
   @parameterized.parameters([
       ("NVIDIA A100-SXM4-40GB", GpuVersion.A100),
@@ -129,10 +122,10 @@ class GpuInfoTest(jtu.JaxTestCase):
         abstract_device=abstract_device,
     )
     with jax.sharding.use_abstract_mesh(abstract_mesh):
-      info = plgpu.get_gpu_info()
+      info = gpu_info.get_gpu_info()
       self.assertIsNone(info.gpu_version)
       self.assertEqual(info.arch_name, device_kind)
-      self.assertTrue(plgpu.is_gpu_device())
+      self.assertTrue(gpu_info.is_gpu_device())
 
 
 if __name__ == "__main__":

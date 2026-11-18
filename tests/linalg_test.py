@@ -1617,10 +1617,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans):
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
 
     def args_maker():
@@ -1645,13 +1644,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLuSolveBroadcast(self, lhs_shape, rhs_shape, dtype, trans):
     if scipy_version < (1, 16, 0):
       self.skipTest("scipy.linalg.lu_solve batch broadcasting requires scipy >= 1.16")
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
     lu_factor_vec = np.vectorize(osp.linalg.lu_factor,
                                   signature="(n,n)->(n,n),(n)")
@@ -1885,7 +1883,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         self.skipTest("Pivoting is only supported on CPU and GPU.")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
-    sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
+    def sp_func(a):
+      out = scipy.linalg.qr(a, mode=mode, pivoting=pivoting)
+      if pivoting:
+        # ILP64 SciPy returns int64 pivots, whereas JAX always returns int32.
+        *qr, p = out
+        return (*qr, p.astype(np.int32))
+      return out
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
@@ -1899,8 +1903,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       inverted_pivots = jnp.argsort(p[0])
       return (q @ r)[:, inverted_pivots]
 
-    m, n = shape
-    if pivoting and mode != "r" and (m == n or (m > n and mode != "full")):
+    if pivoting and mode != "r":
       for a in args_maker():
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
@@ -2746,6 +2749,25 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
+
+  @jtu.sample_product(
+      shape=[(2, 3, 4), (2, 3, 3), (2, 4, 3), (2, 3, 4, 5)],
+      dtype=float_types + complex_types,
+      full_matrices=[False, True],
+  )
+  @jax.default_matmul_precision("float32")
+  def test_batched_pivoted_qr_jvp(self, shape, dtype, full_matrices):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+
+    def qr_and_mul(x):
+      q, r, p = lax.linalg.qr(x, pivoting=True, full_matrices=full_matrices)
+      inverted_pivots = jnp.argsort(p, axis=-1)
+      return jnp.take_along_axis(q @ r, inverted_pivots[..., None, :], axis=-1)
+
+    jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
 
   @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],

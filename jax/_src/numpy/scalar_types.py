@@ -107,6 +107,10 @@ bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
 float64 = double = _make_scalar_type(np.float64)
+if dtypes.bcomplex32 is not None:
+  bcomplex32 = _make_scalar_type(dtypes.bcomplex32)
+if dtypes.complex32 is not None:
+  complex32 = _make_scalar_type(dtypes.complex32)
 complex64 = csingle = _make_scalar_type(np.complex64)
 complex128 = cdouble = _make_scalar_type(np.complex128)
 

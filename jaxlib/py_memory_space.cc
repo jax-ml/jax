@@ -71,12 +71,19 @@ nb::typed<nb::list, PyDevice> PyMemorySpace::AddressableByDevices() const {
 
 /* static */ int PyMemorySpace::tp_traverse(PyObject* self, visitproc visit,
                                             void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyMemorySpace* d = nb::inst_ptr<PyMemorySpace>(self);
   Py_VISIT(d->client().ptr());
   return 0;
 }
 
 /* static */ int PyMemorySpace::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyMemorySpace* d = nb::inst_ptr<PyMemorySpace>(self);
   nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);

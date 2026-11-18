@@ -31,7 +31,10 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
+from jax._src.lax.double_word import two_sum
 from jax._src.lax.erf import (
+    _erfcx_from_grad_large,
+    _split_square,
     erf_inv_core,
     erfcx_grad_impl as _erfcx_grad_impl,
     erfcx_grad_large,
@@ -39,6 +42,7 @@ from jax._src.lax.erf import (
     erfcx_large,
     log_ndtr as _log_ndtr,
     ndtr as _ndtr,
+    ndtri_exp_core,
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
 from jax._src.lax.special import random_gamma_grad
@@ -47,9 +51,9 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
-from jax._src.scipy.bessel import jn as jn
+from jax._src.scipy.bessel import iv as iv, jn as jn, kn as kn, yn as yn
+from jax._src.scipy.betaln import _betaln
 from jax._src.scipy.gamma import gamma_real
-from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
@@ -343,7 +347,9 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     :func:`jax.scipy.special.beta`
   """
   a, b = promote_args_inexact("betaln", a, b)
-  return _betaln_impl(a, b)
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("betaln does not support complex-valued inputs.")
+  return _betaln(a, b)
 
 
 def factorial(n: ArrayLike, exact: bool = False) -> Array:
@@ -2596,6 +2602,186 @@ def _ndtri_grad_jvp(primals, tangents):
   return g, p_dot * ((x * g) * g)
 
 
+def ndtri_exp(y: ArrayLike) -> Array:
+  r"""The inverse of :func:`~jax.scipy.special.log_ndtr`.
+
+  JAX implementation of :obj:`scipy.special.ndtri_exp`.
+
+  Computes :math:`\Phi^{-1}(\exp(y))` for :math:`y \le 0` without underflow in
+  the left tail (:math:`y \ll 0`) or catastrophic cancellation near
+  :math:`y = -\ln 2` and :math:`y = 0`.
+
+  Args:
+    y: arraylike, real-valued. Log-probability in :math:`(-\infty, 0]`.
+
+  Returns:
+    array containing values of ``ndtri(exp(y))``. Returns ``-inf`` for
+    ``y == -inf``, ``inf`` for ``y == 0``, and ``nan`` for ``y > 0``.
+
+  Notes:
+    ``ndtri_exp`` does not support complex-valued inputs.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  Examples:
+    >>> y = jnp.array([-100.0, -1.0, -1e-6, 0.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.ndtri_exp(y))
+    [-13.8885  -0.3375   4.7534      inf]
+
+  See also:
+    - :func:`jax.scipy.special.log_ndtr`
+    - :func:`jax.scipy.special.ndtri`
+    - :func:`jax.scipy.special.ndtr`
+  """
+  (y,) = promote_args_inexact("ndtri_exp", y)
+  if dtypes.issubdtype(y.dtype, np.complexfloating):
+    raise ValueError("ndtri_exp does not support complex-valued inputs.")
+  if dtypes.finfo(y.dtype).bits < 32:
+    return _ndtri_exp(y.astype(np.float32)).astype(y.dtype)
+  return _ndtri_exp(y)
+
+
+_NDTRI_EXP_SAFE_Y = -0.5
+_NDTRI_EXP_GRAD_CUTOFF = math.sqrt(2.0)
+
+
+@custom_derivatives.custom_jvp
+@jit
+def _ndtri_exp(y: Array) -> Array:
+  """Evaluates `ndtri_exp(y)` with domain and infinity handling."""
+  out_of_bounds = (y > 0.0) | jnp.isnan(y)
+  is_neg_inf = ~jnp.isfinite(y) & (y < 0.0)
+  y_safe = jnp.where(
+      out_of_bounds | (y == 0.0) | is_neg_inf, _NDTRI_EXP_SAFE_Y, y
+  )
+  x = ndtri_exp_core(y_safe)
+  edge = jnp.where(y == 0.0, jnp.inf, jnp.where(is_neg_inf, -jnp.inf, x))
+  return jnp.where(out_of_bounds, jnp.nan, edge)
+
+
+@_ndtri_exp.defjvp
+def _ndtri_exp_jvp(primals, tangents):
+  (y,), (y_dot,) = primals, tangents
+  x = _ndtri_exp(y)
+  g, _ = _ndtri_exp_grad_and_shift(y, x)
+  return x, y_dot * g
+
+
+@custom_derivatives.custom_jvp
+def _ndtri_exp_grad_and_shift(y: Array, x: Array) -> tuple[Array, Array]:
+  """Returns `(g, h)` where `g = d/dy ndtri_exp(y)` and `h = 1 + x * g`.
+
+  Implicitly differentiating `ndtr(x) = exp(y)` (using `ndtr'(x) =
+  exp(-x^2/2) / sqrt(2*pi)`) gives the base derivative
+    `g(y) = exp(y) / ndtr'(x) = sqrt(2*pi) * exp(y) * exp(x^2/2)`.
+
+  - For `|x| <= sqrt(2)`: `x^2 / 2 <= 1`, so `exp(y + x^2/2)` neither overflows
+    nor amplifies 1-ULP errors in `x` by `O(x^2)`. Sum `y + x^2/2` as a
+    `(hi, lo)` float pair (avoiding cancellation near `y + x^2/2 = 0`) and
+    exponentiate.
+  - For `|x| > sqrt(2)`: evaluating `exp(x^2/2)` from `x` alone would amplify
+    any 1-ULP rounding error in `x` by `~x^2` ULPs (and overflow for large
+    `|x|`), while adding `y + x^2/2` cancels `-x^2/2` against `+x^2/2` in the
+    left tail. Instead, cancel `exp(x^2/2)` analytically in each tail using
+    `ndtr(-|x|) = 0.5 * exp(-x^2/2) * erfcx(|x| / sqrt(2))` (where `erfcx`
+    varies slowly with `x` instead of growing exponentially):
+    * Left tail (`x < -sqrt(2)`): substituting
+      `exp(y) = ndtr(x) = 0.5 * exp(-x^2/2) * erfcx(-x/sqrt(2))` into
+      `sqrt(2*pi) * exp(y) * exp(x^2/2)` cancels `exp(-x^2/2)` against
+      `exp(x^2/2)`, leaving `g(y) = sqrt(pi/2) * erfcx(-x/sqrt(2))`, which
+      stays finite and accurate down to `y = -fmax`.
+    * Right tail (`x > sqrt(2)`): here `exp(y)` is near `1`, and the small tail
+      probability is `1 - exp(y) = ndtr(-x) = 0.5 * exp(-x^2/2) *
+      erfcx(x/sqrt(2))`. Rewriting `exp(y) * exp(x^2/2)` as
+      `(exp(y) / (1 - exp(y))) * ((1 - exp(y)) * exp(x^2/2))` cancels
+      `exp(x^2/2)` analytically in the second factor and leaves
+      `exp(y) / (1 - exp(y)) = 1 / (exp(-y) - 1) = 1 / expm1(-y)` in the first,
+      giving `g(y) = sqrt(pi/2) * erfcx(x/sqrt(2)) / expm1(-y)`.
+
+  For `h(y) = 1 + x * g(y)` (used for higher-order derivatives in
+  `_ndtri_exp_grad_and_shift_jvp`):
+  - On `x < -sqrt(2)` (`u = -x / sqrt(2) > 1`), `1 + x * g(y)` cancels as
+    `O(1/x^2)`. Using `erfcx'(u) = 2*u*erfcx(u) - 2/sqrt(pi)` rewrites
+    `1 + x * g(y) = 1 - sqrt(pi)*u*erfcx(u) = -0.5 * sqrt(pi) * erfcx'(u)`,
+    reusing `grad_large = erfcx_grad_large(u)` already computed for `g(y)`.
+  - On `x >= -sqrt(2)`, `x * g(y) > -0.76`, so `1 + x * g(y) > 0.24` has no
+    cancellation.
+  """
+  y_arr = jnp.asarray(y, dtype=x.dtype)
+  out_of_bounds = (y_arr > 0.0) | jnp.isnan(y_arr)
+  is_neg_inf = ~jnp.isfinite(y_arr) & (y_arr < 0.0)
+  is_neg = x < -_NDTRI_EXP_GRAD_CUTOFF
+  is_pos = x > _NDTRI_EXP_GRAD_CUTOFF
+
+  # Shared `erfcx` evaluation on `u_tail = |x| / sqrt(2) >= 1` for both tails;
+  # `grad_large = erfcx'(u_tail)` also gives `h` in the left tail directly.
+  is_finite_tail = (is_neg | is_pos) & jnp.isfinite(x)
+  u_raw = jnp.where(is_finite_tail, lax.abs(x) * math.sqrt(0.5), 1.0)
+  u_tail = lax.max(u_raw, _lax_const(u_raw, 1.0))
+  grad_large = erfcx_grad_large(u_tail)
+  tail_num = math.sqrt(0.5 * math.pi) * _erfcx_from_grad_large(
+      u_tail, grad_large
+  )
+  g_neg = jnp.where(is_neg_inf, 0.0, tail_num)
+  h_neg = jnp.where(is_neg_inf, 0.0, (-0.5 * math.sqrt(math.pi)) * grad_large)
+
+  # Central region (`|x| <= sqrt(2)`): `(hi, lo)` float pair for `y + x^2 / 2`.
+  is_mid = ~(is_neg | is_pos) & jnp.isfinite(x)
+  x_mid = jnp.where(is_mid, x, 0.0)
+  y_mid = jnp.where(is_mid, y_arr, _NDTRI_EXP_SAFE_Y)
+  x2_hi, x2_lo = _split_square(x_mid)
+  arg_hi, arg_err = two_sum(y_mid, 0.5 * x2_hi)
+  arg_lo = arg_err + 0.5 * x2_lo
+  exp_hi = lax.exp(arg_hi, accuracy=AccuracyMode.HIGHEST)
+  exp_corr = arg_lo * (1.0 + 0.5 * arg_lo)
+  g_mid = math.sqrt(2.0 * math.pi) * (exp_hi + exp_hi * exp_corr)
+
+  # Right tail (`x > sqrt(2)`): for `-y < eps/4`, `expm1(-y)` equals `-y` to
+  # machine precision. Scaling both numerator and denominator by `2^bits` lifts
+  # subnormal `-y` into the normal float range so dividing by `denom` avoids
+  # reciprocal overflow or subnormal flush.
+  finfo = np.finfo(x.dtype)
+  tiny_cut = 0.25 * float(finfo.eps)
+  tiny_scale = math.ldexp(1.0, finfo.bits)
+  is_finite_pos = is_pos & (y_arr < 0.0) & jnp.isfinite(x)
+  neg_y = jnp.where(is_finite_pos, -y_arr, 1.0)
+  is_tiny = is_finite_pos & (neg_y < tiny_cut)
+  scale = jnp.where(is_tiny, _lax_const(x, tiny_scale), _lax_const(x, 1.0))
+  expm1_val = lax.expm1(neg_y, accuracy=AccuracyMode.HIGHEST)
+  denom = jnp.where(is_tiny, neg_y * scale, expm1_val)
+  g_pos = jnp.where(y_arr == 0.0, np.inf, (tail_num * scale) / denom)
+
+  g = jnp.where(is_neg, g_neg, jnp.where(is_pos, g_pos, g_mid))
+  # Mask out the `is_neg` branch with `0.0` before multiplying so `y = -inf`
+  # (`x = -inf`, `g = 0`) cannot produce `(-inf) * 0 = NaN` in `h_pos`.
+  x_nonneg = jnp.where(is_neg, 0.0, x)
+  g_nonneg = jnp.where(is_neg, 0.0, g)
+  h_pos = 1.0 + x_nonneg * g_nonneg
+  h = jnp.where(is_neg, h_neg, h_pos)
+  return jnp.where(out_of_bounds, jnp.nan, g), jnp.where(
+      out_of_bounds, jnp.nan, h
+  )
+
+
+@_ndtri_exp_grad_and_shift.defjvp
+def _ndtri_exp_grad_and_shift_jvp(primals, tangents):
+  """JVP for `_ndtri_exp_grad_and_shift` via a closed polynomial system.
+
+  `x = _ndtri_exp(y)` is a function of `y` cached from the primal pass rather
+  than an independent input, so its incoming tangent is ignored in
+  `(y_dot, _) = tangents` and total derivatives with respect to `y` satisfy:
+  - Differentiating `g(y) = sqrt(2*pi) * exp(y + x(y)^2 / 2)` with `dx/dy = g`
+    gives `g'(y) = g * (1 + x * g) = g * h`.
+  - Differentiating `h(y) = 1 + x(y) * g(y)` gives
+    `h'(y) = x'(y) * g + x * g'(y) = g^2 + x * g * h = g^2 + h * (h - 1)`.
+  """
+  (y, x), (y_dot, _) = primals, tangents
+  g, h = _ndtri_exp_grad_and_shift(y, x)
+  return (g, h), (y_dot * (g * h), y_dot * (g * g + h * (h - 1.0)))
+
+
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   r"""Log Normal distribution function.
 
@@ -4238,15 +4424,16 @@ def _hyp1f1_asymptotic(a, b, x):
 
 @jit
 @jnp_vectorize.vectorize
-def _hyp1f1_param_derivative(a, b, x, p):
-  """Computes the parameter-derivative series for 1F1 at parameter ``p``.
+def _hyp1f1_param_derivative(a, b, x, which):
+  """Computes the parameter-derivative series for 1F1 at parameter ``which``.
 
   Evaluates ``sum_{k=1}^inf ((a)_k / (b)_k) (x^k / k!) H_k(p)`` where
-  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
-  This equals ``d/da hyp1f1(a, b, x)`` for ``p = a`` and
-  ``-d/db hyp1f1(a, b, x)`` for ``p = b``. Factored into a single ``@jit``
-  helper to save trace and compile time across ``a`` and ``b``.
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)`` and
+  ``p`` is ``a`` (``which == 0``) or ``b`` (``which == 1``). Selecting ``p``
+  inside a single ``@jit`` helper keeps the input signature identical across
+  ``a`` and ``b`` even when ``a`` and ``b`` have different broadcast shapes.
   """
+  p = lax.select(which == 0, a, b)
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
@@ -4277,7 +4464,7 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
-  return _hyp1f1_param_derivative(a, b, x, a)
+  return _hyp1f1_param_derivative(a, b, x, jnp.int32(0))
 
 
 def _hyp1f1_b_derivative(a, b, x):
@@ -4286,22 +4473,42 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
-  return -_hyp1f1_param_derivative(a, b, x, b)
+  return -_hyp1f1_param_derivative(a, b, x, jnp.int32(1))
 
 
-@jit
 def _hyp1f1_x_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/04/
   """
 
-  return a / b * hyp1f1(a + 1, b + 1, x)
+  return a / b * _hyp1f1(a + 1, b + 1, x)
 
 
 @custom_derivatives.custom_jvp
 @jit
 @jnp_vectorize.vectorize
+def _hyp1f1(a: Array, b: Array, x: Array) -> Array:
+  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
+  # There is room for improvement in the implementation using recursion to
+  # evaluate lower values of hyp1f1 when a or b or both are > 60-80
+  result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
+
+  return lax.select_n(index,
+                      result,
+                      jnp.array(1, dtype=x.dtype),
+                      jnp.exp(x),
+                      jnp.array(np.inf, dtype=x.dtype))
+
+
+_hyp1f1.defjvps(
+  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
+  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
+  lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
+)
+
+
 def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""The 1F1 hypergeometric function.
 
@@ -4326,29 +4533,10 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   Returns:
     array of 1F1 values.
   """
-  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
-  # There is room for improvement in the implementation using recursion to
-  # evaluate lower values of hyp1f1 when a or b or both are > 60-80
   a, b, x = promote_args_inexact('hyp1f1', a, b, x)
-
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("hyp1f1 does not support complex-valued inputs.")
-
-  result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
-  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
-
-  return lax.select_n(index,
-                      result,
-                      jnp.array(1, dtype=x.dtype),
-                      jnp.exp(x),
-                      jnp.array(np.inf, dtype=x.dtype))
-
-
-hyp1f1.defjvps(
-  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
-  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
-  lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
-)
+  return _hyp1f1(a, b, x)
 
 
 def _hyp2f1_terminal(a, b, c, x):
@@ -4587,15 +4775,17 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
 
 @jit
 @jnp_vectorize.vectorize
-def _hyp2f1_param_derivative(a, b, c, x, p):
-  """Computes the parameter-derivative series for 2F1 at parameter ``p``.
+def _hyp2f1_param_derivative(a, b, c, x, which):
+  """Computes the parameter-derivative series for 2F1 at parameter ``which``.
 
   Evaluates ``sum_{k=1}^inf ((a)_k (b)_k / (c)_k) (x^k / k!) H_k(p)`` where
-  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
-  This equals ``d/dp hyp2f1(a, b, c, x)`` for ``p in {a, b}`` and
-  ``-d/dc hyp2f1(a, b, c, x)`` for ``p = c``. Factored into a single ``@jit``
-  helper to save trace and compile time across ``a``, ``b``, and ``c``.
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)`` and
+  ``p`` is ``a``, ``b``, or ``c`` for ``which`` in ``{0, 1, 2}``. Selecting
+  ``p`` inside a single ``@jit`` helper keeps the input signature identical
+  across ``a``, ``b``, and ``c`` even when arguments have mixed broadcast
+  shapes.
   """
+  p = lax.select_n(which, a, b, c)
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
@@ -4626,7 +4816,7 @@ def _hyp2f1_a_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
-  return _hyp2f1_param_derivative(a, b, c, x, a)
+  return _hyp2f1_param_derivative(a, b, c, x, jnp.int32(0))
 
 
 def _hyp2f1_b_derivative(a, b, c, x):
@@ -4635,7 +4825,7 @@ def _hyp2f1_b_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
-  return _hyp2f1_param_derivative(a, b, c, x, b)
+  return _hyp2f1_param_derivative(a, b, c, x, jnp.int32(1))
 
 
 def _hyp2f1_c_derivative(a, b, c, x):
@@ -4644,48 +4834,23 @@ def _hyp2f1_c_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
-  return -_hyp2f1_param_derivative(a, b, c, x, c)
+  return -_hyp2f1_param_derivative(a, b, c, x, jnp.int32(2))
 
 
-@jit
 def _hyp2f1_x_derivative(a, b, c, x):
   """
   Define the derivative with respect to ``x``:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/05/
   """
 
-  return a * b / c * hyp2f1(a + 1, b + 1, c + 1, x)
+  return a * b / c * _hyp2f1(a + 1, b + 1, c + 1, x)
 
 
 @custom_derivatives.custom_jvp
 @jit
 @jnp_vectorize.vectorize
-def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
-  r"""The 2F1 hypergeometric function.
-
-  JAX implementation of :obj:`scipy.special.hyp2f1`.
-
-  .. math::
-
-     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
-
-  where :math:`(\cdot)_k` is the Pochhammer symbol.
-
-  The JAX version only accepts positive and real inputs. Values of
-  ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
-  lead to erroneous results; consider enabling double precision in this case.
-
-  Args:
-    a: arraylike, real-valued
-    b: arraylike, real-valued
-    c: arraylike, real-valued
-    x: arraylike, real-valued
-
-  Returns:
-    array of 2F1 values.
-  """
+def _hyp2f1(a: Array, b: Array, c: Array, x: Array) -> Array:
   # This is backed by https://doi.org/10.48550/arXiv.1407.7786
-  a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
   eps = dtypes.finfo(x.dtype).eps * 50
 
   d = c - a - b
@@ -4729,12 +4894,40 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
                       term_or_serie)
 
 
-hyp2f1.defjvps(
+_hyp2f1.defjvps(
   lambda a_dot, primal_out, a, b, c, x: _hyp2f1_a_derivative(a, b, c, x) * a_dot,
   lambda b_dot, primal_out, a, b, c, x: _hyp2f1_b_derivative(a, b, c, x) * b_dot,
   lambda c_dot, primal_out, a, b, c, x: _hyp2f1_c_derivative(a, b, c, x) * c_dot,
   lambda x_dot, primal_out, a, b, c, x: _hyp2f1_x_derivative(a, b, c, x) * x_dot
 )
+
+
+def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
+  r"""The 2F1 hypergeometric function.
+
+  JAX implementation of :obj:`scipy.special.hyp2f1`.
+
+  .. math::
+
+     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
+
+  where :math:`(\cdot)_k` is the Pochhammer symbol.
+
+  The JAX version only accepts positive and real inputs. Values of
+  ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
+  lead to erroneous results; consider enabling double precision in this case.
+
+  Args:
+    a: arraylike, real-valued
+    b: arraylike, real-valued
+    c: arraylike, real-valued
+    x: arraylike, real-valued
+
+  Returns:
+    array of 2F1 values.
+  """
+  a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
+  return _hyp2f1(a, b, c, x)
 
 
 # 13-point Gauss-type quadrature on the canonical Owen's T integral

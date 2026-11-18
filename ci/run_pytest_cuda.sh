@@ -111,6 +111,7 @@ export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 echo "Running CUDA tests..."
 mkdir -p test-artifacts
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
+-o faulthandler_timeout=300 --durations=20 \
 --junitxml=test-artifacts/junit.xml \
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \

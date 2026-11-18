@@ -21,6 +21,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/log/globals.h"
@@ -35,11 +36,17 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
+#include "jaxlib/mosaic/gpu/target.h"
+#include "xla/client/local_client.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
+#include "xla/pjrt/stream_executor_executable.h"
+#include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 
@@ -52,11 +59,48 @@ using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::SizeIs;
 
+constexpr absl::string_view kMetadataCopiedMessage = "Constructed device state";
+constexpr absl::string_view kMetadataSkippedMessage =
+    "Skipping collective metadata copy";
+
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
   ASSIGN_OR_RETURN(auto result,
                    executable->Execute({no_buffers}, /*options=*/{}));
-  return result[0][0]->GetReadyFuture().Await();
+  RETURN_IF_ERROR(result[0][0]->GetReadyFuture().Await());
+  // During `Execute()`, PJRT registers an `AndThen` cleanup callback on the
+  // compute stream's definition event that holds a
+  // `shared_ptr<LocalExecutable>` (which transitively owns
+  // `CustomCallResources` and `KernelHandle`). Calling `GetReadyFuture()`
+  // registers a second `AndThen` waiter on that same event. Because
+  // `tsl::AsyncValue` runs `AndThen` waiters in LIFO order on the
+  // single-threaded `py_xla_callback` worker, `GetReadyFuture().Await()` wakes
+  // the main thread *before* `py_xla_callback` destroys the `Execute()` cleanup
+  // callback and drops its `shared_ptr<LocalExecutable>`.
+  //
+  // Explicitly wait until no other references to `LocalExecutable` remain
+  // besides the one held by `executable` itself, so that a subsequent
+  // `executable.reset()` synchronously destroys `LocalExecutable` and unloads
+  // the GPU module.
+  std::weak_ptr<xla::LocalExecutable> local_executable;
+  {
+    ASSIGN_OR_RETURN(
+        std::shared_ptr<xla::LocalExecutable> owned_local_executable,
+        absl::down_cast<xla::StreamExecutorExecutable*>(
+            executable->GetExecutable())
+            ->GetOrLoadExecutable(nullptr));
+    local_executable = owned_local_executable;
+  }
+  const absl::Time deadline = absl::Now() + absl::Seconds(5);
+  while (local_executable.use_count() > 1) {
+    if (absl::Now() >= deadline) {
+      return absl::DeadlineExceededError(
+          "Timed out waiting for in-flight references to LocalExecutable to "
+          "drop.");
+    }
+    absl::SleepFor(absl::Microseconds(10));
+  }
+  return absl::OkStatus();
 }
 
 extern "C" void MosaicGpuClearKernelCache();
@@ -68,6 +112,21 @@ class CustomCallTest : public ::testing::Test {
     // order-independent.
     MosaicGpuClearKernelCache();
   }
+
+  ~CustomCallTest() override {
+    for (auto it = prev_vlog_levels_.rbegin(); it != prev_vlog_levels_.rend();
+         ++it) {
+      absl::SetVLogLevel(it->first, it->second);
+    }
+  }
+
+  void SetVLogLevel(absl::string_view module_pattern, int log_level) {
+    prev_vlog_levels_.emplace_back(
+        module_pattern, absl::SetVLogLevel(module_pattern, log_level));
+  }
+
+ private:
+  std::vector<std::pair<std::string, int>> prev_vlog_levels_;
 };
 
 // Captures the text of INFO log messages issued by all threads while
@@ -232,7 +291,7 @@ TEST_F(CustomCallTest, KernelInitializationIsCached) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
                        xla::GetXlaPjrtGpuClient(/*options=*/{}));
 
-  absl::SetVLogLevel("custom_call", 5);
+  SetVLogLevel("custom_call", 5);
 
   std::unique_ptr<xla::PjRtLoadedExecutable> executable;
   {
@@ -272,7 +331,7 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
                        xla::GetXlaPjrtGpuClient(/*options=*/{}));
 
-  absl::SetVLogLevel("custom_call", 5);
+  SetVLogLevel("custom_call", 5);
 
   std::unique_ptr<xla::PjRtLoadedExecutable> executable;
   ASSERT_OK_AND_ASSIGN(
@@ -284,8 +343,9 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
   {
     InfoLogCollector collector;
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(collector.Stop(),
-                Contains(HasSubstr(kAllocationMessage)).Times(1));
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Contains(HasSubstr(kAllocationMessage)).Times(1));
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataCopiedMessage)).Times(1));
   }
 
   {
@@ -293,7 +353,47 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
     // skipped.
     InfoLogCollector collector;
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(collector.Stop(), Not(Contains(HasSubstr(kAllocationMessage))));
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kAllocationMessage))));
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kMetadataCopiedMessage))));
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataSkippedMessage)).Times(1));
+  }
+}
+
+TEST_F(CustomCallTest, MetadataCopiedWhenBufferAddressChanges) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+
+  SetVLogLevel("custom_call", 5);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  // Keep `held_result` alive so the next execution allocates a new output
+  // buffer address, which changes the collective metadata.
+  std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
+  {
+    std::vector<xla::PjRtBuffer*> no_buffers;
+    ASSERT_OK_AND_ASSIGN(held_result,
+                         executable->Execute({no_buffers}, /*options=*/{}));
+    ASSERT_THAT(held_result, SizeIs(1));
+    ASSERT_THAT(held_result[0], SizeIs(1));
+    EXPECT_THAT(held_result[0][0]->GetReadyFuture().Await(), IsOk());
+  }
+
+  {
+    InfoLogCollector collector;
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataCopiedMessage)).Times(1));
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kMetadataSkippedMessage))));
   }
 }
 
@@ -314,7 +414,10 @@ TEST_F(CustomCallTest, IgnoresUnknownAttributes) {
 TEST_F(CustomCallTest, SerializationAndDeduplication) {
   // Use a unique kernel hash to avoid cache hits from previous tests.
   std::string kernel_hash = "serdes_dedup_test_hash_012345678";
-  std::string module_str = TestMGPUHloModule();
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\", "
+      "symmetric_memory_parameters = \"0\", skip_device_barrier = true, "
+      "collective_id = 0");
   // Substitute the unique hash into the module.
   module_str = absl::StrReplaceAll(
       module_str, {{"6f8a2b1d5e9c0f4a3b7d8e2c1a6b0f9e", kernel_hash}});
@@ -324,7 +427,7 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
                        xla::GetXlaPjrtGpuClient(/*options=*/{}));
 
-  absl::SetVLogLevel("custom_call", 5);
+  SetVLogLevel("custom_call", 5);
 
   std::string serialized;
   {
@@ -388,7 +491,7 @@ TEST_F(CustomCallTest, UnloadGPUModule) {
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
 
-  absl::SetVLogLevel("custom_call", 5);
+  SetVLogLevel("custom_call", 5);
   {
     InfoLogCollector collector;
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
@@ -431,7 +534,7 @@ TEST_F(CustomCallTest, GPUModuleIsOnlyUnloadedWhenAllExecutablesAreDestroyed) {
   EXPECT_THAT(ExecuteSync(executable1.get()), IsOk());
   EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
 
-  absl::SetVLogLevel("custom_call", 5);
+  SetVLogLevel("custom_call", 5);
   {
     // executable2 still holds a reference to the GPU module.
     InfoLogCollector collector;
@@ -458,6 +561,7 @@ TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              /*options=*/{}));
 
+  SetVLogLevel("custom_call", 5);
   EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
 
   {
@@ -491,14 +595,12 @@ TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
   xla::CompileOptions compile_options;
   compile_options.executable_build_options.mutable_debug_options()
       ->set_xla_gpu_graph_min_graph_size(1);
-  absl::SetVLogLevel("custom_call", 5);
-  absl::SetVLogLevel("record_ffi", 3);
+  SetVLogLevel("custom_call", 5);
+  SetVLogLevel("record_ffi", 3);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Warmup.
-  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   // Create.
   {
     InfoLogCollector collector;
@@ -569,15 +671,13 @@ TEST_P(CollectiveCommandBufferTest,
   xla::CompileOptions compile_options;
   compile_options.executable_build_options.mutable_debug_options()
       ->set_xla_gpu_graph_min_graph_size(1);
-  absl::SetVLogLevel("custom_call", 6);
-  absl::SetVLogLevel("record_ffi", 3);
-  absl::SetVLogLevel("cuda_command_buffer", 2);
+  SetVLogLevel("custom_call", 6);
+  SetVLogLevel("record_ffi", 3);
+  SetVLogLevel("cuda_command_buffer", 2);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Warmup.
-  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   // Create.
   {
     InfoLogCollector collector;
@@ -643,5 +743,11 @@ TEST_P(CollectiveCommandBufferTest,
 
 INSTANTIATE_TEST_SUITE_P(CollectiveCommandBufferTests,
                          CollectiveCommandBufferTest, ::testing::Bool());
+
+TEST_F(CustomCallTest, AssemblyToBinaryCompilationProviderDisablesNvJitLink) {
+  ASSERT_OK_AND_ASSIGN(stream_executor::cuda::CompilationProvider * provider,
+                       mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
+  EXPECT_THAT(provider->name(), Not(HasSubstr("NvJitLinkCompilationProvider")));
+}
 
 }  // namespace

@@ -30,7 +30,7 @@ from jax._src.pallas.core import debug_check as debug_check
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
-from jax._src.pallas.core import GridSpec as GridSpec
+from jax._src.pallas.core import GridSpec as _deprecated_GridSpec
 from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
@@ -52,7 +52,7 @@ from jax._src.pallas.helpers import select_ref as select_ref
 from jax._src.pallas.helpers import when as when
 from jax._src.pallas.helpers import with_scoped as with_scoped
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
-from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
+from jax._src.pallas.pallas_call import pallas_call_p as _deprecated_pallas_call_p
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import delay as delay
 from jax._src.pallas.primitives import get_global as get_global
@@ -78,3 +78,35 @@ ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
 
 del _jax_core
+
+
+_deprecations = {
+    # Added November 9th, 2026
+    "GridSpec": (
+        (
+            "jax.pallas.GridSpec is deprecated, pass its arguments directly to"
+            " jax.pallas.pallas_call instead."
+        ),
+        _deprecated_GridSpec,
+    ),
+    # Added November 6, 2026
+    "pallas_call_p": (
+        (
+            "jax.pallas.pallas_call_p is internal to Pallas and will be removed"
+            " from the public API."
+        ),
+        _deprecated_pallas_call_p,
+    ),
+}
+
+import typing
+
+if typing.TYPE_CHECKING:
+  pallas_call_p = _deprecated_pallas_call_p
+  GridSpec = _deprecated_GridSpec
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

@@ -50,6 +50,7 @@ table.
 from __future__ import annotations
 
 from jax._src import config
+from jax._src import core
 from jax._src.api import jit
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -452,6 +453,7 @@ def _lgamma_neg_root(x_neg_safe, n, delta):
   dnums = slicing.GatherDimensionNumbers(
       offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)
   )
+  x_s = core.typeof(x_neg_safe).sharding
 
   def _gather_row(i):
     return slicing.gather(
@@ -459,6 +461,7 @@ def _lgamma_neg_root(x_neg_safe, n, delta):
         idx_exp,
         dnums,
         slice_sizes=(1,),
+        out_sharding=x_s,
     )
 
   # Gather one 1D row at a time so GPU kernels do not keep all 18 table rows
@@ -568,18 +571,19 @@ def _lgamma_f32_with_f64(x, is_pos, x_neg_safe, delta, abs_delta):
   )
 
 
-def _lgamma_impl_f32(x, *, use_f64=False):
+def _lgamma_impl_f32(x, *, use_f64=False, subnormals=False):
   """Computes float32 lgamma(x) across all normal and special inputs."""
   x = lax.convert_element_type(x, np.float32)
-  # Treat subnormals as zero so backends that flush subnormals and backends that
-  # preserve them return the same result (+inf).
-  is_zero = lax.abs(x) < float(np.finfo(np.float32).tiny)
+  ax = lax.abs(x)
+  is_tiny = ax < float(np.finfo(np.float32).tiny)
+  is_zero = (ax == 0.0) if subnormals else is_tiny
+  is_sub = is_tiny & (~is_zero)
   is_pos = x >= 0.5
 
-  # Every float32 <= -2^23 (_ALL_INTEGERS_BELOW) is an integer. Clamp those and
-  # inputs >= 0.5 to -0.5 so round(x_neg_safe) cannot overflow.
+  # Every float32 <= -2^23 (_ALL_INTEGERS_BELOW) is an integer. Clamp those,
+  # tiny inputs, and inputs >= 0.5 to -0.5 so round(x_neg_safe) cannot overflow.
   x_neg_safe = lax.select(
-      (~is_pos) & (x > _ALL_INTEGERS_BELOW),
+      (~is_pos) & (~is_tiny) & (x > _ALL_INTEGERS_BELOW),
       x,
       lax.full_like(x, -0.5),
   )
@@ -591,6 +595,13 @@ def _lgamma_impl_f32(x, *, use_f64=False):
 
   if use_f64:
     res = _lgamma_f32_with_f64(x, is_pos, x_neg_safe, delta, abs_delta)
+    if subnormals:
+      ax_sub_d = lax.convert_element_type(
+          lax.select(is_sub, ax, lax.full_like(ax, 1.0)), np.float64
+      )
+      res = lax.select(
+          is_sub, lax.convert_element_type(-lax.log(ax_sub_d), np.float32), res
+      )
   else:
     # Compute y = 1 - x = (1 - n) - delta and its rounding error y_lo, since
     # subtracting delta from a much larger (1 - n) drops low bits of delta.
@@ -604,8 +615,10 @@ def _lgamma_impl_f32(x, *, use_f64=False):
     arg_pos = lax.select(is_pos, x, y)
     x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG))
 
-    # Compute ln|delta| for Euler's reflection formula on x < 0.5.
-    log_hi, log_lo = _log_f32(abs_delta)
+    # Compute ln|delta| for Euler's reflection formula on x < 0.5 (or
+    # ln(|x| * 2^24) on non-zero subnormals when subnormals=True).
+    log_in = lax.select(is_sub, ax * 16777216.0, abs_delta) if subnormals else abs_delta
+    log_hi, log_lo = _log_f32(log_in)
 
     # Evaluate lgamma on [0.5, 4] and [4, inf) as (hi, lo) pairs so Euler's
     # reflection formula can add the high parts before adding the low parts.
@@ -625,11 +638,20 @@ def _lgamma_impl_f32(x, *, use_f64=False):
     in_root_win, rw = _lgamma_neg_root(x_neg_safe, n, delta)
     neg_res = lax.select(in_root_win, rw, refl)
     res = lax.select(is_pos, lg_pos, neg_res)
+    if subnormals:
+      # -ln(|x|) = 24 * ln(2) - ln(|x| * 2^24).
+      sub_res = f2_sum(
+          lax.full_like(x, 16.63553237915039),
+          lax.full_like(x, -4.5711704643736084e-08),
+          -log_hi,
+          -log_lo,
+      )
+      res = lax.select(is_sub, sub_res, res)
   # Replace -0.0 at x = 1.0 and 2.0 with +0.0.
   res = lax.select(res == 0.0, lax.full_like(x, 0.0), res)
   # Return +inf at poles (x = +-0 and negative integers, which also matches
   # x = -inf) and on positive overflow (x > _MAX_FINITE_ARG); preserve NaNs.
-  is_neg_int = (~is_pos) & (x == lax.floor(x))
+  is_neg_int = (~is_pos) & (~is_tiny) & (x == lax.floor(x))
   is_pole_or_inf = is_zero | is_neg_int | (x > _MAX_FINITE_ARG)
   res = lax.select(is_pole_or_inf, lax.full_like(x, np.inf), res)
   return lax.select(x != x, lax.full_like(x, np.nan), res)
@@ -1119,6 +1141,7 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
   dnums = slicing.GatherDimensionNumbers(
       offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)
   )
+  x_s = core.typeof(x_neg_safe).sharding
 
   def _gather_row(i):
     return slicing.gather(
@@ -1126,6 +1149,7 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
         idx_exp,
         dnums,
         slice_sizes=(1,),
+        out_sharding=x_s,
     )
 
   # Gather one 1D row at a time so GPU kernels do not keep a 21-element float64
@@ -1152,15 +1176,16 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
   return in_root_win, rw
 
 
-def _lgamma_impl_f64(x):
+def _lgamma_impl_f64(x, *, subnormals=False):
   """Computes float64 lgamma(x) across all normal and special inputs."""
   x = lax.convert_element_type(x, np.float64)
-  # Treat subnormals as zero so backends that flush subnormals and backends that
-  # preserve them return the same result (+inf).
-  is_zero = lax.abs(x) < float(np.finfo(np.float64).tiny)
+  ax = lax.abs(x)
+  is_tiny = ax < float(np.finfo(np.float64).tiny)
+  is_zero = (ax == 0.0) if subnormals else is_tiny
+  is_sub = is_tiny & (~is_zero)
   is_pos = x > 0.0
-  # Replace 0.0 with 1.0 so inactive branches do not divide by zero or log(0).
-  x_safe = lax.select(is_zero, lax.full_like(x, 1.0), x)
+  # Replace tiny/0.0 with 1.0 so inactive branches do not divide by zero or log(0).
+  x_safe = lax.select(is_tiny, lax.full_like(x, 1.0), x)
 
   # For x <= -2^52 (_ALL_INTEGERS_BELOW_F64), every float64 is an integer.
   # Clamp inputs with x > 0 and large negative integers to -0.5 so
@@ -1238,7 +1263,11 @@ def _lgamma_impl_f64(x):
   pos_log_h = lax.select(in_small, x_small_in, prod_h)
   log_arg_h = lax.select(is_pos, pos_log_h, qh)
   k_adj = lax.select(is_tiny_neg, lax.full_like(x, -54.0), lax.full_like(x, 0.0))
+  if subnormals:
+    log_arg_h = lax.select(is_sub, ax * 18014398509481984.0, log_arg_h)
+    k_adj = lax.select(is_sub, lax.full_like(x, -54.0), k_adj)
   log_h, log_l = _log_f64(log_arg_h, k_adj)
+  sub_res = -(log_h + log_l)
   pos_log_corr = lax.select(in_small, lax.full_like(x, 0.0), prod_l * rcp_prod)
   neg_log_corr = rem_q * (prod_h * rcp_both)
   log_l = log_l + lax.select(is_pos, pos_log_corr, neg_log_corr)
@@ -1279,20 +1308,24 @@ def _lgamma_impl_f64(x):
   neg_res = lax.select(in_root_win, rw, refl)
 
   res = lax.select(is_pos, lg_pos, neg_res)
+  if subnormals:
+    res = lax.select(is_sub, sub_res, res)
   # Replace -0.0 at x = 1.0 and 2.0 with +0.0.
   res = lax.select(res == 0.0, lax.full_like(x, 0.0), res)
   # Return +inf at poles (x = +-0 and negative integers, which also covers
   # x = -inf) and on positive overflow (x > _MAX_FINITE_ARG_F64); keep NaNs.
-  is_neg_int = (~is_pos) & (x_safe == lax.floor(x_safe))
+  is_neg_int = (~is_pos) & (~is_tiny) & (x_safe == lax.floor(x_safe))
   is_pole_or_inf = is_zero | is_neg_int | (x > _MAX_FINITE_ARG_F64)
   res = lax.select(is_pole_or_inf, lax.full_like(x, np.inf), res)
   return lax.select(x != x, lax.full_like(x, np.nan), res)
 
 
 @config.explicit_x64_dtypes("allow")
-@jit(static_argnames=["use_f64_for_f32"])
-def lgamma_impl(x, *, use_f64_for_f32: bool = False):
+@jit(static_argnames=["use_f64_for_f32", "subnormals"])
+def lgamma_impl(
+    x, *, use_f64_for_f32: bool = False, subnormals: bool = False
+):
   """Computes lgamma(x) for float32 and float64 inputs."""
   if x.dtype == np.float64:
-    return _lgamma_impl_f64(x)
-  return _lgamma_impl_f32(x, use_f64=use_f64_for_f32)
+    return _lgamma_impl_f64(x, subnormals=subnormals)
+  return _lgamma_impl_f32(x, use_f64=use_f64_for_f32, subnormals=subnormals)

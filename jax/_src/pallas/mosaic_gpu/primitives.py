@@ -25,6 +25,7 @@ import math
 from typing import Any, Literal, assert_never, overload
 
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
@@ -3218,6 +3219,7 @@ def tcgen05_commit_arrive(
     collective_axis: str | None = None,
     *,
     predicate: bool | jax.Array | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
   """Tracks completion of all preceding ``tcgen05_mma`` and ``async_copy_smem_to_tmem`` calls.
 
@@ -3229,6 +3231,9 @@ def tcgen05_commit_arrive(
       have a size of exactly 2, and must be on the minormost cluster axis.
     predicate: A boolean indicating whether the commit arrive should be
       performed. If ``None``, the commit arrive is always performed.
+    commit_a_read_only: If ``True``, the barrier tracks only the completion of
+      SMEM reads of the ``a`` operand of preceding ``tcgen05_mma`` calls rather
+      than full operation completion (requires ``sm_107f``).
 
   See also:
     - :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
@@ -3245,6 +3250,7 @@ def tcgen05_commit_arrive(
       barrier_transforms_tree=barrier_transforms_tree,
       collective_axis=collective_axis,
       has_user_predicate=predicate is not None,
+      commit_a_read_only=commit_a_read_only,
   )
 
 
@@ -3255,8 +3261,10 @@ def _tcgen05_commit_arrive_abstract_eval(
     barrier_transforms_tree,
     collective_axis,
     has_user_predicate: bool = False,
+    commit_a_read_only: bool = False,
 ):
-  del args, barrier_transforms_tree, collective_axis, has_user_predicate
+  del args, barrier_transforms_tree, collective_axis
+  del has_user_predicate, commit_a_read_only
   orders_tensor_core = getattr(
       barrier.inner_aval.dtype, "orders_tensor_core", False)
   if not orders_tensor_core:
@@ -3281,6 +3289,7 @@ def _tcgen05_commit_arrive_lowering(
     barrier_transforms_tree,
     collective_axis,
     has_user_predicate: bool = False,
+    commit_a_read_only: bool = False,
 ):
   if has_user_predicate:
     *flat_args, user_predicate = flat_args
@@ -3302,16 +3311,17 @@ def _tcgen05_commit_arrive_lowering(
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
     memref = barrier_ref.as_barrier_memref()
-    # TODO(cjfj): remove when minimum jaxlib version is 0.12.
-    if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
-      mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, predicate=predicate
-      )
-    elif predicate is None:
-      mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
-    else:
-      with mgpu.when(predicate):
-        mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+    # TODO(bchetioui): remove `hasattr` check once minimum jaxlib version is >= 0.12.1.
+    if commit_a_read_only and not hasattr(
+        mgpu.dialect.TcGen05CommitArriveOp, "commit_a_read_only"
+    ):
+      raise NotImplementedError("commit_a_read_only requires jaxlib >= 0.12.1.")
+    extra_kwargs: dict[str, Any] = (
+        {"commit_a_read_only": True} if commit_a_read_only else {}
+    )
+    mgpu.dialect.tcgen05_commit_arrive(
+        memref, collective=collective, predicate=predicate, **extra_kwargs
+    )
   else:
     assert isinstance(barrier_ref, mgpu.BarrierRef)
     single_lane = ctx.module_ctx.single_lane_predicate
@@ -3320,6 +3330,7 @@ def _tcgen05_commit_arrive_lowering(
         collective=collective,
         ctx=ctx.launch_ctx,
         predicate=_andi_maybe_none(predicate, single_lane),
+        commit_a_read_only=commit_a_read_only,
     )
   return []
 
@@ -5986,20 +5997,23 @@ def semaphore_wait(
   """
   ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
   value = jnp.asarray(value, dtype=jnp.int32)
-  args = [ref, transforms, value, decrement]
+  args = [ref, transforms, value]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_wait_p.bind(
       *flat_args,
       args_tree=args_tree,
+      decrement=decrement,
       memory_scope=memory_scope,
   )
 
 
 @semaphore_wait_p.def_effectful_abstract_eval
-def _semaphore_wait_abstract_eval(*avals, args_tree, memory_scope):
+def _semaphore_wait_abstract_eval(
+    *avals, args_tree, decrement: bool, memory_scope
+):
   del memory_scope  # Unused.
   return pallas_primitives.semaphore_wait_p.abstract_eval(
-      *avals, args_tree=args_tree
+      *avals, args_tree=args_tree, decrement=decrement
   )
 
 
@@ -6015,9 +6029,10 @@ def _semaphore_wait_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *args,
     args_tree,
+    decrement: bool,
     memory_scope: Literal["sys", "gpu"] = "sys",
 ):
-  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
   sem_aval, transform_avals, *_ = tree_util.tree_unflatten(
       args_tree, ctx.avals_in
   )
@@ -6065,13 +6080,34 @@ def _reduce_abstract_eval(
   return jax_core.ShapedArray(out_shape, x_aval.dtype)
 
 
-for prim, op in (
-    (reduce_sum_p, "add"),
-    (reduce_max_p, "max"),
-    (reduce_min_p, "min"),
-    (reduce_prod_p, "prod"),
+def _reduce_sum_abstract_eval(
+    x_aval: jax_core.ShapedArray,
+    *,
+    axes: tuple[int, ...],
+    accumulator_ilp: int | None = None,
+) -> jax_core.ShapedArray:
+  # Mirrors the check in `lax.reduce_sum_p`'s dtype rule.
+  if (
+      x_aval.dtype in (np.float16, dtypes.bfloat16)
+      and not config.allow_f16_reductions.value
+      and not all(jax_core.definitely_equal(x_aval.shape[d], 1) for d in axes)
+  ):
+    raise ValueError(
+        f"plgpu.sum on operand {x_aval.str_short(True)} is not allowed when"
+        " jax_allow_f16_reductions=False."
+    )
+  return _reduce_abstract_eval(
+      x_aval, axes=axes, accumulator_ilp=accumulator_ilp
+  )
+
+
+for prim, op, abstract_eval in (
+    (reduce_sum_p, "add", _reduce_sum_abstract_eval),
+    (reduce_max_p, "max", _reduce_abstract_eval),
+    (reduce_min_p, "min", _reduce_abstract_eval),
+    (reduce_prod_p, "prod", _reduce_abstract_eval),
 ):
-  prim.def_abstract_eval(_reduce_abstract_eval)
+  prim.def_abstract_eval(abstract_eval)
   batching.defreducer(prim)
   lowering._register_resource_estimator(prim)(
       lowering._reduce_resource_estimator

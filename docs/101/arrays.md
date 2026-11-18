@@ -190,6 +190,19 @@ x.at[11].set(99)  # update is dropped
 Both behaviors can be adjusted with the `mode` argument to indexing
 operations; see {attr}`jax.Array.at` for the options.
 
+Inside compiled functions ({ref}`jax-201-jit`), slice sizes must be statically
+known, so `x[i : i + 4]` raises an `IndexError` when `i` is a traced runtime
+index. Use {func}`jax.ds(start, size) <jax.ds>` to read or update a fixed-size
+slice at a dynamic start index:
+
+```{code-cell}
+@jax.jit
+def shift_window(x, i):
+  return x.at[jax.ds(i, 4)].add(10)
+
+shift_window(jnp.arange(8), 2)
+```
+
 Another small difference: `jax.numpy` functions require arrays (or Python
 scalars) as inputs, rather than silently converting Python lists:
 

@@ -199,11 +199,12 @@ absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
         return reinterpret_cast<XLA_FFI_Handler*>(capsule.data());
       };
 
-      XLA_FFI_Handler_Bundle bundle;
+      XLA_FFI_Handler_Bundle bundle = {};
       ABSL_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
       ABSL_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
       ABSL_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
       ABSL_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(bundle.record, handler("record"));
 
       return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
           xla::ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
@@ -276,6 +277,18 @@ absl::StatusOr<uintptr_t> PyFfiContext::stream() const {
     return ffi::TakeStatus(error);
   }
   return absl::bit_cast<uintptr_t>(args.stream);
+}
+
+absl::StatusOr<int32_t> PyFfiContext::device_ordinal() const {
+  XLA_FFI_DeviceOrdinal_Get_Args args;
+  args.struct_size = XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.ctx = ctx_;
+  args.device_ordinal = 0;
+  if (XLA_FFI_Error* error = api_->XLA_FFI_DeviceOrdinal_Get(&args)) {
+    return ffi::TakeStatus(error);
+  }
+  return args.device_ordinal;
 }
 
 PyFfiAnyBuffer::PyFfiAnyBuffer(DLDeviceType device_type, int32_t device_ordinal,
@@ -493,6 +506,8 @@ void RegisterFfiApis(nb::module_& m) {
   context.def_prop_ro("stage", &PyFfiContext::stage);
   context.def_prop_ro("stream",
                       xla::ValueOrThrowWrapper(&PyFfiContext::stream));
+  context.def_prop_ro("device_ordinal",
+                      xla::ValueOrThrowWrapper(&PyFfiContext::device_ordinal));
 
   // Custom-call targets.
   m.def(
@@ -534,6 +549,7 @@ void RegisterFfiApis(nb::module_& m) {
           export_handler("prepare", registration.bundle.prepare);
           export_handler("initialize", registration.bundle.initialize);
           export_handler("execute", registration.bundle.execute);
+          export_handler("record", registration.bundle.record);
           targets[nb::str(name.data(), name.size())] = std::move(bundle);
         }
         return targets;

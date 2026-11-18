@@ -847,7 +847,8 @@ def _remat_lowering(
   ctx.set_tokens_out(tokens_out)
   return outs
 
-mlir.register_lowering(remat_p, _remat_lowering)
+mlir.register_lowering(
+    remat_p, _remat_lowering, shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
@@ -927,7 +928,9 @@ def name_jvp(primals, tangents, *, name):
   return name_p.bind(x, name=name), xdot  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
-mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
+mlir.register_lowering(
+    name_p, lambda ctx, x, *, name: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims

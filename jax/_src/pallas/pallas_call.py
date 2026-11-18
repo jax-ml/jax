@@ -43,7 +43,6 @@ from jax._src.lib.mlir import ir
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
-from jax._src.pallas import primitives
 from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
@@ -130,10 +129,12 @@ def _pallas_call_abstract_eval(
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
-  if not (all(p is None for a in avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec) and
-          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec)):
+  if not (all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in avals if isinstance(a, jax_core.ShapedArray)) and
+          all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in out_avals if isinstance(a, jax_core.ShapedArray))):
     raise ValueError("pallas_call requires all mesh axes to be Manual, "
                      f"got {get_abstract_mesh().axis_types}")
   return out_avals, effs
@@ -141,9 +142,11 @@ def _pallas_call_abstract_eval(
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 
-def _pallas_call_is_high(*_, jaxpr, **params):
+def _pallas_call_is_high(*avals, jaxpr, out_avals, **params):
   del params
-  return jaxpr.is_high
+  return (jaxpr.is_high or
+          any(a.is_high for a in avals) or
+          any(a.is_high for a in out_avals))
 pallas_call_p.is_high = _pallas_call_is_high
 
 
@@ -811,21 +814,15 @@ def _trace_kernel_to_jaxpr(
     debug_info: jax_core.DebugInfo,
     grid_mapping: GridMapping,
     kernel_avals: ft.FlatTree,  # of AbstractRef
-    kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
-  fun_with_transforms = primitives.wrap_with_transforms(
-      fun, kernel_in_transforms)
-
   with (
       grid_mapping.trace_env(),
       config._check_vma(False),
       config.mutable_array_checks(False),
       xla_metadata.clear_xla_metadata(),
   ):
-    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-        fun_with_transforms, kernel_avals,
-        debug_info)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, kernel_avals, debug_info)
     consts = closed_jaxpr.consts
     jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
                             used_outputs=[True] * len(closed_jaxpr.outvars),
@@ -1139,8 +1136,7 @@ def pallas_call(
   In contrast to :func:`jax.experimental.pallas.kernel`, this entry point
   assumes that the kernel will be executed over a ``grid``.
 
-  See `Pallas Quickstart
-  <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
+  See the `Pallas documentation <https://pallas.jax.dev>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.
@@ -1290,29 +1286,20 @@ def _pallas_call(
       kernel_args_kwargs = (kernel_args, scratch_args)
     else:
       kernel_args_kwargs = (kernel_args + list(scratch_args), {})
-    kernel_args_ft = ft.flatten(
+    flat_kernel_avals = ft.flatten(
         kernel_args_kwargs, registry=tree_util.default_registry
-    )
-    flat_kernel_avals = kernel_args_ft.map(
-        lambda x: x.ref if isinstance(x, state_types.TransformedRef) else x
     )
     if config._check_vma.value:
       flat_kernel_avals = flat_kernel_avals.map(
           lambda a: a.update_manual_axis_type(jax_core.empty_mat)
       )
-    # Note that only a subset of all transforms can be found here, and they are
-    # never expected to contain any arrays.
-    kernel_arg_transforms = tuple(
-        x.transforms if isinstance(x, state_types.TransformedRef) else ()
-        for x in kernel_args_ft.vals
-    )
     kernel_dbg = api_util.debug_info("pallas_call kernel", kernel,
                                       *kernel_args_kwargs)
     if name is not None:
       kernel_dbg = kernel_dbg.replace_func_name(mlir.sanitize_name(name))
     jaxpr, consts = _trace_kernel_to_jaxpr(
-        kernel, kernel_dbg, grid_mapping, flat_kernel_avals,
-        kernel_arg_transforms)
+        kernel, kernel_dbg, grid_mapping, flat_kernel_avals
+    )
     for i_idx, o_idx in input_output_aliases.items():
       if i_idx not in range(len(flat_in_avals)):
         raise ValueError(
@@ -1355,11 +1342,6 @@ def _pallas_call(
           cost_estimate=cost_estimate,
           metadata=FrozenDict(metadata) if metadata is not None else None,
           name=name,
-          # If we're running under GPU Interpret Mode, save the kernel arg
-          # transforms. Checks the string name to avoid a conditional import.
-          # TODO(jburnim): Clean this up.
-          **(dict(kernel_arg_transforms=kernel_arg_transforms)
-             if type(interpret).__name__ == "InterpretGPUParams" else {}),
       )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

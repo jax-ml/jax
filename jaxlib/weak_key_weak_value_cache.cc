@@ -122,6 +122,10 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
                                             PyObject* const* args,
                                             Py_ssize_t nargs) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized WeakKeyWeakValueCache");
+      return nullptr;
+    }
     WeakKeyWeakValueCache* self = nb::inst_ptr<WeakKeyWeakValueCache>(self_obj);
 
     if (nargs != 1) {

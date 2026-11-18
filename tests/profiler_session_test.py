@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import pathlib
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,10 +26,16 @@ _TEST_SESSION_ID = 'my_custom_session_123'
 jax.config.parse_flags_with_absl()
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 @jtu.thread_unsafe_test_class()
 class ProfilerSessionTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if hasattr(sys, '_is_gil_enabled') and not sys._is_gil_enabled():
+      self.skipTest(
+          'Profiler tests are not thread-safe under Python free threading'
+      )
+
     super().setUp()
     # Ensure that any running profiler is stopped before starting the test.
     # This is in setUp rather than tearDown to defend against previous tests

@@ -44,6 +44,7 @@ from jax._src.state.discharge import (
     run_state_reference,
 )
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
+                                       pp_ref_transforms,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap, swap_p, unpin,
                                        with_memory_space_constraint)
@@ -1663,6 +1664,44 @@ class StateControlFlowTest(jtu.JaxTestCase):
         _ = multi_ref.memory_space
     fn(0)
 
+  def test_transformed_multiref_pushes_transforms_into_branches(self):
+    def pp_ref(r):
+      var_ref = ft.flatten(r).map(
+          lambda v: core.Var(core.typeof(v))).unflatten()
+      return pp_ref_transforms(core.JaxprPpContext(), var_ref).format()
+
+    @jax.jit
+    def fn(i, j):
+      x, y, z = [jax.new_ref(jnp.zeros((4, 8), jnp.float32)) for _ in range(3)]
+      sel = state_types.TransformedRef(
+          (x, y), (state_types.SelectTransform(j),))
+      ref = sel.T.at[:4].bitcast(jnp.int32).reshape(16)
+      self.assertTrue(ref.multiref)
+      self.assertEqual((ref.shape, ref.dtype), ((16,), jnp.int32))
+      self.assertEqual([r.ref for r in ref.ref], [x, y])
+      self.assertEqual(
+          pp_ref(ref),
+          "(a{transpose([1, 0])}[:4,:]{bitcast(int32)}{reshape([16])}, "
+          "b{transpose([1, 0])}[:4,:]{bitcast(int32)}{reshape([16])})"
+          "{select(c)}")
+
+      nested = state_types.TransformedRef(
+          (sel, z), (state_types.SelectTransform(i),)).at[:2]
+      self.assertTrue(nested.multiref)
+      self.assertEqual(nested.shape, (2, 8))
+      self.assertEqual(
+          pp_ref(nested),
+          "((a[:2,:], b[:2,:]){select(c)}, d[:2,:]){select(e)}")
+
+      with self.assertRaises(ValueError):
+        state_types.TransformedRef(sel, ())
+      with self.assertRaises(ValueError):
+        host = core.MemorySpace.Host
+        ref.memory_space_cast(host).memory_space_cast(host)
+      with self.assertRaises(NotImplementedError):
+        _ = ref[...]
+
+    fn(0, 1)
 
   @parameterized.named_parameters(
     ("scan", "scan"), ("while_loop", "while_loop"))

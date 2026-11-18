@@ -30,6 +30,7 @@ except ImportError:
 
 import jax
 from jax._src import api
+from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -203,8 +204,8 @@ def _unreduce_device_list(device_ids: Sequence[int]) -> DeviceList:
 
 @_make_reduce_func_with_common_obj
 def _reduce_single_device_sharding(
-    sharding: jax.sharding.SingleDeviceSharding,
-) -> tuple[Callable[..., jax.sharding.SingleDeviceSharding], Any]:
+    sharding: sharding_impls.SingleDeviceSharding,
+) -> tuple[Callable[..., sharding_impls.SingleDeviceSharding], Any]:
   return _unreduce_single_device_sharding, (
       sharding.device_set.pop().id,
       sharding.memory_kind)
@@ -212,10 +213,12 @@ def _reduce_single_device_sharding(
 
 def _unreduce_single_device_sharding(
     device_id: int, memory_kind: str | None
-) -> jax.sharding.SingleDeviceSharding:
+) -> sharding_impls.SingleDeviceSharding:
   cpu_device_map = _get_cpu_device_map()
   device = _lookup_cpu_device(cpu_device_map, device_id)
-  return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)
+  return sharding_impls.make_single_device_sharding(
+      device, memory_kind=memory_kind
+  )
 
 
 def _serialize(obj: Any) -> bytes:
@@ -244,7 +247,7 @@ def _serialize(obj: Any) -> bytes:
         {jax.sharding.Mesh: _reduce_mesh},
         {jax.sharding.NamedSharding: _reduce_named_sharding},  # pyrefly: ignore[bad-argument-type]
         {DeviceList: _reduce_device_list},  # pyrefly: ignore[bad-argument-type]
-        {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},  # pyrefly: ignore[bad-argument-type]
+        {sharding_impls.SingleDeviceSharding: _reduce_single_device_sharding},  # pyrefly: ignore[bad-argument-type]
         cloudpickle.CloudPickler.dispatch_table,  # pyrefly: ignore[bad-argument-type]
     )
     dispatch = dispatch_table

@@ -689,6 +689,14 @@ class BufferedRef(BufferedRefBase):
       raise ValueError(
           f"Unsupported buffer memory space: {buffer_memory_space}"
       )
+    in_buffer_count, out_buffer_count = _normalize_buffer_count(
+        buffer_count, buffer_type
+    )
+    if use_lookahead and in_buffer_count < 2:
+      raise ValueError(
+          "use_lookahead=True requires input buffer_count >= 2, got"
+          f" buffer_count={buffer_count!r} for {buffer_type}."
+      )
     if _window_aliases_source(spec.memory_space, source_memory_space):
       if buffer_memory_space is HBM:
         if source_memory_space not in (ANY, HBM):
@@ -719,9 +727,6 @@ class BufferedRef(BufferedRefBase):
             "grid_rank must be specified when use_lookahead is True."
         )
 
-      in_buffer_count, out_buffer_count = _normalize_buffer_count(
-          buffer_count, buffer_type
-      )
       total_buffer_count = _total_buffer_count(
           in_buffer_count, out_buffer_count, buffer_type
       )
@@ -2374,7 +2379,7 @@ def emit_pipeline(
               "PyTree window views must have one leaf per source ref."
           )
       else:
-        aval = bm.transformed_block_aval
+        aval = bm.block_aval
         aval = aval.update(memory_space=_buffer_memory_space(aval.memory_space))
       kernel_args.append(aval)
 
@@ -2921,7 +2926,7 @@ def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
                               f" currently supported. Got {grid_mapping=}")
 
   return (body_jaxpr.is_high
-          or any(bm.transformed_block_aval.inner_aval.is_high
+          or any(bm.block_aval.inner_aval.is_high
                  for bm in grid_mapping.block_mappings))
 
 emit_pipeline_p.is_high = _emit_pipeline_is_high

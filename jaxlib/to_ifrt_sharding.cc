@@ -102,7 +102,7 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
     nb::handle sharding, const xla::ifrt::Shape& shape) {
   const int64_t num_dimensions = shape.dims().size();
   const NamedSharding* named_sharding = nullptr;
-  if (sharding.type().is(NamedSharding::type())) {
+  if (sharding.type().is(NamedSharding::type()) && nb::inst_ready(sharding)) {
     named_sharding = nb::inst_ptr<const NamedSharding>(sharding);
     if (std::optional<xla::ifrt::ShardingRef> cached =
             named_sharding->LookupIfrtHloSharding(num_dimensions);

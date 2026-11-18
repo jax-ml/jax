@@ -285,17 +285,24 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.cauchy.isf`
   """
   q, loc, scale = promote_args_inexact("cauchy.ppf", q, loc, scale)
-  pi = _lax_const(q, np.pi)
-  zero = _lax_const(q, 0)
   one = _lax_const(q, 1)
   # ppf(q) = tan(pi * (q - 1/2)) = -1 / tan(pi * q) = 1 / tan(pi * (1 - q)).
   # Using the last two forms for q < 1/2 and q > 1/2 respectively keeps the
   # argument of tan near zero, which is accurate in both tails and gives -inf
   # at q = 0 and inf at q = 1.
+  half = _lax_const(q, 0.5)
   upper = q > 0.5
-  arg = lax.mul(pi, jnp.where(upper, lax.sub(one, q), lax.abs(q)))
+  is_mid = q == 0.5
+  arg = jnp.where(
+    is_mid,
+    lax.sub(q, half),
+    jnp.where(upper, lax.sub(one, q), lax.abs(q)),
+  )
+  t = lax.tanpi(arg)
   unscaled = jnp.where(
-    q == 0.5, zero, lax.div(jnp.where(upper, one, -one), lax.tan(arg))
+    is_mid,
+    t,
+    lax.div(jnp.where(upper, one, -one), jnp.where(is_mid, one, t)),
   )
   return jnp.where(
     (q < 0) | (q > 1),

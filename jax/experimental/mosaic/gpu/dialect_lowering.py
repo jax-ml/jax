@@ -696,7 +696,7 @@ def _broadcasted_iota_op_lowering_rule(
 def _vector_broadcast_op_lowering_rule(
     _: LoweringContext, op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
-  out_vec_ty = ir.VectorType(op.vector.type)
+  out_vec_ty = ir.VectorType(op.result.type)
   fragmented_array = fa.FragmentedArray.splat(
       op.source,
       tuple(out_vec_ty.shape),
@@ -2610,14 +2610,16 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   ctx.check_collective(op)
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
   predicate = ctx.single_lane_predicate
-  # TODO(cjfj): simplify when minimum jaxlib version is 0.12.
-  if (pred := getattr(op, "predicate", None)) is not None:
+  if (pred := op.predicate) is not None:
     predicate = arith.andi(predicate, pred)
+  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is >= 0.12.1.
+  commit_a_read_only = bool(getattr(op, "commit_a_read_only", False))
   tcgen05.commit_arrive(
       barrier.barrier_ref,
       op.collective.value,
       ctx.launch_context,
       predicate=predicate,
+      commit_a_read_only=commit_a_read_only,
   )
   return []
 

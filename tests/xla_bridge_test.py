@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import platform
 
@@ -22,12 +23,101 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
 
 mock = absltest.mock
+
+
+@jtu.thread_unsafe_test_class()  # Modifies ``os.environ``.
+class GpuPluginOptionsTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jaxlib_extension_version < 516:
+      self.skipTest("Requires jaxlib_extension_version >= 516")
+    self.enterContext(
+        jtu.set_env(
+            XLA_PYTHON_CLIENT_ALLOCATOR=None,
+            XLA_CLIENT_MEM_FRACTION=None,
+            XLA_PYTHON_CLIENT_MEM_FRACTION=None,
+            XLA_PYTHON_CLIENT_PREALLOCATE=None,
+            XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB=None,
+            XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE=None,
+            XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT=None,
+            XLA_FLAGS=None,
+        )
+    )
+
+  def test_default_memory_fraction_policy(self):
+    for env in (
+        {},
+        {"XLA_CLIENT_MEM_FRACTION": "", "XLA_PYTHON_CLIENT_MEM_FRACTION": ""},
+    ):
+      with self.subTest(env=env), jtu.set_env(**env):
+        options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertNotIn("memory_fraction", options)
+
+  def test_explicit_memory_fraction(self):
+    for name in ("XLA_CLIENT_MEM_FRACTION", "XLA_PYTHON_CLIENT_MEM_FRACTION"):
+      for fraction in ("0.5", "0.75", "0.9"):
+        with self.subTest(name=name, fraction=fraction):
+          with jtu.set_env(**{name: fraction}):
+            options = xc.generate_pjrt_gpu_plugin_options()
+          self.assertEqual(options["memory_fraction"], float(fraction))
+          self.assertNotIn("memory_fraction_policy", options)
+
+  def test_deprecated_fraction_with_empty_current_fraction(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.5",
+    }
+    with jtu.set_env(**env):
+      options = xc.generate_pjrt_gpu_plugin_options()
+    self.assertEqual(options["memory_fraction"], 0.5)
+    self.assertNotIn("memory_fraction_policy", options)
+
+  def test_conflicting_memory_fractions(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "0.75",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
+    }
+    with jtu.set_env(**env):
+      with self.assertRaisesRegex(ValueError, "specified together"):
+        xc.generate_pjrt_gpu_plugin_options()
+
+  def test_explicit_preallocation(self):
+    for value, expected in (
+        ("false", False), ("False", False), ("0", False), ("true", True)
+    ):
+      with self.subTest(value=value):
+        with jtu.set_env(XLA_PYTHON_CLIENT_PREALLOCATE=value):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertEqual(options["preallocate"], expected)
+
+  def test_explicit_allocator(self):
+    for allocator in (
+        "default", "bfc", "platform", "cuda_async", "vmm", "address"
+    ):
+      with self.subTest(allocator=allocator):
+        with jtu.set_env(XLA_PYTHON_CLIENT_ALLOCATOR=allocator):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["allocator"], allocator)
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+
+  def test_explicit_xla_flags_are_preserved(self):
+    flags = "--xla_gpu_memory_fraction_policy=0.5"
+    with jtu.set_env(XLA_FLAGS=flags):
+      options = xc.generate_pjrt_gpu_plugin_options()
+      self.assertEqual(os.environ["XLA_FLAGS"], flags)
+    # XLA resolves its explicit flag ahead of the client policy.
+    self.assertEqual(options["memory_fraction_policy"], "0.75+")
 
 
 class XlaBridgeTest(jtu.JaxTestCase):
@@ -301,6 +391,15 @@ class XlaBridgeTest(jtu.JaxTestCase):
     (target, options), _ = mock_get_client.call_args
     self.assertEqual(target, "grpc://localhost:1234")
     self.assertIsInstance(options, xb.ifrt_proxy.ClientConnectionOptions)
+
+  def test_uninitialized_client_gc_clear(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    client = _jax.Client.__new__(_jax.Client)
+    cycle = [client]
+    cycle.append(cycle)
+    del client, cycle
+    gc.collect()
 
 
 class GetBackendTest(jtu.JaxTestCase):

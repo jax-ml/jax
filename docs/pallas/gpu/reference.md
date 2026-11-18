@@ -59,9 +59,6 @@ From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA
 This is very similar to a programming model popularized by [Triton](https://triton-lang.org/),
 but as you will see there are a few differences. Mosaic GPU tends to be more low level,
 which usually means you will have to put in more work, but it also puts you more in control.
-In our view both approaches have their merits and we encourage you to pick the backend that
-suits your needs the best! Pallas supports and will continue to support Triton as an alternative
-GPU backend.
 ```
 
 ### In-order execution & using multiple hardware units
