@@ -71,10 +71,7 @@ def layout_cast(
   """Convenience wrapper around `mgpu.dialect.layout_cast`."""
   if isinstance(layout, mgpu.FragmentedLayout):
     layout = layouts.to_layout_attr(layout)
-  # TODO(bchetioui): pass `strict` unconditionally once minimum jaxlib version
-  # is 0.12.0.
-  kwargs = {} if strict is None else {"strict": strict}
-  return mgpu.dialect.layout_cast(x, layout, **kwargs)  # pyrefly: ignore[unexpected-keyword]
+  return mgpu.dialect.layout_cast(x, layout, strict=strict)
 
 
 def undefs(*tys: ir.Type) -> list[ir.Value]:
@@ -963,9 +960,6 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(False, True)
   def test_constraint_extraction_works_correctly(self, strict):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
-    if strict and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
-      self.skipTest("Test requires jaxlib >= 0.12.0")
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
@@ -1124,9 +1118,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_scavenge_diagnoses_unsupported_smem_registers_transfer(
       self, is_store, optimized
   ):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
-    if not is_store and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
-      self.skipTest("Test requires jaxlib >= 0.12.0")
     shape = (128, 128)
     f32 = ir.F32Type.get()
     with ir.InsertionPoint(self.module.body):

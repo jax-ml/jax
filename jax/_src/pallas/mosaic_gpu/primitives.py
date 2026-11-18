@@ -3319,20 +3319,9 @@ def _tcgen05_commit_arrive_lowering(
     extra_kwargs: dict[str, Any] = (
         {"commit_a_read_only": True} if commit_a_read_only else {}
     )
-    # TODO(cjfj): remove when minimum jaxlib version is 0.12.
-    if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
-      mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, predicate=predicate, **extra_kwargs
-      )
-    elif predicate is None:
-      mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, **extra_kwargs
-      )
-    else:
-      with mgpu.when(predicate):
-        mgpu.dialect.tcgen05_commit_arrive(
-            memref, collective=collective, **extra_kwargs
-        )
+    mgpu.dialect.tcgen05_commit_arrive(
+        memref, collective=collective, predicate=predicate, **extra_kwargs
+    )
   else:
     assert isinstance(barrier_ref, mgpu.BarrierRef)
     single_lane = ctx.module_ctx.single_lane_predicate
