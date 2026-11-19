@@ -546,6 +546,20 @@ def _construct_smem_reftree(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
   )
   smem_refs = []
+  barrier_phases: ir.Value | None = None
+  barrier_phase_offset = 0
+
+  def get_barrier_phases(num_barriers: int) -> tuple[ir.Value, int]:
+    nonlocal barrier_phases, barrier_phase_offset
+    if num_barriers > 32:
+      raise NotImplementedError("Only up to 32 barriers per group supported")
+    if barrier_phases is None or barrier_phase_offset + num_barriers > 32:
+      barrier_phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+      memref.store(utils.c(0, i32), barrier_phases, [])
+      barrier_phase_offset = 0
+    base_offset = barrier_phase_offset
+    barrier_phase_offset += num_barriers
+    return barrier_phases, base_offset
 
   for ref_ty in flat_ref_tys:
     def barrier_memref(num_barriers: int) -> ir.Value:
@@ -588,6 +602,7 @@ def _construct_smem_reftree(
           return Union([t() for t in member_thunks])
 
       case Barrier(arrival_count, num_barriers, orders_tensor_core):
+        phases, phase_offset = get_barrier_phases(num_barriers)
         init_fn = (
             functools.partial(
                 utils.DialectBarrierRef.initialize,
@@ -596,11 +611,22 @@ def _construct_smem_reftree(
             if lowering_semantics == LoweringSemantics.Warpgroup
             else utils.BarrierRef.initialize
         )
-        ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
+        ref = init_fn(
+            barrier_memref(num_barriers),
+            arrival_count=arrival_count,
+            phases=phases,
+            phase_offset=phase_offset,
+        )
       case ClusterBarrier(collective_dims, arrival_count, num_barriers):
+        phases, phase_offset = get_barrier_phases(num_barriers)
         ref = utils.CollectiveBarrierRef.initialize(
-            barrier_memref(num_barriers), arrival_count, collective_dims,
-            cluster_shape, leader_tracked=ref_ty.leader_tracked
+            barrier_memref(num_barriers),
+            arrival_count,
+            collective_dims,
+            cluster_shape,
+            leader_tracked=ref_ty.leader_tracked,
+            phases=phases,
+            phase_offset=phase_offset,
         )
       case CtaBarrier(arrival_count, num_barriers):
         ref = utils.CtaBarrierRef.initialize(
