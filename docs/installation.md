@@ -19,7 +19,11 @@ different builds for different operating systems and accelerators.
   ```
 * **GPU (AMD, ROCm)**
   ```
-  pip install -U "jax[rocm7-local]"
+  # jax[rocm] defaults to ROCm 7 (same as jax[rocm7]), with kernels for all supported GPUs
+  pip install -U "jax[rocm]" --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
+
+  # ROCm 10
+  pip install -U "jax[rocm10]" --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
   ```
 
 * **TPU (Google Cloud TPU VM)**
