@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
+import inspect
 import math
 from typing import Any
 
@@ -40,6 +41,7 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax as lax_internal
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -473,7 +475,7 @@ def lower_fun(
     jaxpr, _ = pe.trace_to_jaxpr(
         fn, in_avals_ft, debug_info=debug_info, requires_low=True
     )
-    out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
+    out = _eval_jaxpr_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
 
   return f_lowered
@@ -573,7 +575,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 class _Extern:
   arg_types: Sequence[jax.typing.DTypeLike]
   symbol: str
-  result_type: str
+  result_type: jax.typing.DTypeLike
 
   def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
     if len(avals) != len(self.arg_types):
@@ -745,6 +747,20 @@ log_dispatch_table = _make_dispatch_table(
         _Extern([jnp.float32], "__ocml_log_f32", jnp.float32),
         _Extern([jnp.float64], "__ocml_log_f64", jnp.float64),
         _Fallback([jnp.floating], math_dialect.log),
+    ],
+)
+
+log2_dispatch_table = _make_dispatch_table(
+    "log2",
+    cuda=[
+        _Extern([jnp.float32], "__nv_log2f", jnp.float32),
+        _Extern([jnp.float64], "__nv_log2", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_log2_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_log2_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
     ],
 )
 
@@ -1071,9 +1087,13 @@ triton_lowering_rules.update({
     lax.exp2_p: exp2_dispatch_table,
     lax.expm1_p: expm1_dispatch_table,
     lax.log_p: log_dispatch_table,
+    lax.log2_p: log2_dispatch_table,
     lax.log1p_p: log1p_dispatch_table,
     lax.sqrt_p: sqrt_dispatch_table,
     lax.square_p: lambda ctx, x: _mul(x, x),
+    lax.one_minus_square_p: lambda ctx, x: _mul(
+        _add(_ones_like(x), x), _sub(_ones_like(x), x)
+    ),
     lax.pow_p: pow_dispatch_table,
     lax.cbrt_p: cbrt_dispatch_table,
     lax.rsqrt_p: rsqrt_dispatch_table,
@@ -1475,6 +1495,11 @@ register_lowering(lax.erf_inv_p)(
 )
 
 
+register_lowering(lax.polynomial_p)(
+    lower_fun(lax_internal.polynomial_lower, multiple_results=False)
+)
+
+
 @register_lowering(lax.iota_p)
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
                         sharding):
@@ -1748,9 +1773,15 @@ def _convert_element_type_lowering_rule(
 
 
 @register_lowering(lax.select_n_p)
-def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
-  pred_aval, a_aval, b_aval = ctx.avals_in
+def select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
+  pred_aval = ctx.avals_in[0]
+  if len(cases) != 2 or pred_aval.dtype != np.dtype(np.bool_):
+    return lower_fun(
+        pallas_utils.select_n_lowering_helper, multiple_results=False
+    )(ctx, pred, *cases)
+  _, a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
+  x, y = cases
   pred, x = _bcast(pred, x, pred_aval, a_aval, out_aval)
   pred, y = _bcast(pred, y, pred_aval, b_aval, out_aval)
   return arith_dialect.select(pred, y, x)
@@ -1799,10 +1830,15 @@ def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
     return _splat(a, shape)
 
   ty = ir.RankedTensorType(a.type)
+  res_ty = ir.RankedTensorType.get(shape, ty.element_type, ty.encoding)
+  params = inspect.signature(tt_dialect.reshape).parameters
+  if "allow_reorder" not in params:
+    return tt_dialect.reshape(res_ty, a)
+  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
   return tt_dialect.reshape(
-      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
+      res_ty,
       a,
-      allow_reorder=False,
+      allow_reorder=False,  # pyrefly: ignore[unexpected-keyword]
   )
 
 
@@ -1887,7 +1923,7 @@ def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
 
 def _compute_offsets_from_indices(
     block_info: BlockInfo, nd_indexer: NDIndexer
-) -> ir.Value:
+) -> tuple[ir.Value, ir.Value | None]:
   full_shape = block_info.full_shape_dtype.shape
   num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
                           for b in block_info.block_shape)
@@ -1910,9 +1946,20 @@ def _compute_offsets_from_indices(
   else:
     offsets = _ir_constant(0, offset_eltype)
 
+  bounds_mask: ir.Value | None = None
   indexer_iter = iter(indices)
-  for dim_stride, dim_block_size, start_offset in zip(
-      strides, block_info.block_shape, block_info.start_indices
+  for (
+      dim_size,
+      dim_stride,
+      dim_block_size,
+      start_offset,
+      start_align,
+  ) in zip(
+      full_shape,
+      strides,
+      block_info.block_shape,
+      block_info.start_indices,
+      block_info.start_indices_alignment,
   ):
     match dim_block_size:
       case pallas_core.Squeezed():
@@ -1972,18 +2019,30 @@ def _compute_offsets_from_indices(
       start_offset = _ir_cast(start_offset, offset_eltype, signed=False)
       dim_offsets = _add(dim_offsets, _bcast_to(start_offset, indexer_shape))
 
+    if isinstance(dim_block_size, int) and (
+        dim_size % dim_block_size != 0 or start_align % dim_block_size != 0
+    ):
+      dim_mask = _less_than(
+          dim_offsets, _full(dim_offsets.type, dim_size), signed=False
+      )
+      bounds_mask = (
+          dim_mask
+          if bounds_mask is None
+          else arith_dialect.andi(bounds_mask, dim_mask)
+      )
+
     dim_offsets = _mul(dim_offsets, _full(dim_offsets.type, dim_stride))
     offsets = _add(offsets, dim_offsets)
 
-  return offsets
+  return offsets, bounds_mask
 
 
 def _compute_pointers_from_indices(
     root_ptr: ir.Value, block_info: BlockInfo, nd_indexer: NDIndexer
-) -> ir.Value:
-  offsets = _compute_offsets_from_indices(block_info, nd_indexer)
+) -> tuple[ir.Value, ir.Value | None]:
+  offsets, bounds_mask = _compute_offsets_from_indices(block_info, nd_indexer)
   shape = nd_indexer.get_indexer_shape_static()
-  return _add(_bcast_to(root_ptr, shape), offsets)
+  return _add(_bcast_to(root_ptr, shape), offsets), bounds_mask
 
 
 @register_lowering(sp.get_p)
@@ -2004,7 +2063,27 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
 
 
 _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
-_STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
+_STR_TO_CACHE_MODIFIER = {
+    str(c).removeprefix("."): c for c in tt_dialect.CacheModifier
+}
+
+
+def _get_cache_policy(
+    cache: tt_dialect.CacheModifier,
+    evict: tt_dialect.EvictionPolicy,
+    *,
+    context: ir.Context | None = None,
+) -> ir.Attribute | None:
+  if (
+      cache == tt_dialect.CacheModifier.NONE
+      and evict == tt_dialect.EvictionPolicy.NORMAL
+  ):
+    return None
+  cache_str = str(cache).removeprefix(".")
+  return ir.Attribute.parse(
+      f"#tt.cache_policy<cache_modifier = {cache_str}, eviction_policy = {evict}>",
+      context=context,
+  )
 
 
 def _load(
@@ -2019,7 +2098,7 @@ def _load(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier == ".ca" or cache_modifier == ".cg":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2062,14 +2141,25 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
-  result = tt_dialect.load(
-      ptr,
-      mask=mask,
-      other=other,
-      cache=cache,
-      evict=evict,
-      is_volatile=is_volatile,
-  )
+  params = inspect.signature(tt_dialect.load).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache_policy=cache_policy,
+        is_volatile=is_volatile,
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+        is_volatile=is_volatile,
+    )
   return (
       result
       if not is_int1
@@ -2082,6 +2172,7 @@ def _is_contiguous_int4(block_info: BlockInfo, nd_indexer: NDIndexer) -> bool:
   # In order to loaded as `uint8` the index must be an aligned slice.
   return (
       block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+      and (block_info.full_shape_dtype.shape[-1] % 2 == 0)
       and bool(block_info.start_indices_alignment)
       and (block_info.start_indices_alignment[-1] % 2 == 0)
       and isinstance(slc := nd_indexer.indices[-1], indexing.Slice)
@@ -2109,10 +2200,19 @@ def _reinterpret_int4_as_uint8(
   start_idx = block_info.start_indices[-1]
   new_start_idx = _floordiv(start_idx, _full(start_idx.type, 2), signed=False)
   new_start_indices = (*block_info.start_indices[:-1], new_start_idx)
+  new_start_indices_alignment = (
+      *block_info.start_indices_alignment[:-1],
+      block_info.start_indices_alignment[-1] // 2,
+  )
+  last_block_dim = block_info.block_shape[-1]
+  assert isinstance(last_block_dim, int)
+  new_block_shape = (*block_info.block_shape[:-1], last_block_dim // 2)
   block_info = dataclasses.replace(
       block_info,
       full_shape_dtype=jax_core.ShapedArray(new_full_shape, jnp.uint8),
       start_indices=new_start_indices,
+      start_indices_alignment=new_start_indices_alignment,
+      block_shape=new_block_shape,
   )
   return block_info, idx
 
@@ -2153,7 +2253,7 @@ def _masked_load_lowering_rule(
     # Triton doesn't optimize as well.
     block_info, idx = _reinterpret_int4_as_uint8(block_info, idx)
 
-  offsets = _compute_offsets_from_indices(block_info, idx)
+  offsets, bounds_mask = _compute_offsets_from_indices(block_info, idx)
   ptr_offsets = offsets
 
   if is_int4 and not is_contiguous_int4:
@@ -2163,6 +2263,10 @@ def _masked_load_lowering_rule(
   ptr = _add(_bcast_to(ptr, shape), ptr_offsets)
   if mask is not None:
     mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
   if other is not None:
     other = _bcast_to(_ensure_ir_value(other, other_aval), shape)
   values = _load(
@@ -2217,7 +2321,7 @@ def _store(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2255,7 +2359,23 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  params = inspect.signature(tt_dialect.store).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache_policy=cache_policy,
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+    )
 
 
 @register_lowering(primitives.swap_p)
@@ -2272,15 +2392,19 @@ def _masked_swap_lowering_rule(
     idx = NDIndexer.make_trivial_indexer(ref_aval.shape)
   else:
     idx = indexers[0]
-  ptr = _compute_pointers_from_indices(ptr, block_info, idx)
+  ptr, bounds_mask = _compute_pointers_from_indices(ptr, block_info, idx)
   other = None
+  shape = idx.get_indexer_shape_static()
   if value is not None:
-    value = _ensure_ir_value(value, value_aval)
+    value = _bcast_to(_ensure_ir_value(value, value_aval), shape)
   if mask is not None:
-    shape = idx.get_indexer_shape_static()
     mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
     if value is not None:
-      other = _bcast_to(value, shape)
+      other = value
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
 
   old_value = _load(ptr, mask=mask, other=other)
   _store(ptr, value, mask=mask, eviction_policy=eviction_policy)  # pyrefly: ignore[bad-argument-type]
@@ -2298,11 +2422,15 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   indexer = indexers[0]
-  ptr = _compute_pointers_from_indices(ptr, block_info, indexer)
+  ptr, bounds_mask = _compute_pointers_from_indices(ptr, block_info, indexer)
+  value = _bcast_to(
+      _ensure_ir_value(value, ctx.avals_in[1]),
+      indexer.get_indexer_shape_static(),
+  )
   op = tt_dialect.RMWOp.FADD
   if isinstance(_element_type(value.type), ir.IntegerType):
     op = tt_dialect.RMWOp.ADD
-  _atomic_rmw(op, ptr, value)
+  _atomic_rmw(op, ptr, value, mask=bounds_mask)
   return []
 
 
@@ -2596,14 +2724,15 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 
 @register_lowering(pjit.reshard_p)
-def _reshard_lowering_rule(ctx, x, *, dst_sharding, concrete_mesh):
+def _reshard_lowering_rule(
+    ctx, x, *, dst_sharding, concrete_mesh, reduction_order
+):
   return x
 
 
-@register_lowering(jax_core.closed_call_p)
 @register_lowering(pe.eval_jaxpr_p)
 @register_lowering(custom_derivatives.custom_jvp_call_p)
-def _closed_call_lowering_rule(
+def _eval_jaxpr_lowering_rule(
     ctx: LoweringRuleContext, *args, call_jaxpr, **_
 ):
   jaxpr, consts = call_jaxpr, call_jaxpr.consts

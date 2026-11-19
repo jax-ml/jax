@@ -14,19 +14,22 @@
 
 """Fuses a function."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import functools
-from typing import Any
+
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
+from jax._src import shard_map
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
+from jax._src.pallas.fuser.fusible import disable_nested_fuse
 from jax._src.pallas.fuser.fusible import Fusible
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
@@ -39,8 +42,15 @@ def fuse(
     resolve_fusion_dtypes: bool = True,
     debug: bool = False,
     strict_mode: bool = True,
+    static_argnums: int | Sequence[int] | None = None,
+    static_argnames: str | Iterable[str] | None = None,
 ):
   """Fuses a function into a single fusible.
+
+  There should be a single call to a ``fusible`` inside the body of ``f``. ``fuse``
+  returns a transformed function that will fuse the surrounding computation into
+  the fusible and invoke it. The fused function cannot take ``jax.ref.Ref`` objects as
+  arguments (it must close over ``Refs`` instead).
 
   Args:
     f: The function to fuse.
@@ -49,47 +59,77 @@ def fuse(
     debug: Whether to print debug information.
     strict_mode: Whether to verify block index map equality in collisions during
       block spec propagations in output fusions.
+    static_argnums: An optional int or collection of ints that specify which
+      positional arguments to treat as static (compile-time constant).
+    static_argnames: An optional string or collection of strings specifying
+      which named arguments to treat as static (compile-time constant).
 
-  There should be a single call to a `fusible` inside the body of `f`. `fuse`
-  returns a transformed function that will fuse the surrounding computation into
-  the fusible and invoke it.
+  Returns:
+    A fused version of ``f``, or a decorator if ``f`` is ``None``.
   """
 
   def decorator(f):
+    sig = api_util.fun_signature(f)
+    _, _, static_argnums_, static_argnames_ = api_util.resolve_argnums(
+        f,
+        sig,
+        donate_argnums=None,
+        donate_argnames=None,
+        static_argnums=static_argnums,
+        static_argnames=static_argnames,
+    )
+
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
-      flat_args, _ = tree_util.tree_flatten((args, kwargs))
-      debug_info = api_util.debug_info("fuse", f, args, kwargs)
+      in_ft = ft.flatten_static_argnums_argnames(
+          args, kwargs, static_argnums_, static_argnames_
+      )
+      flat_args = in_ft.vals
+      debug_info = api_util.debug_info(
+          "fuse",
+          f,
+          args,
+          kwargs,
+          static_argnums=static_argnums_,
+          static_argnames=static_argnames_,
+      )
       ref_arg = next((v for v in flat_args if isinstance(v, jax.ref.Ref)), None)
       if ref_arg is not None:
         raise NotImplementedError(
             f"Fused function {debug_info.func_src_info} was passed an argument "
             f"of type {ref_arg}.  Fused functions cannot take Refs as "
             "arguments -- they must close over such Refs, instead.")
-      in_ft = ft.flatten((args, kwargs))
       in_avals_ft = in_ft.map(jax_core.typeof)
-      closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          f, in_avals_ft, debug_info
-      )
+      # Disable nested fuse so the outer fuse captures the full (unfused) jaxpr.
+      with disable_nested_fuse(True):
+        closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+            f, in_avals_ft, debug_info
+        )
       jaxpr = closed_jaxpr
       consts = closed_jaxpr.consts
       if debug:
         print("Jaxpr before fusion:")
         print(jaxpr)
       out_tree = out_avals_ft.tree
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
-                            strict_mode=strict_mode)
+      fuse_fn = functools.partial(
+          fuse_jaxpr, jaxpr, out_tree, consts, strict_mode=strict_mode
+      )
+      if resolve_fusion_dtypes and fusible_dtype.has_fusion_dtypes(jaxpr):
+        fuse_fn = fusible_dtype.physicalize(fuse_fn)
+      out_flat = fuse_fn(*flat_args)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
-    if resolve_fusion_dtypes:
-      wrapper = fusible_dtype.physicalize(wrapper)
-    return wrapper
+    @functools.wraps(f)
+    def outer_wrapper(*args, **kwargs):
+      if disable_nested_fuse.value:
+        return f(*args, **kwargs)
+      return wrapper(*args, **kwargs)
+
+    return outer_wrapper
 
   if f is not None:
     return decorator(f)
   return decorator
-
-
-_fusible: dict[jax_core.Primitive, Any] = {}
 
 
 def _construct_fusion_jaxpr(
@@ -152,7 +192,7 @@ def _find_downstream(
       ensure_out_inst=False,
       saveable=lambda *_, **__: False,
   )
-  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the the original
+  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the original
   # outputs depend on the inputs for which `in_used` is True.
   # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
   # (updates for discharged Refs) depend on thse inputs.
@@ -202,7 +242,7 @@ def _construct_output_fusions(
   partial_flat = jax.tree.structure(output_fusion_prefix).flatten_up_to(
       unflat_fusible_outvars
   )
-  if len(partial_flat) > 1:
+  if len([x for x in partial_flat if jax.tree.leaves(x)]) > 1:
     if any(isinstance(e, (state_types.WriteEffect, state_types.AccumEffect))
            for e in jaxpr_out.effects):
       raise ValueError("Multiple output fusions are not currently supported "
@@ -292,19 +332,53 @@ def _construct_output_fusions(
   )
 
 
+def _is_fusible_eqn(eqn: jax_core.JaxprEqn) -> bool:
+  return eqn.primitive is hijax.call_hi_primitive_p and isinstance(
+      eqn.params.get("_prim"), Fusible
+  )
+
+
+def _fusible_eqns(jaxpr: jax_core.Jaxpr) -> list[jax_core.JaxprEqn]:
+  return [
+      found
+      for eqn in jaxpr.eqns
+      for found in (
+          _fusible_eqns(eqn.params["jaxpr"])
+          if eqn.primitive is shard_map.shard_map_p
+          else ([eqn] if _is_fusible_eqn(eqn) else ())
+      )
+  ]
+
+
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
     strict_mode: bool = True,
 ):
-  # Collect input fusions
-  for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is hijax.call_hi_primitive_p and isinstance(
-        eqn.params.get("_prim"), Fusible
-    ):
-      fusion_eqn_index = i
-      break
-  else:
-    raise ValueError("No fusible eqn found")
+  match _fusible_eqns(jaxpr):
+    case []:
+      raise ValueError("No fusible found")
+    case [_]:
+      pass
+    case eqns:
+      call_sites = "\n  ".join(
+          source_info_util.summarize(eqn.source_info) for eqn in eqns
+      )
+      raise ValueError(
+          "Only a single fusible is allowed in a fused function, but found"
+          f" {len(eqns)} at:\n  {call_sites}"
+      )
+
+  fusion_eqn_index = next(
+      (i for i, eqn in enumerate(jaxpr.eqns) if _is_fusible_eqn(eqn)), None
+  )
+  if fusion_eqn_index is None:
+    # The fusible is inside a `shard_map`. Imported here because
+    # `shard_map_fusion` depends on this module.
+    from jax._src.pallas.fuser import shard_map_fusion
+
+    return shard_map_fusion.fuse_shard_map_jaxpr(
+        jaxpr, consts, args, strict_mode=strict_mode
+    )
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
   fusible: Fusible = fusion_eqn.params["_prim"]
 

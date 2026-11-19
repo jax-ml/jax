@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import base64
 import collections.abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import enum
 import io
@@ -60,7 +60,7 @@ ir_version_override: Callable[[], int | None] | None = None
 
 
 # Controls the IR serialization version. Upon incrementing the
-# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# default version in xla/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
@@ -70,7 +70,8 @@ ir_version_override: Callable[[], int | None] | None = None
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
-_FWD_COMPAT_VERSION = 13
+# TODO(slebedev): Bump to 19 after 2026-11-21.
+_FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if ctx.is_forward_compat() or backend is None:
@@ -110,6 +111,7 @@ class MemorySpace(enum.Enum):
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
   SC_SCALAR_SMEM = enum.auto()
   SC_VECTOR_SMEM = enum.auto()
+  SC_VECTOR_VMEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -131,6 +133,8 @@ class MemorySpace(enum.Enum):
       return 11
     elif self == MemorySpace.SC_VECTOR_SMEM:
       return 12
+    elif self == MemorySpace.SC_VECTOR_VMEM:
+      return 15
     else:
       raise ValueError("invalid memory space: " + str(self))
 
@@ -196,6 +200,7 @@ class CustomCallBackendConfig:
   shape_invariant_numerics: bool
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
+  debug_locations: bytes | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -229,6 +234,7 @@ class CustomCallBackendConfig:
           "builtin.module(mosaic-serde{serialize=false},mosaic-serde{serialize=true"
           f" target-version={version}}})",
       )
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module.operation)
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
@@ -239,7 +245,7 @@ class CustomCallBackendConfig:
         lowered_module_asm_version=version,
     )
 
-  def to_json(self) -> bytes:
+  def to_json(self, use_core_ids: bool = False) -> bytes:
     """Serializes the backend config into JSON."""
     # We format the JSON ourselves, because json.dumps seems to be overly slow.
     config = io.BytesIO()
@@ -335,10 +341,16 @@ class CustomCallBackendConfig:
     if self.skip_device_barrier:
       config.write(b', "skip_device_barrier": ')
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
+    if self.debug_locations:
+      config.write(b', "debug_locations": "')
+      config.write(base64.b64encode(self.debug_locations))
+      config.write(b'"')
     config.write(b"}")  # End of custom_call_config.
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if use_core_ids and self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
@@ -379,7 +391,11 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    if self.device_type == "sparsecore" and self.active_core_count == 1:
+    if (
+        not use_core_ids
+        and self.device_type == "sparsecore"
+        and self.active_core_count == 1
+    ):
       config.write(b', "megachip_parallelism_config": {"cores": ["0"]}')
     config.write(b"}")
     return config.getvalue()
@@ -451,11 +467,13 @@ def _tpu_custom_call_lowering(
       ir_version != config.lowered_module_asm_version
   ):
     config = config.downgrade_lowered_module_asm(ir_version)
+  # TODO(b/536052236): Always use core_ids after 2026-11-06.
+  use_core_ids = not ctx.is_forward_compat()
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
-      backend_config=config.to_json(),
+      backend_config=config.to_json(use_core_ids=use_core_ids),
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
@@ -485,7 +503,8 @@ def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
     ir_version: int | None = None,
-) -> tuple[bytes, tuple[bool, bool]]:
+    unzip_debug_locations: bool = True,
+) -> tuple[bytes, tuple[bool, bool], bytes | None]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -502,15 +521,26 @@ def _lower_mosaic_module_to_asm(
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
+      if unzip_debug_locations and hasattr(
+          tpu, "private_unzip_debug_locations"
+      ):
+        debug_locations = tpu.private_unzip_debug_locations(module_op.operation)
+      else:
+        debug_locations = None
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
     module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
-    return asm, (
-        has_communication,
-        has_custom_barrier,
+    return (
+        asm,
+        (
+            has_communication,
+            has_custom_barrier,
+        ),
+        debug_locations,
     )
 
 
@@ -636,6 +666,7 @@ def _lower_to_custom_call_config(
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
+    collective_id_tag: Hashable | None = None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     ir_version: int | None = None,
@@ -654,12 +685,21 @@ def _lower_to_custom_call_config(
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
   needs_layout_passes = needs_layout_passes or not device_type
-  lowered_module_asm, (
-      has_communication,
-      has_custom_barrier,
+  unzip_debug_locations = (
+      config.jax_mosaic_unzip_debug_locations.value
+      and (ctx is None or not ctx.is_forward_compat())
+  )
+  (
+      lowered_module_asm,
+      (
+          has_communication,
+          has_custom_barrier,
+      ),
+      debug_locations,
   ) = _lower_mosaic_module_to_asm(
       module,
       ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
   )
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
@@ -671,6 +711,7 @@ def _lower_to_custom_call_config(
       allow_input_fusion=allow_input_fusion,
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
+      collective_id_tag=collective_id_tag,
       device_type=device_type,
       serialization_format=serialization_format,
       has_custom_barrier=has_custom_barrier,
@@ -688,6 +729,7 @@ def _lower_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
+      debug_locations=debug_locations,
   )
 
 
@@ -701,6 +743,7 @@ def _lowered_to_custom_call_config(
     allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
+    collective_id_tag: Hashable | None = None,
     serialization_format: int | None,
     has_custom_barrier: bool,
     has_communication: bool,
@@ -719,66 +762,66 @@ def _lowered_to_custom_call_config(
     opt_level: OptLevel | None = None,
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
+    debug_locations: bytes | None = None,
 ):
-  auto_assign_collective_id = (
-      config.jax_pallas_auto_assign_collective_ids.value in ("yes", "override"))
-  if auto_assign_collective_id:
-    if (config.jax_pallas_auto_assign_collective_ids.value == "yes"
-        and collective_id is not None):
-      logging.warning(
-          f"{collective_id=} in {kernel_name=} should be None when"
-          " auto-assigning collective ids."
-      )
-    else:  # override mode
-      collective_id = None
-  if has_custom_barrier:
-    if (auto_assign_collective_id and ctx is not None
-        and ctx.module_context.pallas_collective_id_mapping is not None):
-      key = FrozenDict(dict(lowered_module_hash=hash(lowered_module_asm),
-                            skip_device_barrier=skip_device_barrier))
-      if collective_id is None:
-        if key in ctx.module_context.pallas_collective_id_mapping.auto:
-          collective_id = (
-              ctx.module_context.pallas_collective_id_mapping.auto[key]
-          )
-        else:
-          auto_num = len(
-              ctx.module_context.pallas_collective_id_mapping.auto.values())
-          existing_ids = ctx.module_context.pallas_collective_id_mapping.all_ids
-          proposed_ids = range(
-              _AUTO_COLLECTIVE_BASE_ID + auto_num,
-              _AUTO_COLLECTIVE_BASE_ID + auto_num + len(existing_ids) + 1)
-          new_id = next(id for id in proposed_ids if id not in existing_ids)
-          ctx.module_context.pallas_collective_id_mapping.auto[key] = new_id
-          ctx.module_context.pallas_collective_id_mapping.all_ids.add(new_id)
-          collective_id = new_id
-          if (len(ctx.module_context.pallas_collective_id_mapping.auto)
-              > _AUTO_COLLECTIVE_ID_LIMIT):
-            logging.warning(
-                "The number of auto-assigned collective ids for pallas kernels"
-                " is very large, consider manually annotating the kernels with"
-                " collective ids:"
-                f" {ctx.module_context.pallas_collective_id_mapping}"
-            )
-      else:  # Manually assigned collective ID.
-        # We need to check for a conflict between the manual collective id
-        # and the auto-assigned collective ids so far.
-        if (collective_id
-            in ctx.module_context.pallas_collective_id_mapping.auto.values()):
-          raise ValueError(
-              f"The manually assigned {collective_id=} in {kernel_name=}"
-              " conflicts with an existing auto-assigned collective id."
-              " Auto-assignment uses a base collective id of"
-              f" {_AUTO_COLLECTIVE_BASE_ID}. Please use values away from this"
-              " offset."
-          )
-        ctx.module_context.pallas_collective_id_mapping.manual[key] = (
-            collective_id
-        )
-        ctx.module_context.pallas_collective_id_mapping.all_ids.add(
-            collective_id
-        )
+  config_mode = config.jax_pallas_auto_assign_collective_ids.value
+  id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
 
+  # When not in override mode, collective id and tag cannot both be specified.
+  if (config_mode != "override"
+      and collective_id is not None and collective_id_tag is not None):
+    raise ValueError(
+        "Conflicting collective_id specified: CompilerParams has"
+        f" {collective_id!r} but get_barrier_semaphore has"
+        f" {collective_id_tag!r}. Specify only one or switch to "
+        " jax_pallas_auto_assign_collective_ids='override'."
+    )
+
+  # Potentially create an auto-key for the collective id.
+  auto_key = None
+  collective_id = None if config_mode == "override" else collective_id
+  if collective_id is not None and config_mode == "yes":
+    # collective id is an int, but we're supposed to be auto-assigning one.
+    logging.warning(
+        f"{collective_id=} in {kernel_name=} should be None when"
+        " auto-assigning collective ids."
+    )
+  elif collective_id is None:
+    # Auto-assign a collective id key based on the tag or the module hash.
+    if collective_id_tag is not None:
+      auto_key = ("tag", collective_id_tag, skip_device_barrier)
+    elif config_mode in ("yes", "override"):
+      auto_key = (
+          "module", hash(lowered_module_asm), skip_device_barrier
+      )
+
+  # Now check if the collective_id is specified or auto_key is set.
+  if (
+      (has_custom_barrier or collective_id is not None or auto_key is not None)
+      and ctx is not None
+      and ctx.module_context.pallas_collective_id_mapping is not None
+  ):
+    mapping = ctx.module_context.pallas_collective_id_mapping
+    if auto_key is not None:
+      collective_id, is_new = mapping.get_or_allocate_id(auto_key)
+      if is_new and len(mapping.auto) > id_limit:
+        raise ValueError(
+            "The number of auto-assigned collective ids for pallas kernels"
+            f" exceeded the limit of {id_limit}. Consider manually annotating"
+            f" the kernels with collective ids: {mapping}"
+        )
+    elif isinstance(collective_id, int):
+      manual_key = ("module", hash(lowered_module_asm), skip_device_barrier)
+      mapping.register_manual_id(manual_key, collective_id)
+
+  # If we didn't resolve the collective_id to an integer by now, raise an error.
+  if not (collective_id is None or isinstance(collective_id, int)):
+    raise ValueError(
+        f"collective_id={collective_id!r} could not be resolved to an integer"
+        f" in {kernel_name=}."
+    )
+
+  if has_custom_barrier:
     if collective_id is None:
       raise ValueError(
           "collective_id has to be specified when using a custom barrier "
@@ -825,6 +868,7 @@ def _lowered_to_custom_call_config(
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
       opt_level=opt_level,
+      debug_locations=debug_locations,
   )
 
 
@@ -840,8 +884,9 @@ def lower_module_to_custom_call(
     allow_input_fusion: Sequence[bool] | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
-    collective_id: int | None,
-    has_side_effects: bool | TpuSideEffectType,
+    collective_id: int | None = None,
+    collective_id_tag: Hashable | None = None,
+    has_side_effects: bool | TpuSideEffectType = False,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
@@ -869,6 +914,7 @@ def lower_module_to_custom_call(
       allow_input_fusion=allow_input_fusion,
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
+      collective_id_tag=collective_id_tag,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       ir_version=get_ir_version(ctx),
@@ -985,12 +1031,13 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 15
+    current_ir_version = 20
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
           f" target-version={current_ir_version}}})"
       )
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
@@ -1004,7 +1051,7 @@ def lowered_as_tpu_kernel(
         if not has_side_effects
         else TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
     )
-  config = _lowered_to_custom_call_config(
+  custom_call_config = _lowered_to_custom_call_config(
       lowered_module_asm,
       lowered_module_asm_version=current_ir_version,
       vmem_limit_bytes=vmem_limit_bytes,
@@ -1027,7 +1074,7 @@ def lowered_as_tpu_kernel(
       kernel_name=kernel_name,
   )
   return _as_jax_callable(
-      config,
+      custom_call_config,
       has_side_effects,
       out_type,
       kernel_name=kernel_name,

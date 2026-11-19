@@ -24,34 +24,34 @@ are carried out in stages:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterable, Sequence
-from functools import reduce, partial
+from functools import partial, reduce
 import itertools
 from typing import Any
-from collections.abc import Callable
 
+import jax
+from jax._src import core as jax_core
+from jax._src import flattree as ft
+from jax._src import frozen_dict
+from jax._src import numpy as jnp
+from jax._src import source_info_util
+from jax._src import state
+from jax._src import typing as jax_typing
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
-from jax._src import core as jax_core
-from jax._src import frozen_dict
-from jax._src import flattree as ft
-from jax._src import source_info_util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
-from jax._src import state
 from jax._src.state import discharge as state_discharge
-from jax._src import typing as jax_typing
-
 from jax._src.util import (
     foreach,
     safe_map,
     safe_zip,
     split_list,
 )
-from jax._src import numpy as jnp
 import numpy as np
 
 map, unsafe_map = safe_map, map
@@ -170,7 +170,8 @@ def kernel_to_hlo_jaxpr(
     scratch_invars = phys_jaxpr.invars[grid_mapping.slice_scratch_ops]
     scratch_avals = [v.aval for v in scratch_invars]
     discharged_closed_jaxpr = state_discharge.discharge_state(
-        phys_jaxpr.with_consts(phys_consts))
+        phys_jaxpr.with_consts(phys_consts), strip_memory_space=True
+    )
   return discharged_closed_jaxpr, discharged_closed_jaxpr.consts, scratch_avals
 
 
@@ -217,6 +218,8 @@ def eval_jaxpr_recursive(
             recurse_hop_rule, *in_vals, **eqn.params)
       else:
         bind_params = eqn.primitive.get_bind_params(eqn.params)
+        if eqn.primitive.name == "new_ref":
+          bind_params = dict(bind_params, memory_space=None)
         ans = eqn.primitive.bind(*in_vals, **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
@@ -330,6 +333,13 @@ def pallas_call_hlo_interpret(
   dynamic_grid_args, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
+  args = tuple(
+      jax.device_put(x, jax_core.MemorySpace.Device)
+      if isinstance(x, jax_core.Tracer)
+      and getattr(x.aval, "memory_space", None) is not None
+      else x
+      for x in args
+  )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
       a if not isinstance(a, pallas_core.DynamicGridDim)
@@ -346,6 +356,10 @@ def pallas_call_hlo_interpret(
                                 args, input_output_aliases)
   # TODO(b/370563936): Fix correctness issue w/ io aliasing
   scalars = args[grid_mapping.slice_index_ops]
+  scalars = tuple(
+      s.astype(jnp.int32) if isinstance(s.dtype, jax_core.bint) else s
+      for s in scalars
+  )
   block_args = args[len(scalars):]
   # invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch]
   # block_args now contains: *consts, *inputs, *outputs
@@ -386,6 +400,28 @@ def pallas_call_hlo_interpret(
     # Base case is always one iteration when grid is ()
     num_iterations = 1
 
+  # For each aliased input/output pair, determine statically (from the kernel
+  # jaxpr's effects, which include writes made inside loop and branch bodies)
+  # whether the kernel writes through the input ref and/or the output ref.
+  # Note that we cannot infer this from the discharged jaxpr's outputs: a ref
+  # that is merely *read* inside e.g. a loop body or a `run_scoped` is still
+  # threaded through the discharged region and comes back as a new value.
+  written_refs = {
+      eff.input for eff in jaxpr.effects
+      if isinstance(eff, (state.WriteEffect, state.AccumEffect))
+  }
+  # jaxpr.invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch].
+  # `in_idx` indexes into `args` (a prefix of the invars) and `out_idx` indexes
+  # into the outputs.
+  alias_input_written = {
+      in_idx: jaxpr.invars[in_idx] in written_refs
+      for in_idx, _ in input_output_aliases
+  }
+  alias_output_written = {
+      out_idx: jaxpr.invars[len(args) + out_idx] in written_refs
+      for _, out_idx in input_output_aliases
+  }
+
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
   # i:int32 is the iteration index
   # loop_idx: tuple[int32] are the program ids for each grid axis
@@ -406,34 +442,51 @@ def pallas_call_hlo_interpret(
 
     carry_consts_ins, scratch = split_list(carry_blocks, [num_inout_blocks])
     with pallas_core.grid_env(local_grid_env):
-      for s in scalars:
-        if isinstance(s.dtype, jax_core.bint):
-          aval = jax_core.typeof(s)
-          s.aval = aval.update(dtype=jnp.int32)
       start_indices = [
           bm.compute_start_indices_interpret(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings
       ]
-    blocks = map(_dynamic_slice, start_indices, block_shapes,
-                 carry_consts_ins, is_squeeze_dim)
+    in_blocks = map(
+        _dynamic_slice,
+        start_indices,
+        block_shapes,
+        carry_consts_ins,
+        is_squeeze_dim,
+    )
     with pallas_core.grid_env(local_grid_env):
-      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
-          scratch_values
-      ), (
+      assert len(discharged_jaxpr.invars) == len(scalars) + len(
+          in_blocks
+      ) + len(scratch_values), (
           len(discharged_jaxpr.invars),
           len(scalars),
-          len(blocks),
+          len(in_blocks),
           len(scratch_values),
       )
 
-      blocks = jax_core.eval_jaxpr(
-          discharged_jaxpr, discharged_consts, *scalars, *blocks, *scratch
+      out_blocks = jax_core.eval_jaxpr(
+          discharged_jaxpr, discharged_consts, *scalars, *in_blocks, *scratch
       )
 
     _, out_inout, out_scratch = split_list(
-        blocks, [grid_mapping.num_index_operands, num_inout_blocks])
+        out_blocks, [grid_mapping.num_index_operands, num_inout_blocks]
+    )
     out_carry = map(_dynamic_update_slice, start_indices, block_shapes,
                     carry_consts_ins, out_inout, is_squeeze_dim)
+    # Synchronize array mutations across aliased input/output carry buffers so
+    # updates written to one aliased operand during this grid step are visible
+    # to both operands in subsequent grid iterations.
+    out_carry = list(out_carry)
+    for in_idx, out_idx in input_output_aliases:
+      in_idx_adj = in_idx - len(scalars)
+      out_idx_adj = len(block_args) + out_idx
+      input_modified = alias_input_written[in_idx]
+      output_modified = alias_output_written[out_idx]
+      if input_modified and not output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
+      elif output_modified and not input_modified:
+        out_carry[in_idx_adj] = out_carry[out_idx_adj]
+      elif input_modified and output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
     return (i + 1, _get_next_indices(grid, loop_idx),
             *out_carry, *out_scratch)
 

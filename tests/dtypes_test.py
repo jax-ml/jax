@@ -31,6 +31,7 @@ from jax._src import dtypes
 from jax._src import earray
 from jax._src import literals
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir
 from jax._src.lax import lax as lax_internal
 import numpy as np
 
@@ -46,14 +47,12 @@ np_unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                      np.dtype('uint64')]
 unsigned_dtypes = list(np_unsigned_dtypes)
 
-intn_dtypes = [np.dtype('int2'), np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
-signed_dtypes += [np.dtype('int2'), np.dtype('int4')]
-unsigned_dtypes += [np.dtype('uint2'), np.dtype('uint4')]
-if dtypes.int1 is not None:
-  assert dtypes.uint1 is not None
-  intn_dtypes[:0] = [np.dtype('int1'), np.dtype('uint1')]
-  signed_dtypes[:0] = [np.dtype('int1')]
-  unsigned_dtypes[:0] = [np.dtype('uint1')]
+intn_dtypes = [np.dtype('int1'), np.dtype('uint1'), np.dtype('int2'),
+               np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
+signed_dtypes = [np.dtype('int1'), *signed_dtypes, np.dtype('int2'),
+                 np.dtype('int4')]
+unsigned_dtypes = [np.dtype('uint1'), *unsigned_dtypes, np.dtype('uint2'),
+                   np.dtype('uint4')]
 
 np_float_dtypes = [np.dtype('float16'), np.dtype('float32'), np.dtype('float64')]
 
@@ -62,14 +61,14 @@ custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 
 fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
               np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
-              np.dtype(dtypes.float8_e5m2fnuz), np.dtype(dtypes.float8_e3m4),
-              np.dtype(dtypes.float8_e4m3), np.dtype(dtypes.float8_e8m0fnu)]
+              np.dtype(dtypes.float8_e5m2fnuz),
+              np.dtype(dtypes.float8_e3m4), np.dtype(dtypes.float8_e4m3),
+              np.dtype(dtypes.float8_e8m0fnu),
+              np.dtype(dtypes.float8_e5m3fnu)]
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
-fp4_dtypes = []
-if dtypes.float4_e2m1fn is not None:
-  fp4_dtypes += [np.dtype(dtypes.float4_e2m1fn)]
+fp4_dtypes = [np.dtype(dtypes.float4_e2m1fn)]
 float_dtypes += fp4_dtypes
 custom_float_dtypes += fp4_dtypes
 
@@ -80,16 +79,21 @@ custom_float_dtypes += fp6_dtypes
 x64_dtypes = [np.dtype('int64'), np.dtype('uint64'), np.dtype('float64'),
               np.dtype('complex128')]
 
-complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
+np_complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
+custom_complex_dtypes = [np.dtype(dtypes.bcomplex32),
+                         np.dtype(dtypes.complex32)]
+complex_dtypes = custom_complex_dtypes + np_complex_dtypes
 
 
 all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
               complex_dtypes)
 
+custom_complex_scalar_types = [jnp.bcomplex32, jnp.complex32]
+
 scalar_types = [jnp.bool_, jnp.int4, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
-                jnp.complex64, jnp.complex128]
+                *custom_complex_scalar_types, jnp.complex64, jnp.complex128]
 
 dtype_kinds = {
   'bool': bool_dtypes,
@@ -288,13 +292,14 @@ class DtypesTest(jtu.JaxTestCase):
     )
 
     small_fp_dtypes = set(fp8_dtypes + fp6_dtypes + fp4_dtypes)
+    small_complex_dtypes = set(custom_complex_dtypes)
     implicit_int_dtypes = set(signed_dtypes + unsigned_dtypes) - set(intn_dtypes)
 
     for t1 in all_dtypes:
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
       self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
       # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
-      if t1 in small_fp_dtypes or t1 in intn_dtypes:
+      if t1 in small_fp_dtypes or t1 in small_complex_dtypes or t1 in intn_dtypes:
         assertTypePromotionError(t1, np.complex128)
       else:
         self.assertEqual(
@@ -311,7 +316,9 @@ class DtypesTest(jtu.JaxTestCase):
                 t1 in intn_dtypes or
                 t2 in intn_dtypes or
                 (t1 in small_fp_dtypes and t2 not in implicit_int_dtypes) or
-                (t2 in small_fp_dtypes and t1 not in implicit_int_dtypes)
+                (t2 in small_fp_dtypes and t1 not in implicit_int_dtypes) or
+                (t1 in small_complex_dtypes and t2 not in implicit_int_dtypes) or
+                (t2 in small_complex_dtypes and t1 not in implicit_int_dtypes)
             )
         ):
           assertTypePromotionError(t1, t2)
@@ -333,9 +340,14 @@ class DtypesTest(jtu.JaxTestCase):
         else:
           self.assertEqual(t, dtypes.promote_types(t, i))
 
+    for t in custom_complex_dtypes:
+      for w in [int, float, complex]:
+        self.assertEqual(t, dtypes.promote_types(t, w))
+        self.assertEqual(t, dtypes.promote_types(w, t))
+
     # Promotions between exact types, or between inexact types, match NumPy.
     for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
-                   np_float_dtypes + complex_dtypes]:
+                   np_float_dtypes + np_complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
         expected = np.promote_types(t1, t2)
         if (
@@ -373,7 +385,7 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(np.dtype(t).type, t))
       self.assertTrue(dtypes.issubdtype(t, np.dtype(t).type))
       self.assertTrue(dtypes.issubdtype(t, np.dtype(t)))
-      if t in [jnp.int4, jnp.uint4, jnp.bfloat16]:
+      if t in [jnp.int4, jnp.uint4, jnp.bfloat16, *custom_complex_scalar_types]:
         # These dtype have no equivalent in NumPy.
         continue
       for category in [np.generic, jnp.inexact, jnp.integer, jnp.signedinteger,
@@ -395,6 +407,21 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(dt, np.generic))
       self.assertFalse(dtypes.issubdtype(dt, object))
       self.assertFalse(dtypes.issubdtype(dt, np.float64))
+      self.assertFalse(dtypes.issubdtype(np.generic, dt))
+
+  @parameterized.product(dtype=custom_complex_dtypes)
+  def testIsSubdtypeCustomComplex(self, dtype):
+    for dt in [dtype, dtype.type, str(dtype)]:
+      self.assertTrue(dtypes.issubdtype(dt, dt))
+      self.assertTrue(dtypes.issubdtype(dt, dtype))
+      self.assertTrue(dtypes.issubdtype(dt, str(dtype)))
+      self.assertTrue(dtypes.issubdtype(dt, np.complexfloating))
+      self.assertTrue(dtypes.issubdtype(dt, np.inexact))
+      self.assertTrue(dtypes.issubdtype(dt, np.number))
+      self.assertTrue(dtypes.issubdtype(dt, np.generic))
+      self.assertFalse(dtypes.issubdtype(dt, np.floating))
+      self.assertFalse(dtypes.issubdtype(dt, object))
+      self.assertFalse(dtypes.issubdtype(dt, np.complex64))
       self.assertFalse(dtypes.issubdtype(np.generic, dt))
 
   @parameterized.product(dtype=intn_dtypes)
@@ -538,7 +565,7 @@ class DtypesTest(jtu.JaxTestCase):
       jax.jit(f)(x)
 
   @parameterized.parameters(
-      *([(jnp.int1, 1)] if dtypes.int1 is not None else []),
+      (jnp.int1, 1),
       (jnp.int2, 2),
       (jnp.int4, 4),
       (jnp.int8, 8),
@@ -550,9 +577,35 @@ class DtypesTest(jtu.JaxTestCase):
       (jnp.float16, 16),
       (jnp.float32, 32),
       (jnp.float64, 64),
+      *[(c_dtype, 32) for c_dtype in custom_complex_dtypes],
+      (jnp.complex64, 64),
+      (jnp.complex128, 128),
   )
   def test_itemsize_bits(self, dtype, expected_bitwidth):
     self.assertEqual(dtypes.itemsize_bits(dtype), expected_bitwidth)
+
+  @parameterized.product(dtype=custom_complex_dtypes)
+  def testCustomComplexDtypeHelpers(self, dtype):
+    self.assertIs(dtypes.scalar_type_of(dtype.type(0)), complex)
+    self.assertTrue(dtypes.supports_inf(dtype))
+    expected_float = (
+        np.dtype(dtypes.bfloat16)
+        if dtype == np.dtype(dtypes.bcomplex32)
+        else np.dtype(np.float16)
+    )
+    self.assertEqual(dtypes.finfo(dtype).dtype, expected_float)
+    self.assertEqual(dtypes.to_floating_dtype(dtype), expected_float)
+    for scalar in [1, 1.0, 1j]:
+      self.assertEqual(dtypes.result_type(dtype, scalar), dtype)
+    with mlir.make_ir_context():
+      ir_type = mlir.dtype_to_ir_type(dtype)
+      self.assertIsInstance(ir_type, mlir.ir.ComplexType)
+      expected_ir_elem = (
+          mlir.ir.BF16Type.get()
+          if dtype == np.dtype(dtypes.bcomplex32)
+          else mlir.ir.F16Type.get()
+      )
+      self.assertEqual(ir_type.element_type, expected_ir_elem)
 
   def test_itemsize_none_raises(self):
     with self.assertRaisesRegex(ValueError, 'dtype cannot be None'):
@@ -1170,8 +1223,10 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
-    if dtype in fp6_dtypes and not jtu.is_libtpu_at_least('0.0.45'):
-      self.skipTest('XLA support for float6 is incomplete.')
+    if dtype == dtypes.float8_e5m3fnu:
+      self.skipTest("XLA does not support float8_e5m3fnu.")
+    if dtype in custom_complex_dtypes:
+      self.skipTest("XLA does not support complex32 or bcomplex32.")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1186,11 +1241,7 @@ class TestPromotionTables(jtu.JaxTestCase):
               'bfloat16',
               *fp8_dtypes,
               *fp4_dtypes,
-              *(
-                  fp6_dtypes
-                  if jtu.is_libtpu_at_least('0.0.45')
-                  else []
-              ),
+              *fp6_dtypes,
           ]
           else x.dtype.kind
       ]()
@@ -1205,14 +1256,12 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   @jax.numpy_dtype_promotion('standard')
   def testFloatPromotionError(self, dtype, bit_width):
+    if dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float4_e2m1fn.')
-    if dtype in fp6_dtypes and not jtu.is_libtpu_at_least('0.0.45'):
-      self.skipTest(
-          'Requires libtpu >= 0.0.45 for FP6 format support.'
-      )
     x = jnp.array(1, dtype=dtype)
     y = jnp.array(1, dtype='float32')
     with self.assertRaisesRegex(
@@ -1221,17 +1270,31 @@ class TestPromotionTables(jtu.JaxTestCase):
     ):
       x + y
 
+  @parameterized.parameters(custom_complex_dtypes)
+  @jax.numpy_dtype_promotion('standard')
+  def testCustomComplexPromotionError(self, dtype):
+    for other in ['float16', 'bfloat16', 'float32', 'complex64']:
+      with self.assertRaisesRegex(
+          jax.dtypes.TypePromotionError,
+          '.*32-bit complex floats do not support implicit promotion',
+      ):
+        dtypes.promote_types(dtype, other)
+    if len(custom_complex_dtypes) == 2:
+      with self.assertRaisesRegex(
+          jax.dtypes.TypePromotionError,
+          '.*32-bit complex floats do not support implicit promotion',
+      ):
+        dtypes.promote_types(*custom_complex_dtypes)
+
   @parameterized.parameters(float_dtypes)
   @config.explicit_x64_dtypes('allow')
   def testFloatArrayCreation(self, dtype):
+    if dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float4_e2m1fn.')
-    if dtype in fp6_dtypes and not jtu.is_libtpu_at_least('0.0.45'):
-      self.skipTest(
-          'Requires libtpu >= 0.0.45 for FP6 format support.'
-      )
     x = jnp.array([1.0, 2.0], dtype=dtype)
     self.assertEqual(x.dtype, dtype)
 
@@ -1265,6 +1328,8 @@ class TestPromotionTables(jtu.JaxTestCase):
       self.skipTest("XLA support for float4 is incomplete.")
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
+    if dtype in custom_complex_dtypes:
+      self.skipTest("XLA does not support complex32 or bcomplex32.")
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     dtype = dtypes.canonicalize_dtype(dtype)
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
@@ -1294,8 +1359,10 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
-    if dtype in fp6_dtypes and not jtu.is_libtpu_at_least('0.0.45'):
-      self.skipTest('XLA support for float6 is incomplete.')
+    if dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
+    if dtype in custom_complex_dtypes:
+      self.skipTest('XLA does not support complex32 or bcomplex32.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1337,6 +1404,23 @@ class TestPromotionTables(jtu.JaxTestCase):
       else:
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,
                          dtypes.safe_to_cast(input_dtype, output_dtype))
+
+  @parameterized.product(
+      dtype=intn_dtypes,
+      rng_factory=[
+          jtu.rand_default,
+          jtu.rand_nonzero,
+          jtu.rand_positive,
+          jtu.rand_not_small,
+          jtu.rand_some_equal,
+      ],
+  )
+  def testRandDtypeNarrowIntegers(self, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    with jtu.test_warning_util.raise_on_warnings():
+      x = rng((64,), dtype)
+    self.assertEqual(x.dtype, dtype)
+    self.assertEqual(x.shape, (64,))
 
 
 if __name__ == "__main__":

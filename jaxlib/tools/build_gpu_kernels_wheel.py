@@ -84,7 +84,12 @@ pyext = "pyd" if build_utils.is_windows() else "so"
 
 
 def write_setup_cfg(sources_path, cpu):
-  tag = build_utils.platform_tag(cpu)
+  accelerator = (
+      "cuda" if args.enable_cuda else
+      "rocm" if args.enable_rocm else
+      "oneapi" if args.enable_oneapi else "none"
+  )
+  tag = build_utils.platform_tag(cpu, accelerator)
   with open(sources_path / "setup.cfg", "w") as f:
     f.write(f"""[metadata]
 license_files = LICENSE.txt
@@ -141,6 +146,7 @@ def prepare_wheel_cuda(
       src_files=[
           f"{source_file_prefix}jaxlib/cuda/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_rnn.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_sparse.{pyext}",
@@ -184,6 +190,10 @@ def prepare_wheel_rocm(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
+      dst_dir=wheel_sources_path,
+  )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
   write_setup_cfg(wheel_sources_path, cpu)
 
@@ -194,6 +204,7 @@ def prepare_wheel_rocm(
       dst_dir=plugin_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/rocm/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_math.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_sparse.{pyext}",
@@ -235,6 +246,10 @@ def prepare_wheel_oneapi(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/README.md",
+      dst_dir=wheel_sources_path,
+  )
   write_setup_cfg(wheel_sources_path, cpu)
 
   plugin_dir = wheel_sources_path / "jax_oneapi_plugin"
@@ -243,6 +258,10 @@ def prepare_wheel_oneapi(
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_hybrid.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_prng.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/oneapi_plugin_extension.{pyext}",
           f"{source_file_prefix}jaxlib/version.py",
       ],

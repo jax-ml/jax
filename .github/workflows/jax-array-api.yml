@@ -9,9 +9,9 @@ on:
       - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   # Don't cancel in-progress jobs for main branches.
-  cancel-in-progress: ${{ github.ref != 'main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions: {}
 
 env:
@@ -21,8 +21,7 @@ jobs:
   build:
     if: github.repository_owner == 'jax-ml'
     runs-on: linux-x86-n4-16
-    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest  # zizmor: ignore[unpinned-images]
     strategy:
       matrix:
         python-version: [3.12]
@@ -30,11 +29,11 @@ jobs:
       PYTHON: "python${{ matrix.python-version }}"
     steps:
     - name: Checkout jax
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         persist-credentials: false
     - name: Checkout array-api-tests
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         repository: data-apis/array-api-tests
         ref: 41379d15d26d67a1e66c840e775d41a8a7fb1516  # 2026.02.26
@@ -42,9 +41,8 @@ jobs:
         path: 'array-api-tests'
         persist-credentials: false
     - name: Install dependencies
-      # TODO(jakevdp) remove numpy pin once ml_dtypes 0.6 is released
       run: |
-        $PYTHON -m uv pip install --system .[ci] "numpy<2.4.0" pytest-xdist -r array-api-tests/requirements.txt
+        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy

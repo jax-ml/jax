@@ -63,7 +63,7 @@ setup(
     install_requires=[
         'scipy>=1.14',
         'numpy>=2.0',
-        'ml_dtypes>=0.5.0',
+        'ml_dtypes>=0.7.0',
     ],
     url='https://github.com/jax-ml/jax',
     license='Apache-2.0',
@@ -72,6 +72,7 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
@@ -108,6 +109,9 @@ setup(
             'triton/*.pyi',
             'triton/*.pyd',
             'triton/*.so',
+            'thunky/*.py',
+            'thunky/dialect/*.py',
+            'thunky/python/*.py',
             'include/xla/ffi/api/*.h',
         ],
     },

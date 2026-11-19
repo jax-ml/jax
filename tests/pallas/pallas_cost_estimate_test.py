@@ -126,7 +126,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.bytes_accessed / 2, 3 * 4 * 100)
 
   def test_call_hi_primitive(self):
-    class DummyHiPrim(hijax.VJPHiPrimitive):
+    class DummyHiPrim(hijax.HiPrim):
 
       def __init__(self, x_aval, y_aval):
         self.in_avals = (x_aval, y_aval)
@@ -154,6 +154,45 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.flops, 2 * m * k * n)
     self.assertEqual(cost.transcendentals, 0)
     self.assertEqual(cost.bytes_accessed, 4 * (m * k + k * n + m * n))
+
+  def test_custom_jvp(self):
+    @jax.custom_jvp
+    def exp_add(x, y):
+      return jnp.exp(x + y)
+
+    @exp_add.defjvp
+    def exp_add_jvp(primals, tangents):
+      x, y = primals
+      x_dot, y_dot = tangents
+      primal_out = exp_add(x, y)
+      tangent_out = primal_out * (x_dot + y_dot)
+      return primal_out, tangent_out
+
+    cost = cost_estimate.estimate_cost(
+        exp_add,
+        jnp.ones(10, dtype=jnp.float32),
+        jnp.ones(10, dtype=jnp.float32),
+    )
+    self.assertEqual(cost.flops, 10)
+    self.assertEqual(cost.transcendentals, 10)
+    self.assertEqual(cost.bytes_accessed, 4 * 30)
+
+  def test_pi_trig_transcendentals(self):
+    def fn(x):
+      return (
+          lax.sinpi(x)
+          + lax.cospi(x)
+          + lax.tanpi(x)
+          + lax.asinpi(x)
+          + lax.acospi(x)
+          + lax.atanpi(x)
+          + lax.exp2m1(x)
+          + lax.log2p1(x)
+      )
+
+    cost = cost_estimate.estimate_cost(fn, jnp.ones(10, dtype=jnp.float32))
+    self.assertEqual(cost.flops, 70)
+    self.assertEqual(cost.transcendentals, 80)
 
 
 if __name__ == "__main__":

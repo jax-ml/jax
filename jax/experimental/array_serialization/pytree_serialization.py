@@ -149,11 +149,11 @@ def _set_up_destination(root: str | PathLike[str], overwrite: bool,
   """Inspect the destination, set it up for writing, potentially read existing data."""
   root = _norm_path(root)
   if overwrite:
-    if root.exists() and len(list(root.iterdir())) > 0:
+    if root.exists() and len(list(root.iterdir())) > 0:  # pyrefly: ignore[missing-attribute]
       # check that we're only deleting things that come from JAX
       # refuse to rm directories containing additional entries
       extra_member_paths = [
-          path for path in list(root.iterdir()) if path.name not in
+          path for path in list(root.iterdir()) if path.name not in  # pyrefly: ignore[missing-attribute]
           (_PYTREEDEF_FILE, _ARCHIVE_NAME, _ARRAY_STORE_DIRNAME)]
 
       if len(extra_member_paths) != 0:
@@ -163,12 +163,12 @@ def _set_up_destination(root: str | PathLike[str], overwrite: bool,
             f" if you're sure you want to use {root} as the checkpoint"
             " directory.")
 
-      if (jax.process_index() == 0 or distinct_locations) and root.exists():
+      if (jax.process_index() == 0 or distinct_locations) and root.exists():  # pyrefly: ignore[missing-attribute]
         _rm_dir(root)
     _sync_on_key(sync_key, "overwrite")
     return pytree_repr
   else:
-    if (root.exists() and len(list(root.iterdir())) > 0):  # not empty
+    if (root.exists() and len(list(root.iterdir())) > 0):  # not empty  # pyrefly: ignore[missing-attribute]
       raise ValueError(f"Files already exist at path: `{root}`, but you"
                        f" specified `{overwrite=}`")
     return pytree_repr
@@ -190,8 +190,8 @@ def _prepare_directory(root: str | PathLike[str], overwrite: bool,
 
   if not _is_remote_path(root) and (distinct_locations
                                     or jax.process_index() == 0):
-    root.mkdir(exist_ok=True)  # do not make parents, that's too much
-    if not root.exists() or not root.is_dir():
+    root.mkdir(exist_ok=True)  # do not make parents, that's too much  # pyrefly: ignore[missing-attribute]
+    if not root.exists() or not root.is_dir():  # pyrefly: ignore[missing-attribute]
       raise RuntimeError(f"Could not create destination directory at {root}")
   _sync_on_key(sync_key, "mkdir")
   return pytreedef_repr

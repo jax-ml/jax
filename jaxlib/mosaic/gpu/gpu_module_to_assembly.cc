@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/gpu_module_to_assembly.h"
 
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,8 +47,9 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Target/LLVM/ModuleToObject.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "xla/mosaic/pass_boilerplate.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
+#include "xla/service/llvm_ir/llvm_command_line_options.h"
 
 namespace mosaic {
 namespace gpu {
@@ -68,8 +70,16 @@ class ModuleToAssembly : public mlir::LLVM::ModuleToObject {
   ModuleToAssembly(gpu::GPUModuleOp gpu_module,
                    ::mlir::NVVM::NVVMTargetAttr target,
                    std::vector<std::string> libraries_to_link)
-      : ModuleToObject(*gpu_module, target.getTriple(), target.getChip(),
-                       target.getFeatures(), target.getO()),
+      // Read LLVM library options (e.g. -nvptx-prec-divf32=1, set by
+      // custom_call.cc) from the context that XLA's options lock parses them
+      // into, so that we match XLA's codegen. They are no longer parsed into
+      // global option storage.
+      : ModuleToObject(
+            *gpu_module, target.getTriple(), target.getChip(),
+            target.getFeatures(), target.getO(),
+            /*initialLlvmIRCallback=*/{}, /*linkedLlvmIRCallback=*/{},
+            /*optimizedLlvmIRCallback=*/{}, /*isaCallback=*/{},
+            &xla::llvm_ir::LLVMCommandLineOptionsLock::GetLibraryOptions()),
         libraries_to_link_(std::move(libraries_to_link)) {};
 
   // Serializes the LLVM module to PTX.
@@ -103,8 +113,8 @@ FailureOr<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
     return getOperation().emitError() << "Failed translating the module"
                                          "to PTX.";
   }
-
-  return SmallVector<char, 0>(ptx->begin(), ptx->end());
+  std::string fixed_ptx = internal::FixInlineAsmLocInfoInPTX(*ptx);
+  return SmallVector<char, 0>(fixed_ptx.begin(), fixed_ptx.end());
 }
 
 std::optional<SmallVector<std::unique_ptr<llvm::Module>>>
@@ -180,6 +190,47 @@ LogicalResult LowerGpuModuleToAssembly(
       builder.getArrayAttr(SmallVector<Attribute>{object}));
   gpu_module->erase();
   return mlir::success();
+}
+
+// Mosaic GPU outputs a lot of multi-line inline assembly. Each such block
+// should be mapped to exactly one line from the original python source.
+//
+// However, NVPTXAsmPrinter::emitInlineAsm increments the `.loc` on every line
+// of the inline asm block, incorrectly producing a lot of `.loc` directives
+// inside the asm block pointing to wrong consecutive lines in the source
+// file.
+//
+// This function removes all `.loc` directive in inline asm blocks.
+std::string FixInlineAsmLocInfoInPTX(llvm::StringRef ptx) {
+  std::string result;
+  result.reserve(ptx.size());
+
+  size_t pos = 0;
+  bool in_inline_asm = false;
+  while ((pos = ptx.find('\n')) != llvm::StringRef::npos) {
+    llvm::StringRef line = ptx.substr(0, pos + 1);
+    ptx = ptx.substr(pos + 1);
+
+    llvm::StringRef trimmed = line.trim();
+
+    if (in_inline_asm) {
+      if (trimmed.starts_with(".loc\t")) {
+          continue;
+      }
+      if (trimmed == "// end inline asm") {
+        in_inline_asm = false;
+      }
+    } else if (trimmed == "// begin inline asm") {
+      in_inline_asm = true;
+    }
+    result.append(line);
+  }
+
+  // Add the last line (if the string doesn't end with a newline)
+  if (!ptx.empty()) {
+    result.append(ptx);
+  }
+  return result;
 }
 
 }  // namespace internal

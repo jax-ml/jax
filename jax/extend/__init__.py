@@ -21,9 +21,9 @@ internal machinery. See
 This module is not the only means by which JAX aims to be
 extensible. For example, the main JAX API offers mechanisms for
 `customizing derivatives
-<https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html>`_,
+<https://docs.jax.dev/en/latest/301/custom-jvp-vjp.html>`_,
 `registering custom pytree definitions
-<https://docs.jax.dev/en/latest/custom_pytrees.html#pytrees-custom-pytree-nodes>`_,
+<https://docs.jax.dev/en/latest/101/pytrees.html#jax-101-custom-pytrees>`_,
 and more.
 
 API policy

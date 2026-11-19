@@ -74,16 +74,14 @@ def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   return meta
 
 bool_ = _make_scalar_type(np.bool_)
-if dtypes.uint1 is not None:
-  uint1 = _make_scalar_type(dtypes.uint1)
+uint1 = _make_scalar_type(dtypes.uint1)
 uint2 = _make_scalar_type(dtypes.uint2)
 uint4 = _make_scalar_type(dtypes.uint4)
 uint8 = _make_scalar_type(np.uint8)
 uint16 = _make_scalar_type(np.uint16)
 uint32 = _make_scalar_type(np.uint32)
 uint64 = _make_scalar_type(np.uint64)
-if dtypes.int1 is not None:
-  int1 = _make_scalar_type(dtypes.int1)
+int1 = _make_scalar_type(dtypes.int1)
 int2 = _make_scalar_type(dtypes.int2)
 int4 = _make_scalar_type(dtypes.int4)
 int8 = _make_scalar_type(np.int8)
@@ -100,11 +98,14 @@ float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
 float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
 float8_e5m2fnuz = _make_scalar_type(dtypes.float8_e5m2fnuz)
+float8_e5m3fnu = _make_scalar_type(dtypes.float8_e5m3fnu)
 float8_e4m3b11fnuz = _make_scalar_type(dtypes.float8_e4m3b11fnuz)
 bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
 float64 = double = _make_scalar_type(np.float64)
+bcomplex32 = _make_scalar_type(dtypes.bcomplex32)
+complex32 = _make_scalar_type(dtypes.complex32)
 complex64 = csingle = _make_scalar_type(np.complex64)
 complex128 = cdouble = _make_scalar_type(np.complex128)
 

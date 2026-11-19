@@ -46,7 +46,7 @@ def to_int8(x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
 
 
 def from_int8(
-    x: jnp.ndarray, h: jnp.ndarray, dtype: jnp.dtype = jnp.bfloat16
+    x: jnp.ndarray, h: jnp.ndarray, dtype: jax.typing.DTypeLike = jnp.bfloat16
 ) -> jnp.ndarray:
   """Converts an int8 array to a float array with a scale.
 
@@ -93,7 +93,7 @@ def quantize_to_int8(
 
 def unquantize_from_int8(
     x: QuantizedTensor,
-    dtype: jnp.dtype = jnp.bfloat16,
+    dtype: jax.typing.DTypeLike = jnp.bfloat16,
 ) -> jnp.ndarray:
   """Unquantizes an int8 QuantizedTensor to a float array.
 

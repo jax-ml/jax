@@ -17,6 +17,7 @@
 """Registers upstream MLIR dialects used by JAX."""
 
 from collections.abc import Callable, Sequence
+
 from jax.jaxlib._jax import Traceback
 from mlir import ir
 

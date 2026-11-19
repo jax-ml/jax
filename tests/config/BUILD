@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(
     default_applicable_licenses = [],

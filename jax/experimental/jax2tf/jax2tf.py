@@ -23,7 +23,7 @@ import math
 import os
 import threading
 import dataclasses
-from typing import Any, Union
+from typing import Any
 import warnings
 
 import numpy as np
@@ -34,10 +34,10 @@ from jax import export
 
 from jax._src import api
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import op_shardings
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.export import _export
@@ -177,7 +177,7 @@ def convert(fun_jax: Callable,
       should be `None` (monomorphic argument), or a Python object with the
       same pytree structure as the argument.
       See [how optional parameters are matched to
-      arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+      arguments](https://docs.jax.dev/en/latest/101/pytrees.html#transformation-parameters-can-be-pytrees-too).
 
       A shape specification for an array argument should be an object
       `PolyShape(dim0, dim1, ..., dimn)`
@@ -365,15 +365,11 @@ class NativeSerializationImpl:
       _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
-    _exported_device_assignment = [None]
-    self.exported = _export._export_internal(
+    self.exported = _export.export(
         self.fun_jax,
         platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)
-    assert(_exported_device_assignment[0] is not None)
-    self.device_assignment = _exported_device_assignment[0]
 
   def after_conversion(self):
     self._restore_context()
@@ -389,13 +385,9 @@ class NativeSerializationImpl:
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
-                                has_named_shardings=self.exported._has_named_shardings,
                                 in_named_shardings=self.exported._in_named_shardings,
                                 out_named_shardings=self.exported._out_named_shardings,
-                                in_shardings_hlo=self.exported.in_shardings_hlo,
                                 out_avals=self.exported.out_avals,
-                                out_shardings_hlo=self.exported.out_shardings_hlo,
-                                device_assignment=self.device_assignment,
                                 apply_jit=True)
 
 
@@ -628,9 +620,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
         call_module_attrs["platforms"] = ()  # No platform checking
 
   if version >= 10:
-    call_module_attrs["use_shardy_partitioner"] = (
-        config.use_shardy_partitioner.value
-    )
+    call_module_attrs["use_shardy_partitioner"] = True
 
   if logger.isEnabledFor(logging.DEBUG):
     # We already logged the MLIR module when we exported it.
@@ -646,15 +636,12 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
   # This is an agreed convention, and also improves usability under TF eager.
   # See b/255511660.
-  kept_in_shardings = []
-  for i in exported.module_kept_var_idx:
-    if exported._has_named_shardings:
-      in_sharding_hlo = _export.named_to_hlo_sharding(
-        exported._in_named_shardings[i],
-        exported.in_avals[i])
-    else:
-      in_sharding_hlo = exported.in_shardings_hlo[i]
-    kept_in_shardings.append(in_sharding_hlo)
+  kept_in_shardings = [
+      _named_to_hlo_sharding(
+          exported._in_named_shardings[i], exported.in_avals[i]
+      )
+      for i in exported.module_kept_var_idx
+  ]
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),
@@ -669,12 +656,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn._inference_function
       )
 
-  if exported._has_named_shardings:
-    out_shardings_hlo = tuple(
-      _export.named_to_hlo_sharding(s, a)
+  out_shardings_hlo = tuple(
+      _named_to_hlo_sharding(s, a)
       for s, a in zip(exported._out_named_shardings, exported.out_avals))
-  else:
-    out_shardings_hlo = exported.out_shardings_hlo
   res = list(map(partial(_shard_value,
                          skip_replicated_sharding=tf.executing_eagerly()),
                  res, out_shardings_hlo))
@@ -796,7 +780,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-PartitionsOrReplicated = Union[tuple[int, ...], None]
+PartitionsOrReplicated = tuple[int, ...] | None
 
 def split_to_logical_devices(tensor: TfVal,
                              partition_dimensions: PartitionsOrReplicated):
@@ -825,6 +809,14 @@ def split_to_logical_devices(tensor: TfVal,
   tile_assignment = np.arange(num_partition_splits).reshape(
       partition_dimensions)
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
+
+
+def _named_to_hlo_sharding(
+    s: Any, a: core.ShapedArray
+) -> xla_client.HloSharding | None:
+  if s is None or isinstance(s, sharding_impls.UnspecifiedValue):
+    return None
+  return s._to_xla_hlo_sharding(a.ndim)
 
 
 def _shard_value(val: TfVal,
@@ -863,18 +855,15 @@ def _shard_value(val: TfVal,
       last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
   )
   # Shardy requires V2 sharding format.
-  if config.use_shardy_partitioner.value:
-    xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
-        type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
-        tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
-        tile_assignment_devices=sharding_proto.tile_assignment_devices,
-        iota_reshape_dims=sharding_proto.iota_reshape_dims,
-        iota_transpose_perm=sharding_proto.iota_transpose_perm,
-        replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
-        last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
-    )
-  else:
-    xla_sharding_v2_proto = None  # pyrefly: ignore [bad-assignment]
+  xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+      type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
+      tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+      tile_assignment_devices=sharding_proto.tile_assignment_devices,
+      iota_reshape_dims=sharding_proto.iota_reshape_dims,
+      iota_transpose_perm=sharding_proto.iota_transpose_perm,
+      replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+      last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
+  )
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "

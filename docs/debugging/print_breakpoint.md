@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Compiled prints and breakpoints
 
 <!--* freshness: { reviewed: '2024-03-13' } *-->

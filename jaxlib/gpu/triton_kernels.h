@@ -16,9 +16,11 @@ limitations under the License.
 #ifndef JAXLIB_GPU_TRITON_H_
 #define JAXLIB_GPU_TRITON_H_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <variant>
@@ -32,6 +34,10 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 #include "xla/service/custom_call_status.h"
 
+namespace xla::ffi {
+struct RecordContext;
+}  // namespace xla::ffi
+
 namespace jax::JAX_GPU_NAMESPACE {
 
 void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
@@ -40,40 +46,40 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInitialize);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiPrepare);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiRecord);
 
 class ModuleImage;
+class KernelCall;
 
-struct TritonCustomCallState {
-  jax_triton::TritonKernelCall kernel_call;
+// The result of the instantiate function in FFI, containing the fully compiled
+// kernel down to machine code (e.g. CUBIN).
+// For autotuned kernels, all candidates are compiled down to machine code.
+//
+// This is the structure that is serialized during AOT compilation in XLA.
+struct TritonKernelInstantiateResult {
+  jax_triton::TritonCustomCallStateProto proto;
+  std::atomic<KernelCall*> cached_kernel_call{nullptr};
 
-  // Returns true if the kernel is fully compiled down to machine code (e.g.
-  // CUBIN).
-  bool HasFullyCompiledKernel() const {
-    return kernel_call.kernel().has_module_image();
-  }
+  TritonKernelInstantiateResult() { proto.set_version(2); }
 
   static absl::StatusOr<std::string> Serialize(
-      const TritonCustomCallState& state) {
-    jax_triton::TritonCustomCallStateProto proto;
-    proto.set_version(1);
-    *proto.mutable_kernel_call() = state.kernel_call;
-    return proto.SerializeAsString();
+      const TritonKernelInstantiateResult& instantiate_result) {
+    return instantiate_result.proto.SerializeAsString();
   }
 
-  static absl::StatusOr<std::unique_ptr<TritonCustomCallState>> Deserialize(
-      absl::string_view data) {
-    jax_triton::TritonCustomCallStateProto proto;
-    if (!proto.ParseFromString(data)) {
+  static absl::StatusOr<std::unique_ptr<TritonKernelInstantiateResult>>
+  Deserialize(absl::string_view data) {
+    auto instantiate_result = std::make_unique<TritonKernelInstantiateResult>();
+    if (!instantiate_result->proto.ParseFromString(data)) {
       return absl::InvalidArgumentError(
           "Failed to parse TritonCustomCallStateProto");
     }
-    if (proto.version() != 1) {
+    if (instantiate_result->proto.version() != 2) {
       return absl::InvalidArgumentError(
           "Unsupported TritonCustomCallStateProto version");
     }
-    auto state = std::make_unique<TritonCustomCallState>();
-    state->kernel_call = std::move(*proto.mutable_kernel_call());
-    return state;
+    return instantiate_result;
   }
 };
 
@@ -81,8 +87,13 @@ class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
          uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-         int compute_capability, ModuleImage* module_image = nullptr);
+         int compute_capability,
+         std::optional<uint32_t> global_scratch_size = std::nullopt,
+         std::optional<uint32_t> global_scratch_align = std::nullopt,
+         ModuleImage* module_image = nullptr);
 
+  absl::Status Initialize(gpuStream_t stream);
+  absl::StatusOr<gpuFunction_t> GetFunction(gpuStream_t stream);
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
   static absl::StatusOr<Kernel> FromProto(
@@ -93,9 +104,17 @@ class Kernel {
   bool CanLaunchOnDevice(gpuDevice_t) const;
 
   const std::string& kernel_name() const { return kernel_name_; }
+  uint32_t block_dim_x() const { return block_dim_x_; }
+  uint32_t num_ctas() const { return num_ctas_; }
   uint32_t shared_mem_bytes() const { return shared_mem_bytes_; }
   const std::string& ptx() const { return ptx_; }
   int compute_capability() const { return compute_capability_; }
+  std::optional<uint32_t> global_scratch_size() const {
+    return global_scratch_size_;
+  }
+  std::optional<uint32_t> global_scratch_align() const {
+    return global_scratch_align_;
+  }
 
  private:
   std::string kernel_name_;
@@ -105,6 +124,8 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  std::optional<uint32_t> global_scratch_size_;
+  std::optional<uint32_t> global_scratch_align_;
 
   ModuleImage* module_image_ = nullptr;
 };
@@ -117,19 +138,31 @@ class KernelCall {
       size_t ptr_divisibility;
     };
 
+    struct TmaDescriptor {
+      uint32_t elem_type;  // CUtensorMapDataType enum value.
+      uint32_t swizzle;    // CUtensorMapSwizzle enum value.
+      std::vector<uint64_t> shape;
+      std::vector<uint64_t> strides;  // Element strides.
+      std::vector<uint32_t> block_shape;
+      uint32_t oob_fill;  // 0 = none, 1 = NaN-request-zero-FMA.
+    };
+
     static absl::StatusOr<Parameter> FromProto(
         const jax_triton::TritonKernelCall_Parameter& proto);
     jax_triton::TritonKernelCall_Parameter ToProto() const;
 
     std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t, float,
-                 double>
+                 double, TmaDescriptor>
         value;
   };
 
   KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1, uint32_t grid_2,
              std::vector<Parameter> parameters);
 
+  absl::Status Initialize(gpuStream_t stream);
   absl::Status Launch(gpuStream_t stream, void** buffers);
+  absl::Status Record(gpuStream_t stream, void** buffers,
+                      ::xla::ffi::RecordContext& record_ctx);
 
   static absl::StatusOr<KernelCall> FromProto(
       const jax_triton::TritonKernelCall& proto);

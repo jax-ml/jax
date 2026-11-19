@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Advanced Automatic Differentiation
 
 ```{toctree}

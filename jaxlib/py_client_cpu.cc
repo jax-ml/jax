@@ -27,6 +27,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/free_threading.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
@@ -52,7 +54,8 @@ struct CpuTransposePlanCache {
   static ffi::TypeInfo info;
 
   explicit CpuTransposePlanCache(int capacity) : cache(capacity) {}
-  xla::TransposePlanCache cache;
+  ft_mutex mu;
+  xla::TransposePlanCache cache ABSL_GUARDED_BY(mu);
 };
 
 ffi::TypeId CpuTransposePlanCache::id =
@@ -79,7 +82,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
-  auto nb_args = nb::steal<nb::tuple>(PyTuple_New(args.size()));
+  nb::tuple_builder nb_args(args.size());
   for (size_t i = 0; i < args.size(); ++i) {
     auto arg = args.get<ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
@@ -90,7 +93,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
                                         xla::PrimitiveType_Name(ptype)));
     }
     if (ptype == xla::TOKEN) {
-      PyTuple_SET_ITEM(nb_args.ptr(), i, nb::none().release().ptr());
+      nb_args.put(nb::none());
       continue;
     }
     auto maybe_dtype = xla::PrimitiveTypeToNbDtype(ptype);
@@ -121,7 +124,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
     // We pass in data using default numpy layout i.e., std::nullopt.
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt, data);
     array.attr("flags").attr("writeable") = nb::bool_(false);
-    PyTuple_SET_ITEM(nb_args.ptr(), i, array.release().ptr());
+    nb_args.put(std::move(array));
   }
 
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
@@ -130,7 +133,7 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
   {
     xla::HostCallbackScope scope;
     try {
-      auto result_object = callback(*nb::borrow<nb::args>(nb_args));
+      auto result_object = callback(*nb::borrow<nb::args>(nb_args.commit()));
       result_tuple = nb::cast<nb::tuple>(result_object);
     } catch (nb::python_error& e) {
       return ffi::Error::Internal(
@@ -179,7 +182,11 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
                            reversed_layout.begin());
       options.permutation = reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> maybe_plan;
+      {
+        ft_lock_guard lock(transpose_cache->mu);
+        maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      }
       if (!maybe_plan.ok()) {
         return ffi::Error::Internal(maybe_plan.status().ToString());
       }

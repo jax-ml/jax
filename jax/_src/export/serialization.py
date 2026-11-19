@@ -22,7 +22,7 @@ import dataclasses
 import itertools
 from functools import partial
 import types
-from typing import cast, Any, TypeVar
+from typing import Any
 import warnings
 
 try:
@@ -39,7 +39,6 @@ from jax._src import effects
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
 from jax._src.export import shape_poly
-from jax._src.lib import xla_client
 from jax._src import mesh
 from jax._src import named_sharding
 from jax._src import partition_spec
@@ -47,9 +46,6 @@ from jax._src import tree_util
 
 from jax import version
 import numpy as np
-
-T = TypeVar("T")
-SerT = TypeVar("SerT")
 
 # The _SERIALIZATION_VERSION changes when we change the serialization schema
 # even if the change is backwards compatible.
@@ -79,7 +75,8 @@ SerT = TypeVar("SerT")
 #   abstract meshes and avals.
 # Version 11, May 15th, 2026, add AbstractDevice.platform.
 # Version 12, July 29th, 2026, add JAX version for the serializer.
-_SERIALIZATION_VERSION = 12
+# Version 13, October 30th, 2026, add AbstractValue.weak_type.
+_SERIALIZATION_VERSION = 13
 
 
 def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
@@ -90,7 +87,7 @@ def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
   )
   if exp.JaxVersion() is not None:
     msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
-  msg += " See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees."
+  msg += " See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees."
   return msg
 
 
@@ -174,9 +171,6 @@ def _serialize_exported(
     builder: flatbuffers.Builder, exp: _export.Exported, vjp_order: int
 ) -> int:
   uniques = _SerializedUniques.create_from_exported(exp)
-  if not exp._has_named_shardings:
-    raise ValueError(
-      "Exported being serialized must have named shardings after 3/17/2026.")
   # Serialize bottom-up
   fun_name = builder.CreateString(exp.fun_name)
   in_tree = _serialize_pytreedef(builder, exp.in_tree)
@@ -282,7 +276,7 @@ def _serialize_exported(
   return ser_flatbuf.ExportedEnd(builder)
 
 
-def _serialize_array(
+def _serialize_array[T](
     builder: flatbuffers.Builder,
     serialize_one: Callable[[flatbuffers.Builder, T], int],
     elements: Iterable[T],
@@ -365,60 +359,36 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   else:
     out_shardings = ()
 
-  # has_named_sharding will be True for all exports created after 1/15/2026
-  # TODO(b/489569164): remove has_named_sharding 6 months after 1/15/2026
-  has_named_shardings = not any(isinstance(s, _export.HloSharding)
-                                for s in itertools.chain(in_shardings, out_shardings))
-  if has_named_shardings:
-    def get_aval_by_idx(idx, sharding: _export.NamedSharding | None):
-      base_aval = uniques.unique_avals[idx]
-      if sharding is None:
-        return base_aval
-      return core.update_aval_with_sharding(base_aval, sharding)
+  def get_aval_by_idx(idx, sharding: _export.NamedSharding | None):
+    base_aval = uniques.unique_avals[idx]
+    if sharding is None:
+      return base_aval
+    return core.update_aval_with_sharding(base_aval, sharding)
 
-    if exp.InAvalsIdxsLength() > 0:
-      in_avals = tuple(
-          get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # pyrefly: ignore[bad-argument-type]
-          for i in range(exp.InAvalsIdxsLength()))
-    elif exp.InAvalsLength() > 0:
-      # TODO(necula): remove 6 months after 4/4/26
-      in_avals = tuple(
-          _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # pyrefly: ignore[bad-argument-type]
-          for i in range(exp.InAvalsLength()))
-    else:
-      in_avals = ()
-
-    if exp.OutAvalsIdxsLength() > 0:
-      out_avals = tuple(
-          get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # pyrefly: ignore[bad-argument-type]
-                          for i in range(exp.OutAvalsIdxsLength()))
-    elif exp.OutAvalsLength() > 0:
-      # TODO(necula): remove 6 months after 4/4/26
-      out_avals = tuple(
-        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # pyrefly: ignore[bad-argument-type]
-        for i in range(exp.OutAvalsLength())
-      )
-    else:
-      out_avals = ()
-
-    in_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
-                             for s, aval in zip(in_shardings, in_avals))
-    out_shardings_hlo = tuple(_export.named_to_hlo_sharding(s, aval)  # pyrefly: ignore[bad-argument-type]
-                             for s, aval in zip(out_shardings, out_avals))
-  else:
-    # Export from before 1/15/26
+  if exp.InAvalsIdxsLength() > 0:
     in_avals = tuple(
-        _deserialize_aval(exp.InAvals(i), scope=scope, sharding=None)
-        for i in range(exp.InAvalsLength())
-    )
+        get_aval_by_idx(exp.InAvalsIdxs(i), in_shardings[i])  # pyrefly: ignore[bad-argument-type]
+        for i in range(exp.InAvalsIdxsLength()))
+  elif exp.InAvalsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    in_avals = tuple(
+        _deserialize_aval(exp.InAvals(i), scope=scope, sharding=in_shardings[i])  # pyrefly: ignore[bad-argument-type]
+        for i in range(exp.InAvalsLength()))
+  else:
+    in_avals = ()
+
+  if exp.OutAvalsIdxsLength() > 0:
     out_avals = tuple(
-        _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=None)
-        for i in range(exp.OutAvalsLength())
+        get_aval_by_idx(exp.OutAvalsIdxs(i), out_shardings[i])  # pyrefly: ignore[bad-argument-type]
+                        for i in range(exp.OutAvalsIdxsLength()))
+  elif exp.OutAvalsLength() > 0:
+    # TODO(necula): remove 6 months after 4/4/26
+    out_avals = tuple(
+      _deserialize_aval(exp.OutAvals(i), scope=scope, sharding=out_shardings[i])  # pyrefly: ignore[bad-argument-type]
+      for i in range(exp.OutAvalsLength())
     )
-    in_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], in_shardings)
-    in_shardings = (None,) * len(in_shardings)
-    out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
-    out_shardings = (None,) * len(out_shardings)
+  else:
+    out_avals = ()
 
   in_tree = _deserialize_pytreedef(exp.InTree(), in_avals)
   out_tree = _deserialize_pytreedef(exp.OutTree(), out_avals)
@@ -456,9 +426,8 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       out_tree=out_tree,
       out_avals=out_avals,
       nr_devices=nr_devices,
-      in_shardings_hlo=in_shardings_hlo,
-      out_shardings_hlo=out_shardings_hlo,
-      _has_named_shardings=has_named_shardings,
+      in_shardings_hlo=(None,) * len(in_avals),
+      out_shardings_hlo=(None,) * len(out_avals),
       _in_named_shardings=in_shardings,  # pyrefly: ignore[bad-argument-type]
       _out_named_shardings=out_shardings,  # pyrefly: ignore[bad-argument-type]
       platforms=platforms,
@@ -842,6 +811,7 @@ def _serialize_aval(
   ser_flatbuf.AbstractValueAddShape(builder, shape_vector_offset)
   ser_flatbuf.AbstractValueAddDtype(builder, _dtype_to_dtype_kind[aval.dtype])
   ser_flatbuf.AbstractValueAddMemorySpace(builder, _memory_space_to_enum[aval.memory_space])
+  ser_flatbuf.AbstractValueAddWeakType(builder, aval.weak_type)
   return ser_flatbuf.AbstractValueEnd(builder)
 
 
@@ -862,7 +832,9 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
     mem_space = core.MemorySpace.Device
 
   return core.update_aval_with_sharding(
-      core.ShapedArray(shape, dtype, memory_space=mem_space), sharding
+      core.ShapedArray(shape, dtype, weak_type=aval.WeakType(),
+                       memory_space=mem_space),
+      sharding
   )
 
 
@@ -887,15 +859,8 @@ def _deserialize_sharding(exp: ser_flatbuf.Exported, s: ser_flatbuf.Sharding, *,
     # TODO(necula): We must keep reading the NamedSharding for 6 months after 4/4/26
     return _deserialize_named_sharding(named_sharding_off, uniques=uniques)
 
-  # TODO(b/489569164): We must keep reading the HloSharding for 6 months after 1/15/2026.
   if not s.HloShardingProtoIsNone():
-    msg = _expired_error_msg(exp)
-    if not config.export_deserialize_expired_versions.value:
-      raise ValueError(msg)
-    warnings.warn(msg, DeprecationWarning)
-    proto = xla_client.OpSharding()
-    proto.ParseFromString(s.HloShardingProtoAsNumpy().tobytes())
-    return xla_client.HloSharding.from_proto(proto)
+    raise ValueError(_expired_error_msg(exp))
 
   return None  # Unspecified sharding
 

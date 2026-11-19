@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, cast, Protocol, Union
+from typing import Any, cast, Protocol
 
 from jax._src import ad_util
 from jax._src import core
@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
+from jax._src import tree
 from jax._src import tree_util
 from jax._src.tree_util import tracing_registry, _registry, _RegistryEntry
 from jax._src.typing import Array
@@ -82,7 +83,7 @@ effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEff
 effects.partial_eval_kept_effects.add_type(RefEffect)
 effects.remat_allowed_effects.add_type(RefEffect)
 
-StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
+StateEffect = ReadEffect | WriteEffect | AccumEffect
 
 
 # ## Transforms
@@ -91,6 +92,9 @@ StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 class Transform(Protocol):
 
   def transform_type(self, x: core.AbstractValue) -> core.AbstractValue:
+    raise NotImplementedError(type(self))
+
+  def transform_array(self, x: Any) -> Any:
     raise NotImplementedError(type(self))
 
   def undo(self, x: core.AbstractValue) -> Transform:
@@ -114,7 +118,7 @@ class MultiRefTransform(Transform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
-  dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
+  dtype: dtypes.DType = tree.static()
 
   def transform_type(self, x):
     match x:
@@ -164,7 +168,7 @@ def _canonicalize_reshape(
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
-  shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  shape: tuple[int, ...] = tree.static()
 
   def _validate_shape(self, input_shape: tuple[int, ...]):
     if np.prod(self.shape) != np.prod(input_shape):
@@ -203,7 +207,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+  permutation: tuple[int, ...] = tree.static()
 
   def undo(self, x: core.AbstractValue) -> Transform:
     return TransposeTransform(_perm_inverse(self.permutation))
@@ -233,8 +237,29 @@ class TransposeTransform(Transform):
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
+class MemorySpaceCastTransform(Transform):
+  memory_space: Any = tree.static()
+
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(memory_space=self.memory_space)
+      case core.ShapedArray():
+        return x
+      case _:
+        raise TypeError(
+            f"Cannot cast memory space of {x} to {self.memory_space}"
+        )
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{memory_space_cast({self.memory_space})}}")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
-  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+  idx: Array | int
 
   def transform_types(self, xs):
     def _type(ref):
@@ -256,8 +281,9 @@ class SelectTransform(MultiRefTransform):
     raise NotImplementedError(type(self))
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    del context  # Unused.
-    return pp.text(f"{{select({self.idx=})}}")
+    assert isinstance(self.idx, (core.Var, core.Literal))
+    idx = core.pp_var(self.idx, context, print_literal_dtype=False)
+    return pp.concat([pp.text("{select("), idx, pp.text(")}")])
 
   def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
     attrs = [getattr(x, name) for x in xs]
@@ -276,13 +302,20 @@ class RefIndexer:
       slc = (slc,)
     from jax._src.state import indexing
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if (
-        isinstance(self.ref_or_view, TransformedRef)
-        and not self.ref_or_view.multiref
-    ):
-      view = self.ref_or_view
-      return TransformedRef(view.ref, (*view.transforms, indexer))
-    return TransformedRef(self.ref_or_view, (indexer,))
+    return apply_transform(self.ref_or_view, indexer)
+
+
+def apply_transform(ref_or_view: Any, transform: Transform) -> TransformedRef:
+  if not isinstance(ref_or_view, TransformedRef):
+    return TransformedRef(ref_or_view, (transform,))
+  if not ref_or_view.multiref:
+    return TransformedRef(ref_or_view.ref, (*ref_or_view.transforms, transform))
+  t, = ref_or_view.transforms  # multiref enforces len(transforms) == 1.
+  # Single-ref views distribute over select, unlike general MultiRefTransforms.
+  if isinstance(t, SelectTransform):
+    refs = tuple(apply_transform(r, transform) for r in ref_or_view.ref)
+    return TransformedRef(refs, (t,))
+  raise NotImplementedError(type(t))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -297,6 +330,12 @@ class TransformedRef:
       )
     if any(isinstance(t, MultiRefTransform) for t in self.transforms):
       assert self.multiref and len(self.transforms) == 1
+    if isinstance(self.ref, TransformedRef):
+      raise ValueError(f"TransformedRef cannot wrap a TransformedRef: {self}")
+    num_casts = sum(
+        isinstance(t, MemorySpaceCastTransform) for t in self.transforms)
+    if num_casts > 1:
+      raise ValueError("Multiple memory_space_casts are not allowed.")
 
   @property
   def multiref(self) -> bool:
@@ -354,9 +393,7 @@ class TransformedRef:
           "Bitcast ref with dynamic size is not supported."
       )
     dtype = dtypes.dtype(dtype)
-    if self.multiref:
-      return TransformedRef(self, (BitcastTransform(dtype),))
-    return TransformedRef(self.ref, (*self.transforms, BitcastTransform(dtype)))
+    return apply_transform(self, BitcastTransform(dtype))
 
   def reshape(self, *shape):
     if self.is_dynamic_size:
@@ -367,17 +404,13 @@ class TransformedRef:
       shape = shape[0]
     input_shape = tuple(operator.index(s) for s in self.shape)
     shape = _canonicalize_reshape(input_shape, shape)
-    if self.multiref:
-      return TransformedRef(self, (ReshapeTransform(shape),))
-    return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
+    return apply_transform(self, ReshapeTransform(shape))
 
   def transpose(self, permutation: Sequence[int]):
-    if self.multiref:
-      raise NotImplementedError("Transpose with multiref is not supported.")
-    transposer = TransposeTransform(tuple(permutation))
-    if self.multiref:
-      return TransformedRef(self, (transposer,))
-    return TransformedRef(self.ref, (*self.transforms, transposer))
+    return apply_transform(self, TransposeTransform(tuple(permutation)))
+
+  def memory_space_cast(self, memory_space: Any):
+    return apply_transform(self, MemorySpaceCastTransform(memory_space))
 
   def set(self, value, idx=()):
     from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
@@ -390,6 +423,12 @@ class TransformedRef:
   def get(self, idx=()):
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
+
+  @property
+  def memory_space(self):
+    if not hasattr(self.type, "memory_space"):
+      raise AttributeError(f"{self!r} has no `memory_space`.") from None
+    return self.type.memory_space
 
   def __getattr__(self, name):
     if self.multiref:
@@ -436,7 +475,7 @@ class AbstractRef(core.AbstractValue):
 
   Refer to the `Ref guide`_ for more information.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   __slots__ = ["inner_aval", "memory_space", "kind"]
 
@@ -469,13 +508,13 @@ class AbstractRef(core.AbstractValue):
   def lower_val(self, ref, /):
     if not self.is_high:
       return [ref]
-    return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
+    return self.inner_aval.lower_val(ref._refs)
 
   def raise_val(self, *vals):
     if not self.is_high:
       ref, = vals
       return ref
-    return core.Ref(self, self.inner_aval.raise_val(*vals))  # pyrefly: ignore[missing-attribute]
+    return core.Ref(self, self.inner_aval.raise_val(*vals))
 
   @property
   def weak_type(self) -> bool:
@@ -559,6 +598,10 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   def transpose(self, *permutation):
     return TransformedRef(self, ()).transpose(*permutation)
+
+  @core.aval_method
+  def memory_space_cast(self, memory_space):
+    return TransformedRef(self, ()).memory_space_cast(memory_space)
 
   @core.aval_property
   def T(self):
@@ -645,7 +688,7 @@ def shaped_array_ref(
 
 def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
   aval = core.shard_aval(mesh, auto, check_rep, names, ref_aval.inner_aval)
-  return AbstractRef(aval)
+  return AbstractRef(aval, ref_aval.memory_space, ref_aval.kind)
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
 def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):

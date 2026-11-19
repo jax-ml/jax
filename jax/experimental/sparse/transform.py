@@ -59,6 +59,7 @@ from jax._src import tree_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import hijax
 from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
@@ -92,34 +93,44 @@ _zero_preserving_unary_primitives = [
   lax.abs_p,
   lax.asin_p,
   lax.asinh_p,
+  lax.asinpi_p,
   lax.atan_p,
   lax.atanh_p,
+  lax.atanpi_p,
   lax.bessel_i1e_p,
+  lax.exp2m1_p,
   lax.expm1_p,
   lax.log1p_p,
+  lax.log2p1_p,
   lax.sign_p,
   lax.sin_p,
   lax.sinh_p,
+  lax.sinpi_p,
   lax.sqrt_p,
   lax.square_p,
   lax.tan_p,
   lax.tanh_p,
+  lax.tanpi_p,
   lax.convert_element_type_p,
 ]
 
 _densifying_primitives : list[core.Primitive] = [
   lax.acos_p,
   lax.acosh_p,
+  lax.acospi_p,
   lax.bessel_i0e_p,
   lax.cos_p,
   lax.cosh_p,
+  lax.cospi_p,
   lax.eq_p,
   lax.exp_p,
+  lax.exp2_p,
   lax.ge_p,
   lax.gt_p,
   lax.le_p,
   lax.lt_p,
   lax.log_p,
+  lax.log2_p,
   lax.ne_p,
   lax.xor_p
 ]
@@ -337,17 +348,6 @@ class SparseTrace(core.Trace):
       out_spvalues = arrays_to_spvalues(self.spenv, out_bufs if primitive.multiple_results else [out_bufs])
     out_tracers = tuple(SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues)
     return out_tracers if primitive.multiple_results else out_tracers[0]
-
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params, /):
-    assert False
-    spvalues = tuple(t._spvalue for t in tracers)
-    in_bufs = self.spenv._buffers
-    fun, out_spvalues = sparsify_subtrace(f, self.main, spvalues)
-    if any(params['donated_invars']):
-      raise NotImplementedError("sparsify does not support donated_invars")
-    params = dict(params, donated_invars=tuple(False for buf in in_bufs))
-    _bufs_out = call_primitive.bind(fun, *in_bufs, **params)
-    return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues()]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     # TODO(jakevdp): handle the jvp here
@@ -739,6 +739,22 @@ def _div_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.div_p] = _div_sparse
 
+def _complex_sparse(spenv, *spvalues):
+  def to_complex(spval, imag: bool):
+    buf = spenv.data(spval)
+    zero = lax.full_like(buf, 0)
+    out = lax.complex(zero, buf) if imag else lax.complex(buf, zero)
+    if spval.is_sparse():
+      return spenv.sparse(spval.shape, out, indices_ref=spval.indices_ref,
+                          indices_sorted=spval.indices_sorted,
+                          unique_indices=spval.unique_indices)
+    return spenv.dense(out)
+
+  X, Y = spvalues
+  return _add_sparse(spenv, to_complex(X, False), to_complex(Y, True))
+
+sparse_rules_bcoo[lax.complex_p] = _complex_sparse
+
 def _reduce_sum_sparse(spenv, *spvalues, axes, out_sharding):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
@@ -754,7 +770,7 @@ sparse_rules_bcoo[lax.reduce_sum_p] = _reduce_sum_sparse
 
 
 def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_indices,
-                        indices_are_sorted, mode, fill_value):
+                        indices_are_sorted, mode, fill_value, out_sharding):
   operand, start_indices = spvalues_to_arrays(spenv, args)
   result = sparse.bcoo_gather(operand, start_indices, dimension_numbers=dimension_numbers,
                               slice_sizes=slice_sizes, unique_indices=unique_indices,
@@ -765,7 +781,7 @@ def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_ind
 sparse_rules_bcoo[lax.gather_p] = _gather_sparse_rule
 
 def _sparsify_jaxpr(spenv: SparsifyEnv,
-                    jaxpr: core.ClosedJaxpr, *spvalues):
+                    jaxpr: core.Jaxpr, *spvalues):
   # TODO(jakevdp): currently this approach discards all information about
   #   shared data & indices when generating the sparsified jaxpr. The
   #   current approach produces valid sparsified while loops, but they
@@ -906,7 +922,7 @@ sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
 def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
-  call_jaxpr: core.ClosedJaxpr = params.pop('call_jaxpr')
+  call_jaxpr: core.Jaxpr = params.pop('call_jaxpr')
   jvp_jaxpr_fun: lu.WrappedFun = params.pop('jvp_jaxpr_fun')
   num_consts: int = params.pop('num_consts')
   sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, call_jaxpr, *spvalues)
@@ -928,6 +944,21 @@ def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
 
 sparse_rules_bcoo[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
 sparse_rules_bcsr[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
+
+def _call_hi_primitive_sparse_rule(spenv, *spvalues, _prim):
+  if not isinstance(_prim, hijax.CustomJVPTraced):
+    _raise_unimplemented_primitive(hijax.call_hi_primitive_p)
+  jaxpr = _prim.traced.jaxpr
+  return eval_sparse(jaxpr, jaxpr.consts, spvalues, spenv)
+
+sparse_rules_bcoo[hijax.call_hi_primitive_p] = _call_hi_primitive_sparse_rule
+sparse_rules_bcsr[hijax.call_hi_primitive_p] = _call_hi_primitive_sparse_rule
+
+def _eval_jaxpr_sparse_rule(spenv, *spvalues, call_jaxpr, **_):
+  return eval_sparse(call_jaxpr, call_jaxpr.consts, spvalues, spenv)
+
+sparse_rules_bcoo[core.eval_jaxpr_p] = _eval_jaxpr_sparse_rule
+sparse_rules_bcsr[core.eval_jaxpr_p] = _eval_jaxpr_sparse_rule
 
 
 # ------------------------------------------------------------------------------

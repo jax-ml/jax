@@ -34,7 +34,9 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
-                                tree_unflatten, treedef_tuple)
+                                tree_unflatten, treedef_tuple,
+                                tracing_registry,
+                                treedef_tuple_tracing_registry)
 
 
 source_info_util.register_exclusion(__file__)
@@ -154,14 +156,15 @@ class custom_vmap:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
           "using def_vmap.")
-    args_flat, in_tree = tree_flatten(args)
+    args_flat, in_tree = tracing_registry.flatten(args)
     in_avals = [core.typeof(x) for x in args_flat]
     jaxpr, out_avals = pe.trace_to_jaxpr(
         self.fun, ft.pack((ft.treedef_args_to_ft(in_tree, in_avals), {})),
         debug_fun)
     closed_call, consts = pe.separate_consts(jaxpr)
     out_tree = tree_structure(out_avals.unflatten())
-    in_tree = treedef_tuple((tree_structure(consts), in_tree))
+    in_tree = treedef_tuple_tracing_registry(
+        (tracing_registry.flatten(consts)[1], in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
                                      (0, args, args), {})
@@ -333,7 +336,7 @@ def custom_vmap_jvp(primals, tangents, *,
 
   tangents = map(ad.instantiate_zeros, tangents)
   jvp_call, _ = ad.jvp_jaxpr(call, [True] * len(primals), True)
-  jvp_in_tree = treedef_tuple((in_tree, in_tree))
+  jvp_in_tree = treedef_tuple_tracing_registry((in_tree, in_tree))
   jvp_out_tree = treedef_tuple((out_tree, out_tree))
   outs = custom_vmap_p.bind(
       *primals, *tangents,

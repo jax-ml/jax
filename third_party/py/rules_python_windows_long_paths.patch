@@ -1,0 +1,52 @@
+# Patch for rules_python 2.2.0 to support native extension imports from long
+# Windows runfiles paths.
+
+diff --git a/python/private/site_init_template.py b/python/private/site_init_template.py
+index 12be98eb..49c7dd71 100644
+--- a/python/private/site_init_template.py
++++ b/python/private/site_init_template.py
+@@ -93,35 +93,24 @@ def _get_windows_path_with_unc_prefix(path):
+     if not _is_windows() or sys.version_info[0] < 3:
+         return path
+ 
+-    # Starting in Windows 10, version 1607(OS build 14393), MAX_PATH limitations have been
+-    # removed from common Win32 file and directory functions.
+-    # Related doc: https://docs.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=cmd#enable-long-paths-in-windows-10-version-1607-and-later
+-    import platform
+-
+-    win32_version = None
+-    # Windows 2022 with Python 3.12.8 gives flakey errors, so try a couple times.
+-    for _ in range(3):
+-        try:
+-            win32_version = platform.win32_ver()[1]
+-            break
+-        except (ValueError, KeyError):
+-            pass
+-    if win32_version and win32_version >= "10.0.14393":
+-        return path
+-
+     # import sysconfig only now to maintain python 2.6 compatibility
+     import sysconfig
+ 
+     if sysconfig.get_platform() == "mingw":
+         return path
+ 
+-    # Lets start the unicode fun
+-    unicode_prefix = "\\\\?\\"
+-    if path.startswith(unicode_prefix):
++    # The Windows long-path opt-in only covers specific file APIs. Native Python
++    # extensions are loaded through LoadLibraryExW, which can still reject long
++    # paths without an extended-length prefix.
++    extended_path_prefix = "\\\\?\\"
++    if path.startswith(extended_path_prefix):
+         return path
+ 
+     # os.path.abspath returns a normalized absolute path
+-    return unicode_prefix + os.path.abspath(path)
++    path = os.path.abspath(path)
++    if path.startswith("\\\\"):
++        return extended_path_prefix + "UNC\\" + path[2:]
++    return extended_path_prefix + path
+ 
+ 
+ def _search_path(name):

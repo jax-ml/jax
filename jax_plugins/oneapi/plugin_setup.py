@@ -60,15 +60,18 @@ class BinaryDistribution(Distribution):
   def has_ext_modules(self):
     return True
 
+with open('README.md', encoding='utf-8') as f:
+  _long_description = f.read()
+
 setup(
     name=project_name,
     version=__version__,
     cmdclass=_cmdclass,
     description="JAX Plugin for Intel GPUs",
-    long_description="",
+    long_description=_long_description,
     long_description_content_type="text/markdown",
-    author="MiniGoel",
-    author_email="mini.goel@intel.com",
+    author="oneAPI Jax Contributors",
+    author_email="oneapi-jax-contrib@intel.com",
     packages=[package_name],
     python_requires=">=3.12",
     install_requires=[f"jax-oneapi-pjrt=={__version__}"],

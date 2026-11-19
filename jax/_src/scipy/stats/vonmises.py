@@ -48,7 +48,7 @@ def logpdf(x: ArrayLike, kappa: ArrayLike) -> Array:
   """
   x, kappa = promote_args_inexact('vonmises.logpdf', x, kappa)
   zero = _lax_const(kappa, 0)
-  return jnp.where(lax.gt(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * np.pi * lax.bessel_i0e(kappa)), np.nan)
+  return jnp.where(lax.ge(kappa, zero), kappa * (jnp.cos(x) - lax.sign(kappa)) - float(np.log(2 * np.pi)) - jnp.log(lax.bessel_i0e(kappa)), np.nan)
 
 
 def pdf(x: ArrayLike, kappa: ArrayLike) -> Array:

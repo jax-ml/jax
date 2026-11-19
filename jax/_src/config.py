@@ -23,13 +23,14 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, NoReturn, Protocol, TypeVar, cast
 from typing import TYPE_CHECKING
 
 from jax._src import logging_config
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 
 config_ext = _jax.config
@@ -209,6 +210,30 @@ register_trace_context_callback = []
 trace_context = config_ext.trace_context
 trace_context_names = config_ext.trace_context_names
 
+if jaxlib_extension_version >= 509:
+  jaxpr_eqn_ctx_vals = config_ext.jaxpr_eqn_ctx_vals
+  jaxpr_eqn_ctx_names = config_ext.jaxpr_eqn_ctx_names
+  swap_local_jaxpr_eqn_ctx = config_ext.swap_local_jaxpr_eqn_ctx
+  set_local_jaxpr_eqn_ctx = config_ext.set_local_jaxpr_eqn_ctx
+else:
+  _jaxpr_eqn_ctx_configs: list[config_ext.Config] = []
+
+  def jaxpr_eqn_ctx_vals():
+    return tuple(c.value for c in _jaxpr_eqn_ctx_configs)
+
+  def jaxpr_eqn_ctx_names():
+    return tuple(c.name for c in _jaxpr_eqn_ctx_configs)
+
+  def swap_local_jaxpr_eqn_ctx(values):
+    return tuple(
+        c.swap_local(v) for c, v in zip(_jaxpr_eqn_ctx_configs, values)
+    )
+
+  def set_local_jaxpr_eqn_ctx(values):
+    for c, v in zip(_jaxpr_eqn_ctx_configs, values):
+      c.set_local(v)
+
+
 config = Config()
 
 _read = config._read
@@ -240,11 +265,21 @@ class State(config_ext.Config[_T]):
       default_context_manager_value: Any = no_default,
       include_in_jit_key: bool = False,
       include_in_trace_context: bool = False,
+      include_in_jaxpr_eqn_ctx: bool = False,
   ):
     if parser is not None:
       default = parser(default)
-    super().__init__(name, default, include_in_jit_key=include_in_jit_key,
-                     include_in_trace_context=include_in_trace_context)
+    if TYPE_CHECKING or jaxlib_extension_version >= 509:
+      super().__init__(
+          name, default, include_in_jit_key=include_in_jit_key,
+          include_in_trace_context=include_in_trace_context,
+          include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
+    else:
+      super().__init__(
+          name, default, include_in_jit_key=include_in_jit_key,
+          include_in_trace_context=include_in_trace_context)
+      if include_in_jaxpr_eqn_ctx:
+        _jaxpr_eqn_ctx_configs.append(self)
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = (f"Context manager for `{name}` config option"
@@ -317,7 +352,7 @@ class StateContextManager[FuncType: Callable[..., Any]]:
       if self.prev is config_ext.unset:
         self.state._update_thread_local_hook(None)
       else:
-        self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
+        self.state._update_thread_local_hook(cast(Any | None, self.prev))
 
   def __call__(self, func: FuncType) -> FuncType:
     @functools.wraps(func)
@@ -347,6 +382,7 @@ def bool_state(
     extra_description: str = '',
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
     validator: Callable[[str], None] | None = None,
 ) -> State[bool]:
   """Set up thread-local state and return a contextmanager for managing it.
@@ -379,6 +415,8 @@ def bool_state(
       JIT cache key.
     include_in_trace_context: bool, optional: whether to include the state in
       the trace context.
+    include_in_jaxpr_eqn_ctx: bool, optional: whether to include the state in
+      the jaxpr equation context.
     validator: optional function to validate the value of the config option.
 
   Returns:
@@ -424,7 +462,8 @@ def bool_state(
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
       parser=parser, include_in_jit_key=include_in_jit_key,
-      include_in_trace_context=include_in_trace_context)
+      include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -440,6 +479,7 @@ def optional_bool_state(
     extra_description: str = '',
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
     validator: Callable[[str], None] | None = None):
   if default is not None and not isinstance(default, bool):
     raise TypeError(f"Default value must be of type bool, got {default} "
@@ -461,7 +501,8 @@ def optional_bool_state(
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
       parser=parser, include_in_jit_key=include_in_jit_key,
-      include_in_trace_context=include_in_trace_context)
+      include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -477,6 +518,7 @@ def enum_state(
     update_thread_local_hook: Callable[[str | None], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
     extra_validator: Callable[[str], None] | None = None,
 ) -> State[str]:
   """Set up thread-local state and return a contextmanager for managing it.
@@ -526,6 +568,7 @@ def enum_state(
       parser=parser,
       include_in_jit_key=include_in_jit_key,
       include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx,
   )
   config.add_option(
       name, s, 'enum',
@@ -546,6 +589,7 @@ def optional_enum_state(
     update_thread_local_hook: Callable[[str | None], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
 ) -> State[str | None]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -584,6 +628,7 @@ def optional_enum_state(
       name, default, help, update_global_hook, update_thread_local_hook,
       parser, include_in_jit_key=include_in_jit_key,
       include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx,
   )
   config.add_option(
       name, s, 'enum',
@@ -604,6 +649,7 @@ def enum_class_state[EnumType: enum.Enum](
     update_thread_local_hook: Callable[[EnumType | None], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
     extra_validator: Callable[[EnumType], None] | None = None,
 ) -> State[EnumType]:
   """Set up thread-local state and return a contextmanager for managing it.
@@ -622,6 +668,8 @@ def enum_class_state[EnumType: enum.Enum](
       JIT cache key.
     include_in_trace_context: bool, optional: whether to include the state in
       the trace context.
+    include_in_jaxpr_eqn_ctx: bool, optional: whether to include the state in
+      the jaxpr equation context.
     extra_validator: optional function to validate the value of the config
       option.
 
@@ -663,6 +711,7 @@ def enum_class_state[EnumType: enum.Enum](
       parser=parser,
       include_in_jit_key=include_in_jit_key,
       include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx,
   )
   config.add_option(
       name, s, 'enum_class',
@@ -682,6 +731,7 @@ def int_state(
     update_thread_local_hook: Callable[[int | None], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
     validator: Callable[[Any], None] | None = None,
 ) -> State[int]:
   """Set up thread-local state and return a contextmanager for managing it.
@@ -722,7 +772,8 @@ def int_state(
   s = State[int](name, default, help, update_global_hook,
                  update_thread_local_hook, parser,
                  include_in_jit_key=include_in_jit_key,
-                 include_in_trace_context=include_in_trace_context)
+                 include_in_trace_context=include_in_trace_context,
+                 include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
   config.add_option(name, s, int, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -829,6 +880,7 @@ def optional_string_state(
     update_global_hook: Callable[[str], None] | None = None,
     update_thread_local_hook: Callable[[str | None], None] | None = None,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
 ) -> State[str | None]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -864,7 +916,8 @@ def optional_string_state(
       update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
       validator=validator,
-      include_in_trace_context=include_in_trace_context)
+      include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
 
 def string_or_object_state(
     name: str,
@@ -876,6 +929,7 @@ def string_or_object_state(
     validator: Callable[[Any], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
+    include_in_jaxpr_eqn_ctx: bool = False,
 ) -> State[Any]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -914,7 +968,8 @@ def string_or_object_state(
   s = State[Any](
       name, default, help, update_global_hook, update_thread_local_hook,
       parser, include_in_jit_key=include_in_jit_key,
-      include_in_trace_context=include_in_trace_context)
+      include_in_trace_context=include_in_trace_context,
+      include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
   setattr(Config, name, property(lambda _: s.value))
   config.add_option(name, s, str, meta_args=[], meta_kwargs={"help": help})
   return s
@@ -983,34 +1038,35 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 
 already_configured_with_absl = False
 
-mesh_context_manager = config_ext.Config(
+mesh_context_manager = config_ext.Config[Any](
     'mesh_context_manager',
     (),
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-abstract_mesh_context_manager = config_ext.Config(
-    'abstract_mesh_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-device_context = config_ext.Config(
-    'device_context', None, include_in_jit_key=True
-)
-compute_on_context_manager = config_ext.Config(
-    'compute_on_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-xla_metadata_context_manager = config_ext.Config(
+if TYPE_CHECKING or jaxlib_extension_version >= 509:
+  compute_on_context_manager = config_ext.Config[Any](
+      'compute_on_context_manager',
+      None,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+      include_in_jaxpr_eqn_ctx=True,
+  )
+else:
+  compute_on_context_manager = config_ext.Config[Any](
+      'compute_on_context_manager',
+      None,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+  )
+  _jaxpr_eqn_ctx_configs.append(compute_on_context_manager)
+xla_metadata_context_manager = config_ext.Config[Any](
     'xla_metadata_context_manager',
     None,
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+pallas_tpu_interpret_mode_context_manager = config_ext.Config[Any](
     'pallas_tpu_interpret_mode_context_manager',
     None,
     include_in_jit_key=True,
@@ -1127,7 +1183,7 @@ jax_export_calling_convention_version = int_state(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
-        'See https://docs.jax.dev/en/latest/export/shape_poly.html#calling-convention-versions.'
+        'See https://docs.jax.dev/en/latest/501/export.html#calling-convention-versions.'
     )
 )
 
@@ -1136,7 +1192,7 @@ export_ignore_forward_compatibility = bool_state(
     default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
     help=(
         'Whether to ignore the forward compatibility lowering rules. '
-        'See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
+        'See https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
@@ -1149,7 +1205,7 @@ export_deserialize_expired_versions = bool_state(
         'the compiler and runtime. Furthermore, you accept the fact that the '
         'behavior of the deserialized model may change at any time. '
         'Read carefully '
-        'https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.'
+        'https://docs.jax.dev/en/latest/501/export.html#compatibility-guarantees.'
     )
 )
 
@@ -1293,7 +1349,7 @@ log_compiles = bool_state(
         'Log a message each time `jit` or `pmap` compiles an XLA computation.'
         ' Logging is performed with `logging`. When this option is set, the log'
         ' level is WARNING; otherwise the level is DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -1306,7 +1362,7 @@ explain_cache_misses = bool_state(
         ' cache), log an explanation. Logging is performed with `logging`. When'
         ' this option is set, the log level is WARNING; otherwise the level is'
         ' DEBUG.\n\nSee'
-        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' https://docs.jax.dev/en/latest/201/slow-compilation.html'
         ' for more details.'
     ),
 )
@@ -1419,7 +1475,8 @@ threefry_partitionable = bool_state(
           'computation. With this flag, the communication overheads disappear '
           'in some cases.'),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
 
 threefry_gpu_kernel_lowering = bool_state(
     name='jax_threefry_gpu_kernel_lowering',
@@ -1439,7 +1496,7 @@ use_direct_linearize = bool_state(
 
 use_simplified_jaxpr_constants = bool_state(
     name='jax_use_simplified_jaxpr_constants',
-    default=False,
+    default=True,
     help=('Enable a simplification of the handling of closed-over constants '
           'in Jaxpr. The value `True` enables the new behavior. '
           'This flag will exist only briefly, while we transition '
@@ -1450,7 +1507,7 @@ use_simplified_jaxpr_constants = bool_state(
 
 embedded_constants_max_bytes = int_state(
     name='jax_embedded_constants_max_bytes',
-    default=32,
+    default=1024,
     help=('Maximum size in bytes of a constant that is allowed to be '
           'embedded in the lowered HLO. Constants larger than this '
           'are hoisted as additional arguments to the executable. '
@@ -1467,7 +1524,26 @@ remove_size_one_mesh_axis_from_type = bool_state(
     default=False,
     help="Removes mesh axes of size 1 from ShapedArray.sharding and vma",
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
+
+
+def _parse_no_collectives(val):
+  if not isinstance(val, (set, frozenset)):
+    raise TypeError(
+        f"Expected axis name(s) as set or frozenset, got {val} of type {type(val)}")
+  return frozenset(val)
+
+
+no_collectives = State[frozenset[Any]](
+    'jax_no_collectives',
+    frozenset(),
+    help='Forbid collectives across the specified mesh axes in Explicit mode.',
+    parser=_parse_no_collectives,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
+)
 
 # TODO make it so people don't use this, this is internal...
 _check_vma = bool_state(
@@ -1479,7 +1555,7 @@ _check_vma = bool_state(
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
           'improve memory usage and stability. Set True to use new '
@@ -1843,8 +1919,9 @@ default_matmul_precision = optional_enum_state(
         'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
         'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
         'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
-        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'TF32_TF32_F32',
-        'TF32_TF32_F32_X3', 'F32_F32_F32', 'F64_F64_F64',
+        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'F8E4M3FN_F8E4M3FN_F32_X3',
+        'F8E4M3FN_F8E4M3FN_F32_X4', 'TF32_TF32_F32', 'TF32_TF32_F32_X3',
+        'F32_F32_F32', 'F64_F64_F64',
     ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
@@ -1877,7 +1954,8 @@ allow_f16_reductions = bool_state(
     help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
           'Defaults to True.'),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
 
 
 traceback_filtering = enum_state(
@@ -1954,12 +2032,6 @@ mutable_array_checks = bool_state(
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.',
     include_in_trace_context=True)
-
-refs_to_pins = bool_state(
-    name='jax_refs_to_pins',
-    default=False,
-    upgrade=True,
-    help='Lower refs to pinned buffers in HLO.')
 
 # TODO(mattjj, yashkatariya): remove once we land box plumbing
 disable_bwd_checks = bool_state(
@@ -2108,7 +2180,7 @@ def transfer_guard(new_val: str) -> Generator[None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see
-  https://docs.jax.dev/en/latest/transfer_guard.html
+  https://docs.jax.dev/en/latest/501/transfer-guard.html
 
   Args:
     new_val: The new thread-local transfer guard level for all transfers.
@@ -2240,12 +2312,7 @@ use_shardy_partitioner = bool_state(
     name='jax_use_shardy_partitioner',
     default=True,
     upgrade=True,
-    help=(
-        'Whether to lower to Shardy. See the migration guide for more '
-        'information: https://docs.jax.dev/en/latest/shardy_jax_migration.html.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
+    help='DEPRECATED: Shardy is now always enabled; this flag has no effect.',
 )
 
 use_cpp_shard_args = bool_state(
@@ -2312,6 +2379,28 @@ use_high_dynamic_range_gumbel = bool_state(
     default=False,
     help='If True, gumbel noise draws two samples to cover low probability '
          'events with more precision.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+random_normal_mode = enum_state(
+    name='jax_random_normal_mode',
+    enum_values=['low', 'high', 'highest'],
+    default='low',
+    help='Default precision mode for jax.random.normal.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+legacy_random_uniform = bool_state(
+    name='jax_legacy_random_uniform',
+    default=True,
+    help=(
+        'If True, jax.random.uniform uses the legacy nmant-bit mantissa '
+        'bitcast conversion. If False, it uses the (nmant + 1)-bit '
+        'shift-and-scale conversion.'
+    ),
+    include_in_jit_key=True,
     include_in_trace_context=True,
 )
 
@@ -2350,18 +2439,6 @@ jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     ),
 )
 
-jax_ragged_dot_use_gpu_pallas_triton_lowering = bool_state(
-    name='jax_ragged_dot_use_gpu_pallas_triton_lowering',
-    default=False,
-    help=(
-        '(GPU only) If True, use Pallas Triton lowering for ragged_dot()'
-        ' lowering. Otherwise, rely on the default lowering for'
-        ' ragged_dot_general_p.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_pallas_verbose_errors = bool_flag(
     'jax_pallas_verbose_errors',
     default=bool_env('JAX_PALLAS_VERBOSE_ERRORS', False),
@@ -2379,21 +2456,16 @@ jax_pallas_enable_debug_checks = bool_state(
     include_in_trace_context=True,
 )
 
-jax_pallas_use_mosaic_gpu = bool_state(
-    name='jax_pallas_use_mosaic_gpu',
-    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
-    help=(
-        'If True, lower Pallas kernels to the experimental Mosaic GPU'
-        ' dialect, instead of Triton IR.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
 jax_mosaic_allow_hlo = bool_state(
     name='jax_mosaic_allow_hlo',
     default=False,
     help='Allow hlo dialects in Mosaic',
+)
+
+jax_mosaic_unzip_debug_locations = bool_state(
+    name='jax_mosaic_unzip_debug_locations',
+    default=True,
+    help='Whether to unzip debug locations from Mosaic kernel bytecode.',
 )
 
 jax_pallas_poison_buffers = bool_state(
@@ -2414,4 +2486,97 @@ jax_pallas_auto_assign_collective_ids = enum_state(
         ' auto-assigned ones, based on the serialized kernel (module) hash.'
     ),
     include_in_jit_key=True,
+)
+
+jax_pallas_auto_assign_collective_ids_limit = int_state(
+    name='jax_pallas_auto_assign_collective_ids_limit',
+    default=25,
+    help='Maximum number of auto-assigned collective IDs before erroring.',
+    include_in_jit_key=True,
+)
+
+mtls_cert_file = optional_string_state(
+    name='jax_mtls_cert_file',
+    default=None,
+    help=('Path to the PEM-encoded certificate chain used to secure the '
+          'jax.distributed coordination service with mutual TLS. Must be set '
+          'together with jax_mtls_key_file and jax_mtls_ca_file. See '
+          'jax.distributed.initialize().'))
+
+mtls_key_file = optional_string_state(
+    name='jax_mtls_key_file',
+    default=None,
+    help='Path to the PEM-encoded private key for jax_mtls_cert_file.')
+
+mtls_ca_file = optional_string_state(
+    name='jax_mtls_ca_file',
+    default=None,
+    help=('Path to the PEM-encoded CA bundle used to verify the peer when the '
+          'jax.distributed coordination service uses mutual TLS.'))
+
+mtls_peer_uri_prefix = optional_string_state(
+    name='jax_mtls_peer_uri_prefix',
+    default=None,
+    help=('If set, when the jax.distributed coordination service uses mutual '
+          'TLS, accept the peer if and only if a URI SAN of its certificate '
+          'starts with this prefix, instead of standard host name '
+          'verification. See jax.distributed.initialize().'))
+
+distributed_verify_secure_credentials = bool_state(
+    name='jax_distributed_verify_secure_credentials',
+    default=False,
+    help=('If true, jax.distributed.initialize() aborts instead of using '
+          'insecure channels.'))
+
+jax_accurate_erf_inv = bool_state(
+    name='jax_accurate_erf_inv',
+    default=True,
+    help=(
+        'Temporary flag enabling more accurate erf_inv lowering near'
+        ' ``|x| = 1``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_tanh_sech_jvp = bool_state(
+    name='jax_tanh_sech_jvp',
+    default=False,
+    help=(
+        'Temporary flag enabling closed ``(tanh, sech^2)`` JVP for'
+        ' ``AccuracyMode.HIGHEST`` ``tanh`` and ``logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_accurate_logistic = bool_state(
+    name='jax_accurate_logistic',
+    default=False,
+    help=(
+        'Temporary flag enabling ``exp(-|x|)`` lowering for'
+        ' ``AccuracyMode.HIGHEST`` ``lax.logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_accurate_default_erfc = bool_state(
+    name='jax_accurate_default_erfc',
+    default=True,
+    help=(
+        'Temporary flag enabling single-branch polynomial default lowering'
+        ' for ``lax.erfc`` with subnormal support.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_partitioning = bool_state(
+    name='jax_partitioning',
+    default=False,
+    help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
 )

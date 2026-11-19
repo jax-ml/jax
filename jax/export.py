@@ -18,6 +18,7 @@ __all__ = ["DisabledSafetyCheck", "Exported", "export", "deserialize",
            "minimum_supported_calling_convention_version",
            "default_export_platform",
            "SymbolicScope", "is_symbolic_dim",
+           "symbolic_dim_bounds",
            "symbolic_shape", "symbolic_args_specs"]
 
 from jax._src.export._export import (
@@ -36,5 +37,6 @@ del shape_poly_decision
 from jax._src.export.shape_poly import (
   SymbolicScope,
   is_symbolic_dim,
+  symbolic_dim_bounds,
   symbolic_shape,
   symbolic_args_specs)

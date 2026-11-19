@@ -44,10 +44,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
               compute_right_eigenvectors):
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
-    # TODO(b/377907938), TODO(danfm): Debug issues MAGMA support for
-    # complex128 in some configurations.
-    if dtype == np.complex128:
-      self.skipTest("MAGMA support for complex128 types is flaky.")
     rng = jtu.rand_default(self.rng())
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
@@ -93,10 +89,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
-    # TODO(b/377907938), TODO(danfm): Debug issues MAGMA support for
-    # complex128 in some configurations.
-    if dtype == np.complex128:
-      self.skipTest("MAGMA support for complex128 types is flaky.")
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax_linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,

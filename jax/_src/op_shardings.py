@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import itertools
-from typing import Union
 
 import numpy as np
 
@@ -63,7 +62,7 @@ def are_hlo_shardings_equal(hc1: xc.HloSharding, hc2: xc.HloSharding) -> bool:
   return hc1 == hc2
 
 
-_Index = Union[int, slice, tuple[Union[int, slice], ...]]
+_Index = int | slice | tuple[int | slice, ...]
 
 
 def op_sharding_to_numpy_indices(

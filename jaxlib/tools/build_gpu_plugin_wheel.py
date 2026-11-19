@@ -87,7 +87,12 @@ r = runfiles.Create()
 
 
 def write_setup_cfg(sources_path, cpu):
-  tag = build_utils.platform_tag(cpu)
+  accelerator = (
+      "cuda" if args.enable_cuda else
+      "rocm" if args.enable_rocm else
+      "oneapi" if args.enable_oneapi else "none"
+  )
+  tag = build_utils.platform_tag(cpu, accelerator)
   with open(sources_path / "setup.cfg", "w") as f:
     f.write(
         f"""[metadata]
@@ -165,6 +170,7 @@ def prepare_rocm_plugin_wheel(
         src_files=[
           f"{source_file_prefix}jax_plugins/rocm/pyproject.toml",
           f"{source_file_prefix}jax_plugins/rocm/setup.py",
+          f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
       ],
   )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
@@ -202,6 +208,7 @@ def prepare_oneapi_plugin_wheel(
         src_files=[
           f"{source_file_prefix}jax_plugins/oneapi/pyproject.toml",
           f"{source_file_prefix}jax_plugins/oneapi/setup.py",
+          f"{source_file_prefix}jax_plugins/oneapi/README-pjrt.md",
       ],
   )
   write_setup_cfg(wheel_sources_path, cpu)

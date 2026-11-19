@@ -34,7 +34,6 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 
   Args:
     x: arraylike, value at which to evaluate the PDF
-    a: arraylike, distribution shape parameter
     loc: arraylike, distribution offset parameter
     scale: arraylike, distribution scale parameter
 

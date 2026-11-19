@@ -20,7 +20,9 @@ import time
 import weakref
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from jax.jaxlib import weakref_lru_cache
+from jax.jaxlib import xla_client
 
 
 def _dummy_context_fn():
@@ -31,7 +33,7 @@ def _dummy_target_fn(x):
   return x * 2
 
 
-class WeakrefLRUCacheTest(absltest.TestCase):
+class WeakrefLRUCacheTest(parameterized.TestCase):
 
   def testMultiThreaded(self):
     insert_evs = [threading.Event() for _ in range(2)]
@@ -196,6 +198,39 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     with self.assertRaises(ValueError):
       for _ in range(100):
         cache(wrkey, CrashingKey())
+
+  def testFailingEqKey(self):
+    class BadEqKey:
+
+      def __eq__(self, other):
+        raise RuntimeError("eq failed")
+
+      def __hash__(self):
+        return 42
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
+
+    k1 = BadEqKey()
+    k2 = BadEqKey()
+    cache(k1, 1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(k2, 1)
+
+    class WRKey:
+      pass
+
+    wrkey = WRKey()
+    s1 = BadEqKey()
+    s2 = BadEqKey()
+    cache(wrkey, s1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(wrkey, s2)
 
   def testPrintingStats(self):
     class WRKey:
@@ -428,6 +463,31 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     b = A()
     cache(b)
 
+  def testExplainException(self):
+    should_raise = True
+
+    def raising_explain_factory():
+      if should_raise:
+        raise RuntimeError("explain factory error")
+      return None
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x: 42, explain=raising_explain_factory
+    )
+
+    class A:
+      pass
+
+    a = A()
+    with self.assertRaisesRegex(RuntimeError, "explain factory error"):
+      cache(a)
+
+    # Subsequent calls with the same key on the same thread or another thread
+    # must not raise RecursionError or deadlock.
+    should_raise = False
+    self.assertEqual(cache(a), 42)
+
+
   def testEvictionIsLRU(self):
     cache = weakref_lru_cache.weakref_lru_cache(lambda: None, lambda x, y: y, 2)
 
@@ -521,6 +581,25 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     del wk
     self.assertEqual(len(deleted_strong_keys), 10)
     self.assertEqual(set(deleted_strong_keys), set(range(10)))
+
+  @parameterized.named_parameters(
+      ("strong_lru_cache", weakref_lru_cache.StrongLRUCache),
+      ("weakref_lru_cache", weakref_lru_cache.WeakrefLRUCache),
+      ("multi_weakref_lru_cache", weakref_lru_cache.MultiWeakrefLRUCache),
+      ("weak_value_interner", weakref_lru_cache.WeakValueInterner),
+      ("weak_key_weak_value_cache", weakref_lru_cache.WeakKeyWeakValueCache),
+  )
+  def testCallUninitialized(self, cls):
+    if xla_client._version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    cache = cls.__new__(cls)
+    with self.assertRaises(TypeError):
+      cache(object())
+
+    cycle = [cache]
+    cycle.append(cycle)
+    del cache, cycle
+    gc.collect()
 
 
 class WeakKeyWeakValueCacheTest(absltest.TestCase):
@@ -748,6 +827,25 @@ class StrongLRUCacheTest(absltest.TestCase):
     # Verify it still functions correctly
     self.assertEqual(cache_2(3), 6)
     self.assertEqual(cache_2.cache_info().currsize, 1)
+
+  def testInvalidNumShards(self):
+    for num_shards in (0, -1):
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        cache = weakref_lru_cache.StrongLRUCache.__new__(
+            weakref_lru_cache.StrongLRUCache
+        )
+        cache.__setstate__({
+            "version": 1,
+            "fn": _dummy_target_fn,
+            "cache_context_fn": _dummy_context_fn,
+            "maxsize": 10,
+            "explain": None,
+            "num_shards": num_shards,
+        })
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        weakref_lru_cache.strong_lru_cache(
+            _dummy_target_fn, _dummy_context_fn, num_shards=num_shards
+        )
 
 
 if __name__ == "__main__":

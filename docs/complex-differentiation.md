@@ -1,6 +1,7 @@
 ---
 jupytext:
   formats: md:myst
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -9,6 +10,7 @@ jupytext:
 kernelspec:
   display_name: Python 3
   name: python3
+nosearch: true
 ---
 
 # Complex numbers and differentiation

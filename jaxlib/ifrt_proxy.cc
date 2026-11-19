@@ -26,6 +26,7 @@
 #include "absl/log/log.h"
 #include "absl/log/log_entry.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "nanobind/nanobind.h"
@@ -125,7 +126,7 @@ absl::StatusOr<jax::nb_class_ptr<jax::PyClient>> GetClient(
 
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(client, CreateClient(proxy_server_address, options));
+    ABSL_ASSIGN_OR_RETURN(client, CreateClient(proxy_server_address, options));
   }
 
   // Constructing `jax::PyClient` requires GIL as it may dec-ref Python objects.

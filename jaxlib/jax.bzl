@@ -18,22 +18,25 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", _cc_proto_library = "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", _proto_library = "proto_library")
+load("@config_rocm_hipcc//rocm:build_defs.bzl", _rocm_library = "rocm_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
-load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
+load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured")
 
 # TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
 load("@local_config_sycl//sycl:build_defs.bzl", _if_oneapi_is_configured = "if_sycl_is_configured", _oneapi_library = "sycl_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
 load("@rocm_prebuilt_test_deps//:external_deps.bzl", PREBUILT_EXTERNAL_DEPS = "EXTERNAL_DEPS")
-load("@rules_python//python:defs.bzl", _py_binary = "py_binary", _py_library = "py_library", _py_test = "py_test")
+load("@rules_python//python:defs.bzl", "PyInfo", _py_binary = "py_binary", _py_library = "py_library", _py_test = "py_test")
+load("@rules_shell//shell:sh_binary.bzl", _sh_binary = "sh_binary")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("//jaxlib/rocm:rocm_version.bzl", "ROCM_FULL_VERSION")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -42,6 +45,7 @@ cuda_library = _cuda_library
 rocm_library = _rocm_library
 oneapi_library = _oneapi_library
 proto_library = _proto_library
+sh_binary = _sh_binary
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_oneapi_is_configured = _if_oneapi_is_configured
@@ -57,6 +61,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_triton_internal_users = []
 pallas_sc_internal_users = []
+pallas_tpu_ops_users = []
 pallas_fuser_users = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []
@@ -67,22 +72,20 @@ jax_internal_test_harnesses_visibility = []
 jax_test_util_visibility = []
 loops_visibility = []
 
+# Keys: (OS, CPU, accelerator); "none" means CPU-only.
 PLATFORM_TAGS_DICT = {
-    ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux_2_27", "aarch64"),
-    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
-    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    ("Windows", "AMD64"): ("win", "amd64"),
+    ("Linux", "x86_64", "none"): ("manylinux_2_27", "x86_64"),
+    ("Linux", "x86_64", "cuda"): ("manylinux_2_27", "x86_64"),
+    ("Linux", "x86_64", "rocm"): ("manylinux_2_27", "x86_64"),
+    # oneAPI uses libstdc++ from the glibc 2.31 sysroot.
+    ("Linux", "x86_64", "oneapi"): ("manylinux_2_31", "x86_64"),
+    ("Linux", "aarch64", "none"): ("manylinux_2_27", "aarch64"),
+    ("Linux", "aarch64", "cuda"): ("manylinux_2_27", "aarch64"),
+    ("Linux", "ppc64le", "none"): ("manylinux2014", "ppc64le"),
+    ("Darwin", "x86_64", "none"): ("macosx_11_0", "x86_64"),
+    ("Darwin", "arm64", "none"): ("macosx_11_0", "arm64"),
+    ("Windows", "AMD64", "none"): ("win", "amd64"),
 }
-
-def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
-    py_ver = HERMETIC_PYTHON_VERSION
-    if HERMETIC_PYTHON_VERSION_KIND == "ft":
-        py_ver += "-ft"
-    if py_ver in excluded_py_versions:
-        return []
-    return [package]
 
 _py_deps = {
     "absl-all": ["@pypi//absl_py"],
@@ -94,24 +97,25 @@ _py_deps = {
     "epath": ["@pypi//etils"],  # etils.epath
     "filelock": ["@pypi//filelock"],
     "flatbuffers": ["@pypi//flatbuffers"],
+    "google_benchmark": [],  # TODO(phawkins): need newer pypi wheels
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": ["@pypi//matplotlib"],
+    "matplotlib": ["//:pypi_optional_matplotlib"],
     "mpmath": ["@pypi//mpmath"],
     "opt_einsum": ["@pypi//opt_einsum"],
     "pil": ["@pypi//pillow"],
-    "portpicker": ["@pypi//portpicker"],
+    "portpicker": ["//:pypi_optional_portpicker"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": ["@pypi//tensorstore"],
+    "tensorstore": ["//:pypi_optional_tensorstore"],
     "torch": [],
-    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.14", "3.14-ft"]),
+    "tensorflow": ["//:pypi_optional_tensorflow"],
     "tpu_ops": [],
     # We're never going to need zstandard for 3.14+ because zstandard is now
     # in the Python stdlib.
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.14", "3.14-ft"]),
+    "zstandard": ["//:pypi_optional_zstandard"],
 }
 
 def all_py_deps(excluded = []):
@@ -160,21 +164,18 @@ def pytype_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
-    new_kwargs.pop("type_checking", None)
     _py_library(name = name, data = data, **new_kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
-    new_kwargs.pop("type_checking", None)
     _py_library(name = name, data = data, **new_kwargs)
 
 def py_library_providing_imports_info(*, name, lib_rule = _py_library, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     new_kwargs.pop("lazy_imports", None)
-    new_kwargs.pop("type_checking", None)
     lib_rule(name = name, data = data, **new_kwargs)
 
 def nanobind_extension(
@@ -189,10 +190,13 @@ def nanobind_extension(
         **kwargs):
     module_name_suffix = module_name or name
     if pytype_srcs == None:
-        pytype_srcs = native.glob([
-            module_name_suffix + ".pyi",
-            module_name_suffix + "/**/*.pyi",
-        ])
+        pytype_srcs = native.glob(
+            [
+                module_name_suffix + ".pyi",
+                module_name_suffix + "/**/*.pyi",
+            ],
+            allow_empty = True,
+        )
     _pybind_extension(name = name, module_name = module_name, data = data + pytype_srcs, **kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
@@ -235,7 +239,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_true": if_cuda_is_configured([
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/oneapi:gpu_only_test_deps",
+            "//jax_plugins:gpu_plugin_only_test_deps",
+        ]),
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
@@ -243,7 +250,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/tools:jax_oneapi_pjrt_py_import",
+            "//jaxlib/tools:jax_oneapi_plugin_py_import",
+        ]),
     })
 
 def _get_jax_test_deps(deps):
@@ -259,12 +269,12 @@ def _get_jax_test_deps(deps):
       If --//jax:build_jax=false, returns jax pypi wheel dep and transitive pypi test deps.
       If --//jax:build_jax=wheel, returns jax py_import dep and transitive pypi test deps.
     """
-    non_pypi_deps = [d for d in deps if not d.startswith("@pypi//")]
+    non_pypi_deps = [d for d in deps if not (d.startswith("@pypi//") or d.startswith("//:pypi_optional_"))]
 
     # A lot of tests don't have explicit dependencies on scipy, ml_dtypes, etc. But the tests
     # transitively depends on them via //jax. So we need to make sure that these dependencies are
     # included in the test when JAX is built from source.
-    pypi_deps = depset([d for d in deps if d.startswith("@pypi//")])
+    pypi_deps = depset([d for d in deps if d.startswith("@pypi//") or d.startswith("//:pypi_optional_")])
     pypi_deps = depset(py_deps([
         "ml_dtypes",
         "scipy",
@@ -399,7 +409,8 @@ def _get_full_wheel_name(
         platform_name,
         cpu_name,
         wheel_version,
-        py_freethreaded):
+        py_freethreaded,
+        accelerator = "none"):
     if no_abi or platform_independent:
         wheel_name_template = "{package_name}-{wheel_version}-py{major_python_version}-none-{wheel_platform_tag}.whl"
     else:
@@ -411,7 +422,7 @@ def _get_full_wheel_name(
         major_python_version = python_version[0],
         wheel_version = wheel_version,
         wheel_platform_tag = "any" if platform_independent else "_".join(
-            PLATFORM_TAGS_DICT[platform_name, cpu_name],
+            PLATFORM_TAGS_DICT[platform_name, cpu_name, accelerator],
         ),
         free_threaded_suffix = "t" if py_freethreaded.lower() == "yes" else "",
     )
@@ -421,6 +432,15 @@ def _get_source_package_name(package_name, wheel_version):
         package_name = package_name,
         wheel_version = wheel_version,
     )
+
+def _get_accelerator(attr):
+    if attr.enable_cuda:
+        return "cuda"
+    if attr.enable_rocm:
+        return "rocm"
+    if attr.enable_oneapi:
+        return "oneapi"
+    return "none"
 
 def _jax_wheel_impl(ctx):
     include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
@@ -475,6 +495,7 @@ def _jax_wheel_impl(ctx):
                 cpu_name = cpu,
                 wheel_version = full_wheel_version,
                 py_freethreaded = py_freethreaded,
+                accelerator = _get_accelerator(ctx.attr),
             )
             wheel_file = ctx.actions.declare_file(output_path +
                                                   "/" + wheel_name)
@@ -510,6 +531,9 @@ def _jax_wheel_impl(ctx):
         if ctx.attr.platform_version == "":
             fail("platform_version must be set to a valid rocm version for rocm wheels")
         args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+
+        # platform_version is major-only; wheel metadata needs the full version.
+        env["ROCM_VERSION"] = ROCM_FULL_VERSION
     if ctx.attr.enable_oneapi:
         args.add("--enable-oneapi", "True")
         if ctx.attr.platform_version == "":
@@ -653,7 +677,7 @@ def deploy_wheel(name, wheel):
         outs = [name + ".sh"],
         cmd = "echo '#!/bin/bash\ncp $(rootpath {wheel}) $$1' > $@".format(wheel = wheel),
     )
-    native.sh_binary(
+    sh_binary(
         name = name,
         srcs = [name + ".sh"],
         data = [wheel],
@@ -709,7 +733,6 @@ def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
     test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
-    kwargs.pop("type_checking", None)
     _py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):
@@ -782,6 +805,11 @@ def jax_multiprocess_test(
         config_tags_overrides = None,
         tags = [],
         main = None):
+    # For TPU, we dynamically derive:
+    #   num_processes = num_available_tpu_chips // tpu_chips_per_process
+    # based on the number of physical TPU chips detected on the host machine.
+    # This automatically matches the host's physical topology (e.g. 4 chips on
+    # v4/v5p, 8 chips on v5e/v6e) without hardcoding process counts.
     # TODO(emilyaf): Avoid hard-coding the number of processes and chips/gpus per process.
     multiprocess_backend_args = {
         "cpu": backend_variant_args.get("cpu", []) + [
@@ -792,7 +820,6 @@ def jax_multiprocess_test(
             "--gpus_per_process=2",
         ],
         "tpu": backend_variant_args.get("tpu", []) + [
-            "--num_processes=4",
             "--tpu_chips_per_process=1",
         ],
     }

@@ -16,6 +16,7 @@
 import numpy as np
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.ufuncs import arctan
 from jax._src.numpy.util import promote_args_inexact
@@ -255,10 +256,7 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.cauchy.ppf`
   """
   q, loc, scale = promote_args_inexact("cauchy.isf", q, loc, scale)
-  pi = _lax_const(q, np.pi)
-  half_pi = _lax_const(q, np.pi / 2)
-  unscaled = lax.tan(lax.sub(half_pi, lax.mul(pi, q)))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  return lax.neg(ppf(q, lax.neg(loc), scale))
 
 
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -287,7 +285,27 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.cauchy.isf`
   """
   q, loc, scale = promote_args_inexact("cauchy.ppf", q, loc, scale)
-  pi = _lax_const(q, np.pi)
-  half_pi = _lax_const(q, np.pi / 2)
-  unscaled = lax.tan(lax.sub(lax.mul(pi, q), half_pi))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  one = _lax_const(q, 1)
+  # ppf(q) = tan(pi * (q - 1/2)) = -1 / tan(pi * q) = 1 / tan(pi * (1 - q)).
+  # Using the last two forms for q < 1/2 and q > 1/2 respectively keeps the
+  # argument of tan near zero, which is accurate in both tails and gives -inf
+  # at q = 0 and inf at q = 1.
+  half = _lax_const(q, 0.5)
+  upper = q > 0.5
+  is_mid = q == 0.5
+  arg = jnp.where(
+    is_mid,
+    lax.sub(q, half),
+    jnp.where(upper, lax.sub(one, q), lax.abs(q)),
+  )
+  t = lax.tanpi(arg)
+  unscaled = jnp.where(
+    is_mid,
+    t,
+    lax.div(jnp.where(upper, one, -one), jnp.where(is_mid, one, t)),
+  )
+  return jnp.where(
+    (q < 0) | (q > 1),
+    np.nan,
+    lax.add(lax.mul(unscaled, scale), loc),
+  )

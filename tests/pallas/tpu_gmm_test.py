@@ -86,7 +86,7 @@ GROUPED_MATMUL_TESTS = (
 def random_dense(
     rng: np.random.RandomState,
     shape: tuple[int, ...],
-    dtype: jnp.dtype,
+    dtype: jax.typing.DTypeLike,
     limit: int | None = None,
 ) -> jnp.ndarray:
   if limit is None:
@@ -99,7 +99,7 @@ def dot(
     rhs: jnp.ndarray,
     transpose_lhs: bool = False,
     transpose_rhs: bool = False,
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
   lhs = jnp.transpose(lhs) if transpose_lhs else lhs
   rhs = jnp.transpose(rhs) if transpose_rhs else rhs
@@ -113,7 +113,7 @@ def reference_gmm(
     lhs: jnp.ndarray,
     rhs: jnp.ndarray,
     group_sizes: tuple[int, ...],
-    preferred_element_type: jnp.dtype = jnp.float32,
+    preferred_element_type: jax.typing.DTypeLike = jnp.float32,
 ) -> jnp.ndarray:
 
   start = 0
@@ -130,7 +130,9 @@ def reference_gmm(
   return jnp.concatenate(out, axis=0)
 
 def tolerances(
-    lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype, out_dtype: jnp.dtype
+    lhs_dtype: jax.typing.DTypeLike,
+    rhs_dtype: jax.typing.DTypeLike,
+    out_dtype: jax.typing.DTypeLike,
 ) -> tuple[float, float]:
   if (
       lhs_dtype == jnp.bfloat16

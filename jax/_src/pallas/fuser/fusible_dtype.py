@@ -15,7 +15,7 @@
 """Custom fusible dtypes."""
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
 import itertools as it
@@ -23,12 +23,14 @@ from typing import Any
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import shard_map
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
@@ -57,10 +59,23 @@ pack_dtype_p = core.Primitive("pack_dtype")
 def pack_dtype_abstract_eval(*xs, dtype):
   if dtypes.issubdtype(dtype, FusibleElementDType):
     return dtype.abstract_pack(*xs)
-  raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to pack non-fusion dtype: {dtype}")
 
 
 def pack(*xs, dtype):
+  """Packs physical component arrays into one array with fusion dtype `dtype`.
+
+  `pack` has no eager implementation or lowering; it must be used inside a
+  function that is physicalized, e.g. by `fuse` with `resolve_fusion_dtypes`.
+
+  Args:
+    *xs: Physical component arrays to pack.
+    dtype: Target `FusionDType` instance.
+
+  Returns:
+    An array with dtype `dtype`, whose abstract value is given by
+    `dtype.abstract_pack(*xs)`.
+  """
   return pack_dtype_p.bind(*xs, dtype=dtype)
 
 
@@ -72,12 +87,22 @@ unpack_dtype_p.multiple_results = True
 def unpack_dtype_abstract_eval(x):
   if dtypes.issubdtype(x.dtype, FusibleElementDType):
     return x.dtype.abstract_unpack(x)
-  elif isinstance(x.dtype, state.AbstractRef):
-    raise NotImplementedError()
-  raise ValueError("Attempted to unpack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to unpack non-fusion dtype: {x.dtype}")
 
 
 def unpack(x):
+  """Unpacks an array with a `FusionDType` into its constituent physical arrays.
+
+  Like `pack`, `unpack` has no eager implementation or lowering and must be
+  used inside a function that is physicalized.
+
+  Args:
+    x: An array whose dtype is a `FusionDType`.
+
+  Returns:
+    A tuple of physical component arrays unpacked from `x`, with abstract
+    values given by `x.dtype.abstract_unpack(x)`.
+  """
   return tuple(unpack_dtype_p.bind(x))
 
 
@@ -92,9 +117,16 @@ class FusibleTyRules:
 class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   """Base class for fusible extended dtypes."""
 
-  _op_registry = {}
+  # Per-subclass registry.
+  _op_registry: dict[core.Primitive, Callable[..., Any]] = {}
+
   _rules = FusibleTyRules
   type = FusibleElementDType
+
+  def __init_subclass__(cls, **kwargs):
+    super().__init_subclass__(**kwargs)
+
+    cls._op_registry = {}
 
   @abc.abstractmethod
   def abstract_unpack(self, x) -> Sequence[Any]:
@@ -108,6 +140,7 @@ class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   def register_op(cls, primitive):
     def _register_fn(fn):
       cls._op_registry[primitive] = fn
+      return fn
 
     return _register_fn
 
@@ -132,14 +165,35 @@ class FusionDType(dtypes.ExtendedDType, util.StrictABC):
     raise NotImplementedError()
 
 
-def physicalize(f):
+def physicalize(
+    f,
+    *,
+    static_argnums: int | Sequence[int] | None = None,
+    static_argnames: str | Iterable[str] | None = None,
+):
   """Runs a function that contains fusible extended dtypes."""
+  sig = api_util.fun_signature(f)
+  _, _, static_argnums_, static_argnames_ = api_util.resolve_argnums(
+      f,
+      sig,
+      donate_argnums=None,
+      donate_argnames=None,
+      static_argnums=static_argnums,
+      static_argnames=static_argnames,
+  )
 
   def wrapper(*args, **kwargs):
-    if kwargs:
-      raise NotImplementedError()
-    debug_info = api_util.debug_info("physicalize", f, args, kwargs)
-    args_ft = ft.flatten((args, kwargs))
+    debug_info = api_util.debug_info(
+        "physicalize",
+        f,
+        args,
+        kwargs,
+        static_argnums=static_argnums_,
+        static_argnames=static_argnames_,
+    )
+    args_ft = ft.flatten_static_argnums_argnames(
+        args, kwargs, static_argnums_, static_argnames_
+    )
     in_avals_ft = args_ft.map(core.typeof)
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
         f, in_avals_ft, debug_info
@@ -156,6 +210,8 @@ def physicalize(f):
 @util.weakref_lru_cache
 def physicalize_closed_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr
   fun = functools.partial(physicalize_interp, jaxpr, jaxpr.consts)
   in_avals = [_physical_aval(aval) for aval in jaxpr.in_avals]
   in_avals_ft = ft.flatten_args(*in_avals)
@@ -171,7 +227,7 @@ def _physical_aval(aval):
   if isinstance(aval, core.ShapedArray):
     if isinstance(aval.dtype, FusionDType):
       return aval.dtype.abstract_unpack(aval)
-    return core.ShapedArray(aval.shape, aval.dtype)
+    return aval
   if isinstance(aval, state.AbstractRef):
     if _is_fusion_type(aval):
       unpacked = aval.dtype.abstract_unpack(aval.inner_aval)
@@ -182,6 +238,8 @@ def _physical_aval(aval):
 
 def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr.with_consts(())
 
   def _flat_jaxpr_eval(consts, args):
     return physicalize_interp(jaxpr, consts, *args)
@@ -205,6 +263,11 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
 class Context:
   avals_in: Sequence[Any]
   avals_out: Sequence[Any]
+  physicalize_closed_jaxpr: Callable[[core.Jaxpr], core.Jaxpr] = (
+      physicalize_closed_jaxpr
+  )
+  physicalize_aval: Callable[[Any], Any] = _physical_aval
+  physicalize: Callable = physicalize
 
 
 def physicalize_interp(
@@ -267,6 +330,35 @@ def _is_fusion_type(aval: core.AbstractValue):
       and hasattr(aval, 'dtype')
       and isinstance(aval.dtype, FusionDType)
   )
+
+
+def _iter_hi_prim_jaxprs(prim: hijax.HiPrim):
+  for v in tree_util.tree_leaves(prim.params):
+    if isinstance(v, core.Jaxpr):
+      yield v
+    elif isinstance(v, hijax.HiPrim):
+      yield from _iter_hi_prim_jaxprs(v)
+    elif isinstance(jaxpr := getattr(v, 'jaxpr', None), core.Jaxpr):
+      yield jaxpr
+
+
+@util.weakref_lru_cache
+def has_fusion_dtypes(jaxpr: core.Jaxpr) -> bool:
+  """Returns whether jaxpr or any of its subjaxprs contains a ``FusionDType``."""
+  if any(_is_fusion_type(v.aval) for v in jaxpr.all_invars):
+    return True
+  for eqn in jaxpr.eqns:
+    if any(_is_fusion_type(v.aval) for v in eqn.outvars):
+      return True
+    if any(map(has_fusion_dtypes, core.jaxprs_in_params(eqn.params))):
+      return True
+    if eqn.primitive is hijax.call_hi_primitive_p:
+      prim = eqn.params.get('_prim')
+      if isinstance(prim, hijax.HiPrim) and any(
+          map(has_fusion_dtypes, _iter_hi_prim_jaxprs(prim))
+      ):
+        return True
+  return False
 
 
 def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):
@@ -342,9 +434,9 @@ def _physicalize_transform(f, *args):
 
 @lu.transformation2
 def _physicalize_transform_bwd(f, const_avals, *args):
-  return [custom_derivatives.Zero(a) for a in const_avals] + list(
-      physicalize(f)(*args)
-  )
+  # Pad the cotangents, not the logs `f` returns alongside them.
+  cts, logs = physicalize(f)(*args)
+  return [custom_derivatives.Zero(a) for a in const_avals] + list(cts), logs
 
 
 def _custom_vjp_call_physicalize_rule(
@@ -379,19 +471,6 @@ def _run_state_rule(ctx: Context, *args, jaxpr, which_linear, is_initialized):
 _physicalize_rules[state_discharge.run_state_p] = _run_state_rule
 
 
-def _core_map_rule(ctx: Context, *args, jaxpr, **params):
-  _assert_no_fusion_types(ctx.avals_in)
-  _assert_no_fusion_types(ctx.avals_out)
-  assert not jaxpr.invars
-  with core.extend_axis_env_nd(params["mesh"].shape.items()):
-    jaxpr = physicalize_jaxpr(jaxpr).with_consts(list(args))
-  assert not jaxpr.invars
-  return pallas_core.core_map_p.bind(*args, jaxpr=jaxpr, **params)
-
-
-_physicalize_rules[pallas_core.core_map_p] = _core_map_rule
-
-
 def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **params):
   _assert_no_fusion_types(ctx.avals_in)
   _assert_no_fusion_types(ctx.avals_out)
@@ -410,6 +489,64 @@ def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **param
 
 
 _physicalize_rules[mpmd.mpmd_map_p] = _mpmd_map_rule
+
+
+def _shard_map_rule(
+    ctx: Context,
+    *args,
+    jaxpr: core.Jaxpr,
+    mesh,
+    in_specs,
+    out_specs,
+    check_vma,
+    newly_manual_axes,
+    **params,
+):
+  def _expand(specs, avals):
+    expanded = []
+    for s, a in zip(specs, avals):
+      if not _is_fusion_type(a):
+        expanded.append(s)
+        continue
+      is_replicated = not any(s) and not s.unreduced and not s.reduced
+      for leaf in tree_util.tree_leaves(_physical_aval(a)):
+        if not is_replicated and leaf.shape != a.shape:
+          raise NotImplementedError(
+              f"shard_map over {a.dtype} with sharded spec {s} requires"
+              f" unpacked leaves to match logical shape {a.shape}, got"
+              f" {leaf.shape}."
+          )
+        expanded.append(jax.sharding.PartitionSpec() if is_replicated else s)
+    return tuple(expanded)
+
+  inner_mesh = shard_map._as_manual_mesh(mesh, newly_manual_axes)
+  with (
+      shard_map._extend_axis_env(mesh, newly_manual_axes),
+      shard_map.use_abstract_mesh(inner_mesh),
+      config._check_vma(check_vma),
+  ):
+    new_jaxpr = physicalize_closed_jaxpr(jaxpr)
+  bind_params = shard_map.shard_map_p.get_bind_params(
+      dict(
+          jaxpr=new_jaxpr,
+          mesh=mesh,
+          in_specs=_expand(in_specs, ctx.avals_in),
+          out_specs=_expand(out_specs, ctx.avals_out),
+          check_vma=check_vma,
+          newly_manual_axes=newly_manual_axes,
+          **params,
+      )
+  )
+  flat_outs = shard_map.shard_map_p.bind(
+      *tree_util.tree_leaves(args), **bind_params
+  )
+  out_tree = tree_util.tree_structure(
+      [_physical_aval(a) for a in ctx.avals_out]
+  )
+  return tree_util.tree_unflatten(out_tree, flat_outs)
+
+
+_physicalize_rules[shard_map.shard_map_p] = _shard_map_rule
 
 
 def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):
@@ -558,7 +695,6 @@ def _unpack_dtype_pull_rule(
 
 @block_spec.register_eval_rule(unpack_dtype_p)
 def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
-  assert ctx.avals_in is not None
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
@@ -574,3 +710,12 @@ def _call_hi_primitive_physicalize_rule(ctx, *args, _prim, **params):
 _physicalize_rules[hijax.call_hi_primitive_p] = (
     _call_hi_primitive_physicalize_rule
 )
+
+
+def _eval_jaxpr_rule(ctx: Context, *args, call_jaxpr, **params):
+  _assert_no_fusion_types(ctx.avals_out)
+  new_call_jaxpr = physicalize_closed_jaxpr(call_jaxpr)
+  return core.eval_jaxpr_p.bind(*args, call_jaxpr=new_call_jaxpr, **params)
+
+
+_physicalize_rules[core.eval_jaxpr_p] = _eval_jaxpr_rule

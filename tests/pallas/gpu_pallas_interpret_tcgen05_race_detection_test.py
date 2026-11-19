@@ -36,7 +36,6 @@ class WarpSpecializeHelper:
   Helper for making multi-threaded kernels generic over whether they're
   warp-specialized or not.
   """
-  WARP_AXIS_NAME = 'warp'
 
   def __init__(self, warp_specialize: bool):
     self.warp_specialize = warp_specialize
@@ -46,17 +45,13 @@ class WarpSpecializeHelper:
       raise ValueError(f'A warp only has 4 threads, but got {n}')
     return 1 if self.warp_specialize else n
 
-  def maybe_warp_specialize(self):
+  def maybe_warp_specialize(self, *, thread_name):
     if self.warp_specialize:
-      return pl.core_map(plgpu.WarpMesh(axis_name=self.WARP_AXIS_NAME))
+      return plgpu.warp_map
     else:
-      return pl.when(True)
-
-  def axis_index(self, axis_name):
-    if self.warp_specialize:
-      return jax.lax.axis_index(self.WARP_AXIS_NAME)
-    else:
-      return jax.lax.axis_index(axis_name)
+      def decorator(f):
+        f(jax.lax.axis_index(thread_name))
+      return decorator
 
 
 
@@ -65,6 +60,13 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    try:
+      # If an exception was thrown by a jitted computation during the
+      # previous test, we observe/consume exception here to avoid propagating
+      # it to the next test.
+      jax.effects_barrier()
+    except:
+      pass
     mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
 
     if not jtu.test_device_matches(['cpu']):
@@ -120,10 +122,13 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         first_op == 'load' and wait == 'wait_load_tmem'
     )
 
-    out = _kernel()
-    if correct and first_op == 'store':
-      self.assertArraysEqual(out, jnp.full(ACC_SHAPE, 42.0, jnp.float32))
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      out = _kernel()
+      if first_op == 'store':
+        self.assertArraysEqual(out, jnp.full(ACC_SHAPE, 42.0, jnp.float32))
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       commit=[False, True],
@@ -159,9 +164,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.barrier_wait(barrier_ref)
       out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
-    _kernel()
     correct = commit
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       commit=[False, True],
@@ -185,11 +193,13 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.commit_tmem()
       out_ref[...] = plgpu.async_load_tmem(tmem_ref)
 
-    out = _kernel()
     correct = commit
     if correct:
+      out = _kernel()
       self.assertArraysEqual(out, jnp.full(ACC_SHAPE, 2.0, jnp.float32))
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -221,9 +231,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         plgpu.tcgen05_commit_arrive(barrier_ref)
       plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   def test_tmem_load_write_is_synchronous(self):
     @functools.partial(
@@ -242,7 +255,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.wait_smem_to_gmem(0)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_overlapping_loads_do_not_race(self):
     # loads only read TMEM, so unordered overlapping loads are fine.
@@ -260,7 +272,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       out_ref[...] = a + b
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   # ----------------------------------------------------------------------
   # MMA completion (tcgen05.mma + tcgen05.commit)
@@ -308,9 +319,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       if not wait:
         plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = arrive != 'none' and wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   def test_mmas_on_same_accumulator_are_pipelined(self):
     @functools.partial(
@@ -331,7 +345,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       load_first=[False, True],
@@ -365,9 +378,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.tcgen05_commit_arrive(barrier2)
       plgpu.barrier_wait(barrier2)
 
-    _kernel()
     correct = load_first
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -396,9 +412,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       if not wait:
         plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -427,11 +446,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier0,
         thread_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           if use_barrier_in_mma:
             plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, thread_barrier, accumulate=False)
@@ -439,7 +457,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
             plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
             plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier0)
@@ -447,7 +465,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
           out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -479,25 +496,24 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier1,
         thread_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier0)
           plgpu.barrier_wait(mma_barrier0)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier1)
           plgpu.barrier_wait(mma_barrier1)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   # ----------------------------------------------------------------------
   # SMEM operands of MMAs and SMEM->TMEM copies (async proxy)
@@ -526,9 +542,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.barrier_wait(barrier_ref)
       out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
-    _kernel()
     correct = commit
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -562,9 +581,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       if not wait:
         plgpu.barrier_wait(mma_barrier)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -594,9 +616,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       if not wait:
         plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -625,9 +650,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         plgpu.tcgen05_commit_arrive(barrier_ref)
         plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   # ----------------------------------------------------------------------
   # SMEM->TMEM copies (tcgen05.cp) and pipelining
@@ -658,7 +686,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -686,9 +713,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         plgpu.tcgen05_commit_arrive(barrier_ref)
         plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       second_op=['store', 'copy'],
@@ -717,8 +747,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.tcgen05_commit_arrive(barrier_ref)
       plgpu.barrier_wait(barrier_ref)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       wait=[False, True],
@@ -751,9 +781,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       plgpu.tcgen05_commit_arrive(barrier2)
       plgpu.barrier_wait(barrier2)
 
-    _kernel()
     correct = wait
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   # ----------------------------------------------------------------------
   # Cross-thread synchronization
@@ -785,11 +818,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, tmem_ref, thread_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           if producer_op == 'store':
             plgpu.async_store_tmem(
@@ -803,7 +835,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
               plgpu.wait_load_tmem()
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           if consumer_waits:
@@ -819,9 +851,12 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
             )
             plgpu.commit_tmem()
 
-    _kernel()
     correct = producer_waits
-    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+    if correct:
+      _kernel()
+    else:
+      with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+        _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -856,18 +891,17 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier,
         producer_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_commit_arrive(producer_barrier)
           plgpu.barrier_wait(producer_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           # This produces a vacuous arrival, but does not observe completion of
@@ -876,8 +910,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
           plgpu.barrier_wait(mma_barrier)
           out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
-    _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      _kernel().block_until_ready()
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -905,16 +939,15 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         out_ref, acc_tmem, lhs_tmem, a_smem, b_smem, thread_barrier, mma_barrier
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.async_copy_smem_to_tmem(a_smem, lhs_tmem)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(
@@ -924,7 +957,6 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
           out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -947,23 +979,21 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, mma_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(
               acc_tmem, a_smem, b_smem, mma_barrier, accumulate=False
           )
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(mma_barrier)
           out_ref[...] = plgpu.async_load_tmem(acc_tmem)
 
     _kernel()
-    self.assertFalse(mosaic_interpret.get_races().races_found)
 
   # ----------------------------------------------------------------------
   # Barrier arrival aliasing
@@ -1000,14 +1030,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     # The interpreter may flag this bug either as a data race or as a barrier
     # phase-invariant violation (the second arrival can complete phase 1
     # before the wait observes phase 0).
-    try:
-      _kernel()
-      flagged = mosaic_interpret.get_races().races_found
-    except Exception as e:
-      if 'barrier' not in str(e).lower():
-        raise
-      flagged = True
-    self.assertTrue(flagged)
+    with self.assertRaisesRegex(Exception, r'RACE DETECTED|[bB]arrier'):
+      _kernel().block_until_ready()
 
   @jtu.parameterized.product(wait_on=[0, 1, 2])
   def test_can_commit_mma_to_multiple_barriers(self, wait_on):
@@ -1048,8 +1072,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     )
     result = _kernel(a, b)
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
 
   def test_can_deallocate_tmem_while_mma_active_on_different_tmem(self):
     @functools.partial(
@@ -1088,8 +1111,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     )
     result = _kernel(a, b)
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
 
   @jtu.parameterized.product(
       warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
@@ -1126,11 +1148,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_barrier,
         mma_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           a_smem[...] = a[...]
           plgpu.commit_smem()
@@ -1138,14 +1159,14 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
           a[...] = jnp.zeros(LHS_SHAPE, jnp.float16)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           acc_smem[...] = acc_init[...]
           plgpu.commit_smem()
           plgpu.async_copy_smem_to_tmem(acc_smem, acc_tmem)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 2)
+        @pl.when(warp_id == 2)
         def _():
           plgpu.barrier_wait(thread_barrier)
           b_smem[...] = b[...]
@@ -1161,10 +1182,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         jax.random.key(1), shape=RHS_SHAPE, dtype=jnp.float16
     )
     acc_init = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
-    result = _kernel(acc_init, a, b)
+    result = _kernel(acc_init, jax.new_ref(a), b)
     expected = acc_init + jnp.dot(a, b, preferred_element_type=jnp.float32)
-    np.testing.assert_allclose(result, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
 
   def test_can_pipeline_with_multiple_children(self):
     @functools.partial(
@@ -1226,8 +1246,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     expected = jnp.dot(a, b1, preferred_element_type=jnp.float32) + jnp.dot(
         a, b2, preferred_element_type=jnp.float32
     )
-    np.testing.assert_allclose(result, expected)
-    self.assertFalse(mosaic_interpret.get_races().races_found)
+    np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
 
 
 if __name__ == '__main__':

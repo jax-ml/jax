@@ -58,6 +58,11 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 permissions: {}
 
 env:
@@ -71,8 +76,7 @@ jobs:
       run:
         shell: bash
     runs-on: ${{ inputs.runner }}
-    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
 
     env:
@@ -82,8 +86,9 @@ jobs:
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX CPU wheels
         uses: ./.github/actions/download-jax-cpu-wheels

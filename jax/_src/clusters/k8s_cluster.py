@@ -109,7 +109,7 @@ class K8sCluster(clusters.ClusterEnv):
           "dedicated service account with the permission and associated with "
           "the job. For an example on setting up the service account, see the "
           "example/k8s directory in the JAX repo. For more details, please refer to "
-          "https://docs.jax.dev/en/latest/multi_process.html#kubernetes-example",
+          "https://docs.jax.dev/en/latest/501/multiprocess.html#kubernetes-example",
           width=80
         ))
       raise RuntimeError('\n'.join(err_msg)) from e

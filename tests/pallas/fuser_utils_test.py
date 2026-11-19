@@ -17,6 +17,7 @@ import jax
 from jax import shard_map
 from jax._src import config
 from jax._src import test_util as jtu
+from jax.experimental import pallas as pl
 from jax._src.pallas.fuser import fuser_utils
 import jax.numpy as jnp
 from jax.sharding import Mesh
@@ -69,6 +70,18 @@ class FuserUtilsTest(jtu.JaxTestCase):
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+
+  def test_dead_code_identity(self):
+    def func1(x):
+      _ = jnp.sin(x)
+      return x * 2.0
+
+    def func2(x):
+      return x * 2.0
+
+    jaxpr1 = jax.make_jaxpr(func1)(1.0)
+    jaxpr2 = jax.make_jaxpr(func2)(1.0)
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_vmap_topo_identity(self):
     def func1(x, y):
@@ -241,17 +254,18 @@ class FuserUtilsTest(jtu.JaxTestCase):
     self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_embedded_constant_identity(self):
-    c_arr = jnp.array([1.0, 2.0])
+    c_np = np.array([1.0, 2.0], dtype=np.float32)
+    c_jax = jnp.array([3.0, 4.0], dtype=jnp.float32)
 
     def func1(x, y):
       a = x * 2.0  # scalar const
-      b = y + c_arr  # array const
-      return a + b
+      b = y + c_np  # array const
+      return a + b + c_jax
 
     def func2(x, y):
-      b = y + c_arr
+      b = y + c_np
       a = x * 2.0
-      return a + b
+      return a + b + c_jax
 
     jaxpr1 = jax.make_jaxpr(func1)(jnp.ones(2), jnp.ones(2))
     jaxpr2 = jax.make_jaxpr(func2)(jnp.ones(2), jnp.ones(2))
@@ -259,16 +273,16 @@ class FuserUtilsTest(jtu.JaxTestCase):
     self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_embedded_constant_nonidentity(self):
-    c_arr1 = jnp.array([1.0, 2.0])
-    c_arr2 = jnp.array([1.0, 3.0])
+    c_np1 = np.array([1.0, 2.0], dtype=np.float32)
+    c_np2 = np.array([1.0, 3.0], dtype=np.float32)
 
     def func1(x, y):
       a = x * 2.0
-      b = y + c_arr1
+      b = y + c_np1
       return a + b
 
     def func2(x, y):
-      b = y + c_arr2
+      b = y + c_np2
       a = x * 2.0
       return a + b
 
@@ -276,7 +290,13 @@ class FuserUtilsTest(jtu.JaxTestCase):
     jaxpr2 = jax.make_jaxpr(func2)(jnp.ones(2), jnp.ones(2))
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
-  def test_ref_effects_topo_identity(self):
+    c_jax1 = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    c_jax2 = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    jaxpr3 = jax.make_jaxpr(lambda x: x + c_jax1)(jnp.ones(2))
+    jaxpr4 = jax.make_jaxpr(lambda x: x + c_jax2)(jnp.ones(2))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr3, jaxpr4))
+
+  def test_ref_effects_topo_nonidentity(self):
     def func1(x, y):
       ref1 = jax.new_ref(x)
       ref2 = jax.new_ref(y)
@@ -296,9 +316,10 @@ class FuserUtilsTest(jtu.JaxTestCase):
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
+    jaxpr1_copy = jax.make_jaxpr(lambda x, y: func1(x, y))(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1))
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1_copy))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_ref_effects_nonidentity(self):
     def func1(x, y):
@@ -315,15 +336,15 @@ class FuserUtilsTest(jtu.JaxTestCase):
       ref2 = jax.new_ref(y)
       jax.ref.set(ref1, (), y + 1.0)
       jax.ref.set(ref2, (), x * 2.0)
-      b = jax.ref.get(ref1, ())
-      a = jax.ref.get(ref2, ())
+      a = jax.ref.get(ref1, ())
+      b = jax.ref.get(ref2, ())
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
-  def test_ref_effects_outside_topo_identity(self):
+  def test_ref_effects_outside_topo_nonidentity(self):
     ref1 = jax.new_ref(1.0)
     ref2 = jax.new_ref(1.0)
 
@@ -342,9 +363,10 @@ class FuserUtilsTest(jtu.JaxTestCase):
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
+    jaxpr1_copy = jax.make_jaxpr(lambda x, y: func1(x, y))(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1))
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1_copy))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_ref_effects_outside_nonidentity(self):
     ref1 = jax.new_ref(1.0)
@@ -360,13 +382,42 @@ class FuserUtilsTest(jtu.JaxTestCase):
     def func2(x, y):
       jax.ref.set(ref1, (), y + 1.0)
       jax.ref.set(ref2, (), x * 2.0)
-      b = jax.ref.get(ref1, ())
-      a = jax.ref.get(ref2, ())
+      a = jax.ref.get(ref1, ())
+      b = jax.ref.get(ref2, ())
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+
+  def test_filter_no_block_specs(self):
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.no_block_spec
+    v1 = np.ones((128, 128), dtype=np.float32)
+    v2 = np.ones((128, 128), dtype=np.float32)
+
+    (filtered_v, filtered_bs) = fuser_utils.filter_no_block_specs(
+        (v1, v2), (bs1, bs2)
+    )
+    self.assertIs(filtered_v[0], v1)
+    self.assertIsNone(filtered_v[1])
+    self.assertEqual(filtered_bs[0], bs1)
+    self.assertIsNone(filtered_bs[1])
+
+  def test_block_spec_with_prefetch(self):
+    bs = pl.BlockSpec((128, 128), lambda i, j, sp: (i + sp, j))
+    sp_ref = 10
+    wrapped_bs = fuser_utils.block_spec_with_prefetch(bs, (sp_ref,))
+    self.assertEqual(wrapped_bs.index_map(2, 3), (12, 3))
+
+    # Handles no_block_spec and None gracefully
+    self.assertIs(
+        fuser_utils.block_spec_with_prefetch(pl.no_block_spec, (sp_ref,)),
+        pl.no_block_spec,
+    )
+    self.assertIsNone(
+        fuser_utils.block_spec_with_prefetch(None, (sp_ref,))
+    )
 
 
 if __name__ == '__main__':

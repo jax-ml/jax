@@ -45,7 +45,8 @@ except ImportError:
 class Cupti:
   """CUPTI-based profiler."""
 
-  # If `True`, detach CUPTI from the process after measurement.
+  # Both API versions unsubscribe Mosaic's subscriber after measurement. When
+  # `True`, V1 also detaches global CUPTI state; V2 never finalizes globally.
   finalize: bool = True
 
   def measure(
@@ -157,10 +158,12 @@ def measure(
   Notes:
     `CUPTI (CUDA Profiling Tools Interface)
     <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy profiling
-    API used by Nsight Systems and Nsight Compute. The CUPTI API only allows a
-    single subscriber, so ``measure`` cannot be used with other CUPTI-based
-    tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
-    Compute.
+    API used by Nsight Systems and Nsight Compute. On CUPTI 13.3+ with the
+    complete V2 API surface, ``measure`` uses per-subscriber APIs and can
+    coexist with JAX profiling. On older or partial CUPTI runtimes, it falls
+    back to the legacy APIs. The legacy CUPTI API only allows a single
+    subscriber, so ``measure`` cannot be used with other CUPTI-based tools
+    like Nsight Systems, or Nsight Compute.
   """  # fmt: skip
   if iterations < 1:
     raise ValueError(f"{iterations=} must be positive")
@@ -235,7 +238,7 @@ class ProfilerSpec:
 
   def smem_i32_elements(self, block: tuple[int, ...]):
     num_traces = self._num_traces((), block)
-    return int(num_traces * self.entries_per_warpgroup)
+    return num_traces * self.entries_per_warpgroup
 
   def smem_bytes(self, block: tuple[int, ...]):
     bytes_per_entry = 4

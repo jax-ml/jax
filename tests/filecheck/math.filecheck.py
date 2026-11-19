@@ -75,11 +75,6 @@ def main(_):
   # CHECK-SAME: tensor<f64>
   print_ir(np.float64(1), np.float64(2))(lax.atan2)
 
-  # CHECK-LABEL: TEST: bessel_i1e float32[]
-  # CHECK: chlo.bessel_i1e
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0))(lax.bessel_i1e)
-
   # CHECK-LABEL: TEST: bitcast_convert_type uint32[7]
   # CHECK: hlo.bitcast_convert
   # CHECK-SAME: tensor<7xui32>
@@ -176,11 +171,6 @@ def main(_):
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.cosh)
 
-  # CHECK-LABEL: TEST: digamma float32[]
-  # CHECK: chlo.digamma
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0))(lax.digamma)
-
   # CHECK-LABEL: TEST: div float32[] float32[]
   # CHECK: hlo.div
   # CHECK-SAME: tensor<f32>
@@ -216,12 +206,15 @@ def main(_):
   print_ir(np.float32(0))(lax.erf)
 
   # CHECK-LABEL: TEST: erfc float32[]
-  # CHECK: chlo.erfc
+  # CHECK-DAG: hlo.abs
+  # CHECK-DAG: hlo.exponential
+  # CHECK-DAG: hlo.divide
+  # CHECK-DAG: hlo.select
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erfc)
 
   # CHECK-LABEL: TEST: erf_inv float32[]
-  # CHECK: chlo.erf_inv
+  # CHECK: hlo.abs
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erf_inv)
 
@@ -273,11 +266,6 @@ def main(_):
   # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.le)
-
-  # CHECK-LABEL: TEST: lgamma float32[]
-  # CHECK: chlo.lgamma
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0))(lax.lgamma)
 
   # CHECK-LABEL: TEST: log float32[]
   # CHECK: hlo.log

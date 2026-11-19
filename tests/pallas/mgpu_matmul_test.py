@@ -79,6 +79,31 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
     out_ref = a @ b
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
 
+  def test_blackwell_matmul_collective(self):
+    self.skip_unless_tcgen05()
+    # 4096 x 4096 with 256 x 256 cluster tiles is 256 work items: more than the
+    # number of resident 2-CTA clusters, so every cluster processes several
+    # tiles and both CTAs must fetch each new tile together.
+    m, n, k = 4096, 4096, 1024
+    dtype = jnp.float16
+    k1, k2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.normal(k1, (m, k), dtype)
+    b = jax.random.normal(k2, (k, n), dtype)
+
+    out = blackwell_matmul_mgpu.matmul_kernel(
+        a,
+        b,
+        blackwell_matmul_mgpu.TuningConfig(
+            tile_m=128,
+            tile_n=128,
+            tile_k=64,
+            max_concurrent_steps=4,
+            collective=True,
+        ),
+    )
+    out_ref = a @ b
+    np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+
 
 @jtu.with_config(jax_traceback_filtering="off")
 class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):

@@ -771,6 +771,72 @@ class SplashAttentionTest(PallasBaseTest):
     if use_sinks:
       self._assert_allclose(dsinks, dsinks_ref, atol=5e-3, rtol=3e-2)
 
+  @parameterized.parameters(jnp.bfloat16, jnp.float32)
+  def test_splash_attention_sinks_bwd_precision(self, sinks_dtype):
+    num_heads, seq_len, head_dim = 4, 1024, 128
+    k1, k2, k3, k4, k5 = random.split(random.key(0), 5)
+    q = random.normal(
+        k1, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16
+    ) / np.sqrt(head_dim).astype(jnp.bfloat16)
+    k = random.normal(k2, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.normal(
+        k3, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16
+    ) * np.sqrt(seq_len).astype(jnp.bfloat16)
+    sinks = random.normal(k4, (num_heads,), dtype=sinks_dtype)
+    do = random.normal(k5, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+
+    mask = mask_lib.MultiHeadMask(
+        tuple(mask_lib.FullMask((seq_len, seq_len)) for _ in range(num_heads))
+    )
+    attn_ref = splash.make_masked_mha_reference(mask)
+    _, attn_ref_vjp = jax.vjp(
+        attn_ref,
+        q.astype(jnp.float32),
+        k.astype(jnp.float32),
+        v.astype(jnp.float32),
+        None,
+        sinks.astype(jnp.float32),
+    )
+    *_, dsinks_ref = jax.device_get(attn_ref_vjp(do.astype(jnp.float32)))
+
+    attn_custom = splash.make_masked_mha_reference(mask, backward_impl="custom")
+    _, attn_custom_vjp = jax.vjp(attn_custom, q, k, v, None, sinks)
+    *_, dsinks_custom = jax.device_get(attn_custom_vjp(do.astype(jnp.float32)))
+    self.assertEqual(dsinks_custom.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks_custom, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+
+    attn_fwd = splash.make_splash_mha_single_device(
+        mask, save_residuals=True, interpret=self.INTERPRET
+    )
+    o, (logsumexp,) = attn_fwd(q, k, v, None, sinks)
+    bwd = jax.vmap(
+        partial(
+            splash._attention_reference_custom_bwd,
+            splash.DEFAULT_MASK_VALUE,
+            False,
+            "flash",
+            None,
+        )
+    )
+    *_, dsinks_ref_bwd = jax.device_get(
+        bwd((jnp.array(mask[:, :, :]), q, k, v, None, sinks, o, logsumexp), do)
+    )
+    self.assertEqual(dsinks_ref_bwd.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks_ref_bwd, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+
+    attn = splash.make_splash_mha_single_device(mask, interpret=self.INTERPRET)
+    _, attn_vjp = jax.vjp(attn, q, k, v, None, sinks)
+    *_, dsinks = jax.device_get(attn_vjp(do))
+    self.assertEqual(dsinks.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+    self._assert_allclose(dsinks, dsinks_ref_bwd, atol=1e-5, rtol=1e-5)
+
   def test_grid_shrinking(self):
     """Make sure that grid shrinking does not change the attention output."""
 

@@ -19,6 +19,8 @@ jupyter:
 
 # Software Pipelining
 
+<!--* freshness: { reviewed: '2026-10-27' } *-->
+
 Software pipelining is an important technique in performance optimization by overlapping multiple asynchronous operations even if there are data dependencies between them. In the context of kernel writing, the most common form of pipelining involves overlapping communication and memory transfers with compute such that the hardware accelerator never stalls while waiting for data to arrive. Therefore, we will solely focus on the problem of communication-compute pipelining in this tutorial. We will begin by covering the problem conceptually, outlining the Pallas API for writing pipelines, and going over some realistic examples using the API.
 
 This tutorial only covers the conceptual foundations of pipelining. For platform-specific references, please see {ref}`pallas_tpu_pipelining`, or {ref}`pallas_mgpu_pipelining`.
@@ -36,7 +38,7 @@ import numpy as np
 ## Memory Hierarchies
 
 The first step in understanding pipelining conceptually involves understanding the different forms of memory available and the tradeoffs between them. Most hardware architectures (including CPUs, GPUs, and TPUs) utilize a wide variety of memory spaces that tradeoff capacity vs latency/bandwidth. For the purpose of Pallas, we are typically interested in registers, SRAM, DRAM, and potentially network communication:
-- **Registers** are the the memory physically closest to the processor, and typically values must be loaded directly into registers before doing any compute on them.
+- **Registers** are the memory physically closest to the processor, and typically values must be loaded directly into registers before doing any compute on them.
 - **SRAM** (also known as Shared Memory/L1 and L2 cache on GPUs, or VMEM on TPUs) also lives fairly close to the processor, but has larger capacity than registers.
 SRAM on modern ML accelerators typically range in the 10-100MB range (TPU v5p contains 96MB of VMEM, and H100 GPUs contain ~30MB of L1 cache and 50MB of L2).
 It's reasonable to expect the latency to access SRAM to be on the order of 10x longer than accessing a register.
@@ -321,7 +323,7 @@ Now that we've seen how to manually implement a pipelined loop, let's look into 
 <!-- #region id="niMr39cPkJ2m" -->
 ## Pallas Pipelining API
 
-Pallas offers a pipelining API that abstracts away the boilerplate of maintaining multiple buffers and overlapping asynchronous communication with computation. The basics of this API are covered in {ref}`pallas_quickstart`, so we will go over the API briefly here for completeness and discuss some sharp edges that arise from the use of pipelining.
+Pallas offers a pipelining API that abstracts away the boilerplate of maintaining multiple buffers and overlapping asynchronous communication with computation. The basics of this API are covered in {ref}`pallas_grids_and_blockspecs`, so we will go over the API briefly here for completeness and discuss some sharp edges that arise from the use of pipelining.
 
 
 ### Grid
@@ -596,5 +598,5 @@ If the bottleneck is specifically the latency and not the bandwidth, it is possi
 <!-- #endregion -->
 
 <!-- #region id="ar4NVxxFfKEb" -->
-Pallas on TPU only supports double-buffering, as TPU programs can operate on larger block sizes and double-buffering is typically enough to cover the latency. On GPU, the number of pipeline stages can be specified in both the Triton (via `CompilerParams`) and Mosaic GPU backends (via argument to the pipeline emitter). See the platform-specific pipelining documentation for more details.
+Pallas on TPU only supports double-buffering, as TPU programs can operate on larger block sizes and double-buffering is typically enough to cover the latency. On GPU, the number of pipeline stages can be specified in the Mosaic GPU backend (via argument to the pipeline emitter). See the platform-specific pipelining documentation for more details.
 <!-- #endregion -->

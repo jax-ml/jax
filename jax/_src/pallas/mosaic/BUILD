@@ -29,15 +29,13 @@ pytype_strict_library(
         "__init__.py",
         "core.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
-        "//jax/_src:deprecations",
-        "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
-        "//jax/_src:partial_eval",
+        "//jax/_src:pretty_printer",
         "//jax/_src:tpu_custom_call",
         "//jax/_src:tree_util",
         "//jax/_src:util",
@@ -48,7 +46,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax/_src:compiler",
         "//jax/_src:traceback_util",
@@ -59,16 +56,19 @@ pytype_strict_library(
 pytype_library(
     name = "primitives",
     srcs = ["primitives.py"],
-    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/primitives"),
     deps = [
         ":core",
         "//jax",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:dtypes",
+        "//jax/_src:effects",
         "//jax/_src:flattree",
+        "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:pretty_printer",
+        "//jax/_src:random",
         "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
@@ -79,11 +79,11 @@ pytype_library(
 pytype_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":helpers",
         ":lowering",
+        ":primitives",
         ":sc_core",
         ":sc_lowering",
         ":tpu_info",
@@ -100,6 +100,7 @@ pytype_library(
         "//jax/_src:source_info_util",
         "//jax/_src:tpu_custom_call",
         "//jax/_src:tree_util",
+        "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jax/experimental:mosaic",
@@ -109,7 +110,6 @@ pytype_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas/mosaic/lowering"),
@@ -139,11 +139,13 @@ pytype_strict_library(
         "//jax/_src:random",
         "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
+        "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:custom_fusion",
         "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
@@ -153,7 +155,6 @@ pytype_strict_library(
     srcs = [
         "sc_lowering.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//visibility:private"],
     deps = [
         ":core",
@@ -178,13 +179,14 @@ pytype_strict_library(
     srcs = [
         "sc_core.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
         ":tpu_info",
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:pretty_printer",
+        "//jax/_src:state_types",
         "//jax/_src:tree_util",
         "//jax/_src/pallas",
     ],
@@ -195,15 +197,16 @@ pytype_strict_library(
     srcs = [
         "sc_primitives.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
+        ":primitives",
         ":sc_core",
         ":sc_lowering",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:flattree",
@@ -218,7 +221,6 @@ pytype_strict_library(
 pytype_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":helpers",
@@ -230,6 +232,7 @@ pytype_library(
         "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:fusible_dtype",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
@@ -238,7 +241,6 @@ pytype_library(
 pytype_library(
     name = "random",
     srcs = ["random.py"],
-    type_checking = "pyrefly",
     deps = [
         ":primitives",
         "//jax",
@@ -250,7 +252,6 @@ pytype_library(
 pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":primitives",
@@ -262,9 +263,23 @@ pytype_strict_library(
 pytype_strict_library(
     name = "tpu_info",
     srcs = ["tpu_info.py"],
-    type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/tpu_info"),
     deps = [
         "//jax/_src:api",
+    ],
+)
+
+pytype_library(
+    name = "prefetch",
+    srcs = ["prefetch.py"],
+    deps = [
+        ":core",
+        ":helpers",
+        ":pipeline",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
     ],
 )

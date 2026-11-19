@@ -229,8 +229,11 @@ class GkeTpuCluster(BaseTpuCluster):
       if not running_in_cloud_tpu_vm:
         logger.debug("Did not detect cloud TPU VM")
       else:
-        logger.debug("Did not detect TPU GKE cluster since neither "
-                     "TPU_PROCESS_ADDRESSES nor TPU_WORKER_HOSTNAMES is set.")
+        logger.debug(
+            'Did not detect TPU GKE cluster since none of '
+            'TPU_PROCESS_ADDRESSES_PATH, TPU_PROCESS_ADDRESSES, or '
+            'TPU_WORKER_HOSTNAMES is set.'
+        )
       return False
 
   @staticmethod
@@ -239,12 +242,28 @@ class GkeTpuCluster(BaseTpuCluster):
 
   @staticmethod
   def _get_worker_host_names_env_var() -> str | None:
-    """
-    Retrieves the list of worker hostnames from environment variables.
+    """Retrieves the list of worker hostnames from environment variables or file.
 
-    Checks 'TPU_PROCESS_ADDRESSES' first, then 'TPU_WORKER_HOSTNAMES'.
-    Returns None if neither environment variable is set.
+    Checks 'TPU_PROCESS_ADDRESSES_PATH' first (and reads the file), then
+    'TPU_PROCESS_ADDRESSES', and finally 'TPU_WORKER_HOSTNAMES'.
+    Returns None if none of the environment variables are set.
     """
+    process_addresses_path = os.environ.get('TPU_PROCESS_ADDRESSES_PATH', None)
+    if process_addresses_path:
+      try:
+        with open(process_addresses_path, 'r', encoding='utf-8') as f:
+          content = f.read().strip()
+      except OSError as e:
+        raise RuntimeError(
+            'Failed to read TPU process addresses file'
+            f' {process_addresses_path}: {e}'
+        ) from e
+      if not content:
+        raise ValueError(
+            f'TPU process addresses file is empty: {process_addresses_path}'
+        )
+      return content
+
     worker_hostnames = os.environ.get('TPU_PROCESS_ADDRESSES', None)
     if worker_hostnames is not None:
       return worker_hostnames

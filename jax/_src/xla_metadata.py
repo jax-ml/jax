@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Mapping
+import contextlib
 from functools import partial, wraps
 from typing import Any
 
@@ -95,6 +96,16 @@ class XlaMetadataContextManager:
     return _XlaMetadataWrapper(f, self)
 
 
+@contextlib.contextmanager
+def clear_xla_metadata():
+  """Internal context manager to temporarily clear ambient XLA metadata."""
+  prev = config.xla_metadata_context_manager.swap_local(None)
+  try:
+    yield
+  finally:
+    config.xla_metadata_context_manager.set_local(prev)
+
+
 def set_xla_metadata(x=None, **kwargs):
   if x is None:
     return XlaMetadataContextManager(kwargs)
@@ -118,6 +129,19 @@ xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
 ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
+xla_metadata_value_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+
+def _xla_metadata_value_to_lojax(hi_x, *, xla_metadata_kvs):
+  aval = core.typeof(hi_x)
+  lo_outs = [
+      xla_metadata_value_p.bind(lo_x, xla_metadata_kvs=xla_metadata_kvs)
+      for lo_x in aval.lower_val(hi_x)
+  ]
+  return aval.raise_val(*lo_outs)
+
+
+xla_metadata_value_p.to_lojax = _xla_metadata_value_to_lojax  # type: ignore
 
 
 def _xla_metadata_value_lowering_rule(
@@ -133,15 +157,18 @@ def _xla_metadata_value_lowering_rule(
 # If we leave `cacheable=True`, when we are in the lowering rule, the `val.owner`
 # becomes a cached `FuncOp`. FuncOp.owners are Blocks, which we can't tag.
 mlir.register_lowering(
-    xla_metadata_value_p, _xla_metadata_value_lowering_rule, cacheable=False
+    xla_metadata_value_p,
+    _xla_metadata_value_lowering_rule,
+    cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None,
 )
 
 
 def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
-  op = value_mlir.owner
+  op = mlir._get_owner(value_mlir)  # pylint: disable=protected-access
   if op is None or isinstance(op, ir.Block):
     return None
-  return op.operation
+  return op
 
 
 def _attach_xla_metadata_to_op(
@@ -288,13 +315,14 @@ def _xla_metadata_call(fun, metadata, ad_metadata):
 
 xla_metadata_call_p = core.Primitive('xla_metadata_call')
 xla_metadata_call_p.multiple_results = True
+xla_metadata_call_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 dispatch.simple_impl(xla_metadata_call_p)
 
 
 def _xla_metadata_call_abstract_eval(*in_avals, jaxpr, xla_metadata,
                                      ad_metadata):
-  return jaxpr.out_avals
-xla_metadata_call_p.def_abstract_eval(_xla_metadata_call_abstract_eval)
+  return jaxpr.out_avals, core.positional_effects(jaxpr)
+xla_metadata_call_p.def_effectful_abstract_eval(_xla_metadata_call_abstract_eval)
 
 
 def _resolve_ad_metadata(xla_metadata, ad_metadata):
@@ -329,7 +357,9 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, xla_metadata, ad_metadata):
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
   return out_nodes
-mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
+mlir.register_lowering(
+    xla_metadata_call_p, _xla_metadata_call_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _xla_metadata_call_batcher(axis_data, vals_in, dims_in, *, jaxpr,
@@ -390,10 +420,10 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
             == len(tangent_jaxpr.invars)), (
         len(residuals), len(tangents_nz), len(sres_flat),
         len(tangent_jaxpr.invars))
-    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz, *sres_flat,
-                                       jaxpr=tangent_jaxpr,
-                                       xla_metadata=tangent_metadata,
-                                       ad_metadata='same')
+    prim = ad.vjp_node(xla_metadata_call_p) if is_vjp else xla_metadata_call_p
+    nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
+                        jaxpr=tangent_jaxpr, xla_metadata=tangent_metadata,
+                        ad_metadata='same')
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(nzs_out, tangent_avals_out)]
@@ -486,21 +516,24 @@ pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = partial(
 )
 
 
-def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], live_ins: list[bool],
+                                eqn: pe.JaxprEqn
                                 ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
-  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
+  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[xla_metadata_call_p] = dce_jaxpr_xla_metadata_rule

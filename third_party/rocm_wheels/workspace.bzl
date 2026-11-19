@@ -18,15 +18,17 @@ Queries the GitHub Releases API on ROCm/rocm-jax to find wheels matching the
 current jaxlib version, Python version, and ROCm version, then exposes them
 as py_import targets.
 
-Usage in WORKSPACE (after @jax_wheel and @python_version_repo are initialized):
+Usage in MODULE.bazel:
 
-    load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
-    load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+    rocm_wheels_repository = use_repo_rule(
+        "//third_party/rocm_wheels:workspace.bzl",
+        "rocm_wheels_repository",
+    )
 
     rocm_wheels_repository(
         name = "rocm_wheels",
-        jaxlib_version = WHEEL_VERSION,
-        python_version = HERMETIC_PYTHON_VERSION,
+        jaxlib_version = JAXLIB_VERSION,
+        python_version = DEFAULT_PYTHON_VERSION,
     )
 
 Then reference the targets as:

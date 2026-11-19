@@ -94,7 +94,7 @@ class SideEffectsTest(jtu.JaxTestCase):
 
     # PURE kernels should be DCE'd.
     shlo_pure, hlo_pure = get_compiled_hlo(pltpu.SideEffectType.PURE)
-    self.assertIn("custom_call", shlo_pure)
+    self.assertNotIn("custom_call", shlo_pure)
     self.assertNotIn("custom-call", hlo_pure)
 
     # SIDE_EFFECTING kernels should NOT be DCE'd.
@@ -110,8 +110,7 @@ class SideEffectsTest(jtu.JaxTestCase):
     shlo_dataflow, hlo_dataflow = get_compiled_hlo(
         pltpu.SideEffectType.DATAFLOW_SIDE_EFFECTING
     )
-    self.assertIn("custom_call", shlo_dataflow)
-    self.assertIn("has_side_effect = true", shlo_dataflow)
+    self.assertNotIn("custom_call", shlo_dataflow)
     self.assertNotIn("custom-call", hlo_dataflow)
 
 

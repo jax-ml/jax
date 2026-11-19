@@ -19,7 +19,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact, ensure_arraylike
-from jax._src.scipy.special import xlogy, entr, gammaln, gammaincc
+from jax._src.scipy.special import xlogy, gammaln, gammaincc
 from jax._src.typing import Array, ArrayLike
 
 
@@ -54,7 +54,7 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
   return jnp.where(jnp.logical_or(lax.lt(x, zero),
-                                  lax.ne(jnp.round(k), k)), -np.inf, log_probs)
+                                  lax.ne(jnp.round(x), x)), -np.inf, log_probs)
 
 
 def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
@@ -161,9 +161,9 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   Examples:
     >>> from jax.scipy.stats import poisson
     >>> poisson.entropy(5.0)
-    Array(2.204394, dtype=float32)
+    Array(2.2043955, dtype=float32)
     >>> poisson.entropy(jax.numpy.array([1, 10, 100]))
-    Array([1.3048419, 2.561407 , 3.7206903], dtype=float32)
+    Array([1.304842 , 2.5614107, 3.7206903], dtype=float32)
 
   See Also:
     - :func:`jax.scipy.stats.poisson.cdf`
@@ -183,6 +183,12 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
 
   mu_flat = jnp.ravel(promoted_mu)
   zero_result = jnp.zeros_like(mu_flat)
+  # Restrict each branch's input to its own regime so unselected branches
+  # cannot produce inf/NaN gradients (e.g. at mu == 0, or in _entropy_large_mu
+  # for very small float32 mu).
+  small_mu = jnp.where((mu_flat == 0) | (mu_flat >= 10), 1, mu_flat)
+  medium_mu = jnp.where((mu_flat < 10) | (mu_flat >= 100), 10, mu_flat)
+  large_mu = jnp.where(mu_flat < 100, 100, mu_flat)
 
 
   # Choose the computation regime based on mu value
@@ -191,11 +197,11 @@ def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
     zero_result,
     jnp.where(
       mu_flat < 10,
-      _entropy_small_mu(mu_flat),
+      _entropy_small_mu(small_mu),
       jnp.where(
         mu_flat < 100,
-        _entropy_medium_mu(mu_flat),
-        _entropy_large_mu(mu_flat)
+        _entropy_medium_mu(medium_mu),
+        _entropy_large_mu(large_mu)
       )
     )
   )
@@ -212,14 +218,17 @@ def _entropy_small_mu(mu: Array) -> Array:
   max_k = 35
 
   k = jnp.arange(max_k, dtype=mu.dtype)[:, None]
-  probs = pmf(k, mu, 0)
+  # Compute -p*log(p) from logpmf rather than as entr(pmf): the derivative of
+  # entr is infinite where the pmf underflows to zero, which leads to NaN
+  # gradients (https://github.com/jax-ml/jax/issues/40969).
+  log_probs = logpmf(k, mu, 0)
 
   # Mask: only compute up to mu + 20 for each value
   upper_bounds = jnp.ceil(mu + 20).astype(k.dtype)
   mask = k < upper_bounds[None, :]
-  probs_masked = jnp.where(mask, probs, 0.0)
+  terms = jnp.where(mask, -jnp.exp(log_probs) * log_probs, 0.0)
 
-  return jnp.sum(entr(probs_masked), axis=0)
+  return jnp.sum(terms, axis=0)
 
 def _entropy_medium_mu(mu: Array) -> Array:
   """Entropy for medium mu (10-100): Adaptive bounds based on std dev.
@@ -229,13 +238,13 @@ def _entropy_medium_mu(mu: Array) -> Array:
   max_k = 250  # Static bound for JIT. For mu<100, upper bound < 220
 
   k = jnp.arange(max_k, dtype=mu.dtype)[:, None]
-  probs = pmf(k, mu, 0)
+  log_probs = logpmf(k, mu, 0)  # See comment in _entropy_small_mu.
 
   upper_bounds = jnp.ceil(mu + 10 * jnp.sqrt(mu) + 20).astype(k.dtype)
   mask = k < upper_bounds[None, :]
-  probs_masked = jnp.where(mask, probs, 0.0)
+  terms = jnp.where(mask, -jnp.exp(log_probs) * log_probs, 0.0)
 
-  return jnp.sum(entr(probs_masked), axis=0)
+  return jnp.sum(terms, axis=0)
 
 def _entropy_large_mu(mu: Array) -> Array:
   """Entropy for large mu (>= 100): Asymptotic approximation.

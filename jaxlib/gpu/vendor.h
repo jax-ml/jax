@@ -372,6 +372,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuFuncSetCacheConfig cuFuncSetCacheConfig
 #define gpuInit cuInit
 #define gpuLaunchKernel cuLaunchKernel
+#define gpuMemAllocAsync cuMemAllocAsync
+#define gpuMemFreeAsync cuMemFreeAsync
 #define gpuMemcpyDtoHAsync cuMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync cuMemcpyHtoDAsync
 #define gpuMemsetD8Async cuMemsetD8Async
@@ -845,13 +847,14 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuGetStreamDeviceId hipGetStreamDeviceId
 #define gpuInit hipInit
 #define gpuLaunchKernel hipModuleLaunchKernel
+#define gpuMemAllocAsync hipMallocAsync
+#define gpuMemFreeAsync hipFreeAsync
 #define gpuModuleGetFunction hipModuleGetFunction
 #define gpuModuleLoadData hipModuleLoadData
 #define gpuModuleUnload hipModuleUnload
 #define gpuMemsetD8Async hipMemsetD8Async
 #define gpuMemcpyDtoHAsync hipMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync hipMemcpyHtoDAsync
-#define gpuMemsetD8Async hipMemsetD8Async
 #define gpuThreadExchangeStreamCaptureMode hipThreadExchangeStreamCaptureMode
 #define gpuStreamCreate hipStreamCreateWithFlags
 #define gpuStreamDestroy hipStreamDestroy
@@ -905,7 +908,15 @@ struct GpuErrorTraits<miopenStatus_t> {
 
 #elif defined(JAX_GPU_ONEAPI)
 
+#include <complex>
+
 #include "jaxlib/oneapi/oneapi_gpu_runtime.h"
+
+typedef std::complex<float> gpuComplex;
+typedef std::complex<double> gpuDoubleComplex;
+
+typedef std::complex<float> gpublasComplex;
+typedef std::complex<double> gpublasDoubleComplex;
 
 #define JAX_GPU_NAMESPACE oneapi
 #define JAX_GPU_PREFIX "oneapi"

@@ -35,40 +35,57 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-OVERRIDE_XLA_REPO=""
-if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-    OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
+OVERRIDE_XLA_REPO=()
+if [[ "${JAXCI_CLONE_MAIN_XLA}" == 1 ]]; then
+    OVERRIDE_XLA_REPO=(
+        "--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+        "--override_module=xla=${JAXCI_XLA_GIT_DIR}"
+    )
 fi
 
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
-TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
+TAG_FILTERS="-config-cuda-only,-manual"
 
 # JAXCI_GATE_TARGETS_FILE selects which Bazel target pattern file to use.
 # Defaults to the full CI suite; set to build/rocm/ci_blocking_test_targets.txt
 # for the PR blocking gate.
 TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
 
+EXTRA_BAZEL_ARGS=()
 for arg in "$@"; do
-    if [[ "$arg" == "--config=multi_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
+    [[ -z "${arg}" ]] && continue
+    if [[ "${arg}" == "--config=multi_gpu" ]]; then
+        TAG_FILTERS="jax_test_gpu,${TAG_FILTERS},multiaccelerator"
     fi
-    if [[ "$arg" == "--config=single_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
+    if [[ "${arg}" == "--config=single_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},-multiaccelerator"
     fi
+    if [[ "${arg}" == "--repo_env=HERMETIC_PYTHON_VERSION="* ]]; then
+        JAXCI_HERMETIC_PYTHON_VERSION="${arg#--repo_env=HERMETIC_PYTHON_VERSION=}"
+        continue
+    fi
+    EXTRA_BAZEL_ARGS+=("${arg}")
 done
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" == *t ]]; then
+    JAXCI_HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION%t}"
+    FREETHREADED_FLAG_VALUE="yes"
+else
+    FREETHREADED_FLAG_VALUE="no"
+fi
+
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 
-# Point ROCM_PATH and LD_LIBRARY_PATH at the local TheRock installation.
+# Point ROCM_PATH at the local TheRock installation. Tests find ROCm through
+# their runfiles, so they need no LD_LIBRARY_PATH.
 ROCM_SDK_FLAGS=()
 if command -v rocm-sdk >/dev/null 2>&1; then
     ROCM_SDK_ROOT="$(rocm-sdk path --root)"
     ROCM_SDK_FLAGS=(
         "--repo_env=ROCM_PATH=${ROCM_SDK_ROOT}"
-        "--test_env=LD_LIBRARY_PATH=${ROCM_SDK_ROOT}/lib"
     )
 fi
 echo "::endgroup::" >&2
@@ -77,21 +94,24 @@ echo "::group::Bazel ROCm RBE tests" >&2
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --config=rocm_clang_hermetic \
+    --config=rocm_rbe \
     --config=rocm_rbe_dynamic \
-    $OVERRIDE_XLA_REPO \
+    "${OVERRIDE_XLA_REPO[@]}" \
+    "--repo_env=HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION}" \
+    "--@rules_python//python/config_settings:py_freethreaded=${FREETHREADED_FLAG_VALUE}" \
+    "--action_env=JAX_ENABLE_X64=${JAXCI_ENABLE_X64}" \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-    --build_tag_filters=${TAG_FILTERS} \
-    --test_tag_filters=${TAG_FILTERS} \
+    "--build_tag_filters=${TAG_FILTERS}" \
+    "--test_tag_filters=${TAG_FILTERS}" \
     --remote_download_regex='.*test\.xml$' \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
     "${ROCM_SDK_FLAGS[@]}" \
-    $@ \
-    --spawn_strategy=local \
+    "${EXTRA_BAZEL_ARGS[@]}" \
     --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
 echo "::endgroup::" >&2
 

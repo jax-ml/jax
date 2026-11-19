@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import overload
 
 from jax._src import core
 from jax._src import tree_util
@@ -72,9 +73,31 @@ class Slice:
     return cls(start, size, step)
 
 
+class _NotSpecified:
+  pass
+
+
+@overload
+def dslice(
+    start: None,
+    size: _NotSpecified,
+    stride: int | None = ...,
+) -> slice:
+  ...
+
+
+@overload
 def dslice(
     start: int | Array | None,
-    size: int | Array | None = None,
+    size: int | Array | _NotSpecified = ...,
+    stride: int | None = ...,
+) -> Slice:
+  ...
+
+
+def dslice(
+    start: int | Array | None,
+    size: int | Array | _NotSpecified = _NotSpecified(),
     stride: int | None = None,
 ) -> slice | Slice:
   """Constructs a ``Slice`` from a start index and a size.
@@ -105,16 +128,14 @@ def dslice(
     Array([4, 5], dtype=int32)
   """
   if start is None:
-    if size is not None or stride is not None:
-      raise NotImplementedError(
-          "Only `size/stride == None` implemented when `start` is `None`"
-      )
-    return slice(None)
+    if isinstance(size, _NotSpecified):
+      return slice(None, None, stride)
+    start = 0
   if stride is None:
     stride = 1
   if not isinstance(stride, int):
     raise ValueError("Non-static stride in `dslice`")
-  if size is None:
+  if isinstance(size, _NotSpecified):
     start, size = 0, start
   return Slice(start, size, stride)
 

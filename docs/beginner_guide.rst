@@ -1,3 +1,4 @@
+:nosearch:
 :orphan:
 
 .. _beginner-guide:

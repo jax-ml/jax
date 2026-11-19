@@ -41,6 +41,7 @@ primitives_with_static_signatures = {
   consume_p: (consume, key),
   random.random_clone_p: (random.clone, key),
   prng.random_bits_p: (jax.random.bits, key),
+  prng.raw_bits_p: (partial(prng.raw_bits, shape=()), key),
   # prng.random_fold_in_p: (jax.random.fold_in, key, 2),
   prng.random_seed_p: (jax.random.key, 0),
   prng.random_split_p: (jax.random.split, key),

@@ -118,6 +118,10 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
                                         PyObject* const* args,
                                         Py_ssize_t nargsf, PyObject* kwnames) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized WeakValueInterner");
+      return nullptr;
+    }
     WeakValueInterner* self = nb::inst_ptr<WeakValueInterner>(self_obj);
 
     Py_ssize_t num_pos_args = PyVectorcall_NARGS(nargsf);
@@ -254,6 +258,9 @@ int WeakValueInterner::tp_traverse(PyObject* self_obj, visitproc visit,
 }
 
 int WeakValueInterner::tp_clear(PyObject* self_obj) {
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
   WeakValueInterner* self = nb::inst_ptr<WeakValueInterner>(self_obj);
   self->fn_.reset();
   for (auto& shard : self->shards_) {

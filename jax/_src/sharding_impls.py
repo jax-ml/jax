@@ -23,7 +23,6 @@ import math
 import itertools as it
 from typing import Any, cast
 
-from jax._src import config
 from jax._src import core
 from jax._src import sharding as jsharding
 from jax._src import tree_util
@@ -33,12 +32,14 @@ from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.mesh import (
     Mesh, AbstractMesh, AxisType, empty_abstract_mesh, empty_concrete_mesh,
-    get_abstract_mesh, get_concrete_mesh)
+    get_abstract_mesh, get_concrete_mesh, abstract_mesh_context_manager,
+    device_context)
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, NamedSharding,
+    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, flatten_spec_no_none,
+    NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
@@ -56,8 +57,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-# TODO(yashkatariya): Remove this after 3 months of deprecation.
-XLACompatibleSharding = jsharding.Sharding
 
 
 def hashed_index(x) -> int:
@@ -189,6 +188,15 @@ SingleDeviceSharding.__module__ = 'jax.sharding'
 
 def make_single_device_sharding(device, *, memory_kind=None):
   return SingleDeviceSharding(device, memory_kind=memory_kind)
+
+
+def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
+  """
+  Only to replace explicit checks for SingleDeviceSharding to avoid
+  deprecation warnings. Will return False once make_single_device_sharding
+  returns NamedSharding.
+  """
+  return isinstance(sharding, SingleDeviceSharding)
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
@@ -811,9 +819,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
   check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)
 
-  if phys_sharding.num_devices == 1:
-    return phys_sharding
-  elif isinstance(phys_sharding, NamedSharding):
+  if isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)
     phys_shape = core.physical_shape(logical_shape, dtype)
     if len(phys_sharding.spec) < len(phys_shape):
@@ -822,6 +828,8 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
     else:
       phys_spec = phys_sharding.spec
     return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
+  elif phys_sharding.num_devices == 1:
+    return phys_sharding
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 
@@ -941,7 +949,7 @@ def make_mesh(axis_sizes: Sequence[int], axis_names: Sequence[str],
   Returns:
     A :class:`jax.sharding.Mesh` object.
 
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if devices is None:
     devices = xb.devices()
@@ -985,7 +993,7 @@ class set_mesh:
   When a mesh is in context via ``jax.set_mesh``, you can use pass
   raw PartitionSpecs to all APIs that accept sharding as an argument.
   Using ``jax.set_mesh`` is also required for enabling explicit sharding mode:
-  https://docs.jax.dev/en/latest/parallel.html
+  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
 
   For example::
 
@@ -1013,16 +1021,16 @@ class set_mesh:
 
     abs_mesh = empty_abstract_mesh if mesh is None else mesh.abstract_mesh
     conc_mesh = empty_concrete_mesh if mesh is None else mesh
-    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+    self.prev_abstract_mesh = abstract_mesh_context_manager.swap_local(
         abs_mesh)
-    self.prev_mesh = config.device_context.swap_local(conc_mesh)
+    self.prev_mesh = device_context.swap_local(conc_mesh)
 
   def __enter__(self):
     pass
 
   def __exit__(self, exc_type, exc_value, traceback):
-    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    config.device_context.set_local(self.prev_mesh)
+    abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    device_context.set_local(self.prev_mesh)
 
 
 def get_mesh() -> Mesh:
@@ -1036,8 +1044,8 @@ def get_mesh() -> Mesh:
 @contextlib.contextmanager
 def _internal_use_concrete_mesh(mesh: Mesh):
   assert isinstance(mesh, Mesh)
-  prev_val = config.device_context.swap_local(mesh)
+  prev_val = device_context.swap_local(mesh)
   try:
     yield
   finally:
-    config.device_context.set_local(prev_val)
+    device_context.set_local(prev_val)

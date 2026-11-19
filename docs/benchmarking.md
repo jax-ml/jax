@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (benchmarking-jax-code)=
 # Benchmarking JAX code
 

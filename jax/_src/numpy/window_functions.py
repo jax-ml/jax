@@ -12,17 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-
 from jax._src import core
 from jax._src import dtypes
-from jax._src.lax import lax
+from jax._src import lax
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
 
 export = set_module('jax.numpy')
+
+
+def _mirrored_iota(dtype, M: int) -> Array:
+  """Returns each index's distance from the nearer end of a length-`M` array.
+
+  For example, `M = 5` gives `[0, 1, 2, 1, 0]` and `M = 4` gives `[0, 1, 1, 0]`.
+
+  The cosine windows below are symmetric: the value at index `n` equals the
+  value at index `M - 1 - n`. Computing them from `lax.iota` directly breaks
+  that symmetry slightly, because `n / (M - 1)` and `(M - 1 - n) / (M - 1)`
+  round differently. Using this mirrored index instead gives both halves of the
+  window identical inputs, so the output is exactly symmetric.
+  """
+  n = lax.iota(dtype, M)
+  return lax.min(n, (M - 1) - n)
 
 
 @export
@@ -40,7 +53,7 @@ def blackman(M: int) -> Array:
   Examples:
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...   print(jnp.blackman(4))
-    [-0.    0.63  0.63 -0.  ]
+    [0.   0.63 0.63 0.  ]
 
   See also:
     - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
@@ -52,8 +65,11 @@ def blackman(M: int) -> Array:
   dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
-  n = lax.iota(dtype, M)
-  return 0.42 - 0.5 * ufuncs.cos(2 * np.pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * np.pi * n / (M - 1))
+  n = _mirrored_iota(dtype, M)
+  # Adding 0.42 and 0.08 first makes their rounding errors cancel: in both
+  # float32 and float64 the sum rounds to exactly 0.5, so the endpoints are
+  # exactly 0 and odd-size midpoints are exactly 1.
+  return (0.42 + 0.08 * lax.cospi(4 * n / (M - 1))) - 0.5 * lax.cospi(2 * n / (M - 1))
 
 
 @export
@@ -114,8 +130,8 @@ def hamming(M: int) -> Array:
   dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
-  n = lax.iota(dtype, M)
-  return 0.54 - 0.46 * ufuncs.cos(2 * np.pi * n / (M - 1))
+  n = _mirrored_iota(dtype, M)
+  return 0.54 - 0.46 * lax.cospi(2 * n / (M - 1))
 
 
 @export
@@ -145,8 +161,8 @@ def hanning(M: int) -> Array:
   dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
-  n = lax.iota(dtype, M)
-  return 0.5 * (1 - ufuncs.cos(2 * np.pi * n / (M - 1)))
+  n = _mirrored_iota(dtype, M)
+  return 0.5 * (1 - lax.cospi(2 * n / (M - 1)))
 
 
 @export

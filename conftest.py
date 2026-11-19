@@ -13,6 +13,7 @@
 # limitations under the License.
 """pytest configuration"""
 
+import inspect
 import os
 import pytest
 
@@ -52,14 +53,67 @@ def add_imports(doctest_namespace):
 # For GPU, the env var JAX_ENABLE_CUDA_XDIST must be set equal to the number of
 # CUDA devices. Test processes will be assigned in round robin fashion across
 # the devices.
+_tpu_chip_lock_fd: int | None = None
+
+
+def _acquire_tpu_chip_slot(xdist_worker_number: int, num_chips: int) -> int:
+  """Acquires an exclusive lock on a free TPU chip slot in [0, num_chips).
+
+  When a pytest-xdist worker crashes (e.g. gw0..gw7), xdist spawns a
+  replacement worker with the next monotonically increasing ID (gw8, gw9, ...).
+  Using non-blocking flock per chip slot ensures that replacement workers
+  reclaim the crashed worker's freed TPU chip ID rather than setting
+  TPU_VISIBLE_CHIPS to an out-of-range index or colliding with a live worker.
+  """
+  global _tpu_chip_lock_fd
+  if _tpu_chip_lock_fd is not None:
+    return int(os.environ.get("TPU_VISIBLE_CHIPS", xdist_worker_number))
+  if num_chips <= 0:
+    return xdist_worker_number
+  try:
+    import fcntl
+  except ImportError:
+    return xdist_worker_number % num_chips
+
+  import tempfile
+  import time
+
+  uid = os.getuid() if hasattr(os, "getuid") else "shared"
+  lock_dir = os.path.join(tempfile.gettempdir(), f"jax_tpu_xdist_locks_{uid}")
+  os.makedirs(lock_dir, exist_ok=True)
+
+  deadline = time.monotonic() + 30.0
+  while True:
+    for offset in range(num_chips):
+      chip_id = (xdist_worker_number + offset) % num_chips
+      lock_path = os.path.join(lock_dir, f"chip_{chip_id}.lock")
+      lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+      try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _tpu_chip_lock_fd = lock_fd
+        return chip_id
+      except OSError:
+        os.close(lock_fd)
+    if time.monotonic() >= deadline:
+      return xdist_worker_number % num_chips
+    time.sleep(0.1)
+
+
 def pytest_collection() -> None:
-  if os.environ.get("JAX_ENABLE_TPU_XDIST", None):
+  if tpu_xdist := os.environ.get("JAX_ENABLE_TPU_XDIST", None):
     # When running as an xdist worker, will be something like "gw0"
     xdist_worker_name = os.environ.get("PYTEST_XDIST_WORKER", "")
     if not xdist_worker_name.startswith("gw"):
       return
     xdist_worker_number = int(xdist_worker_name[len("gw") :])
-    os.environ.setdefault("TPU_VISIBLE_CHIPS", str(xdist_worker_number))
+    if "TPU_VISIBLE_CHIPS" not in os.environ:
+      num_chips = (
+          int(tpu_xdist)
+          if tpu_xdist.isdigit()
+          else int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "0"))
+      )
+      chip_id = _acquire_tpu_chip_slot(xdist_worker_number, num_chips)
+      os.environ["TPU_VISIBLE_CHIPS"] = str(chip_id)
     os.environ.setdefault("ALLOW_MULTIPLE_LIBTPU_LOAD", "true")
 
   elif num_cuda_devices := os.environ.get("JAX_ENABLE_CUDA_XDIST", None):
@@ -107,3 +161,42 @@ def pytest_collection() -> None:
     os.environ.setdefault(
         "ZE_AFFINITY_MASK", str(xdist_worker_number % num_oneapi_devices)
     )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+  """Records source location and unparameterized test name in JUnit XML."""
+  if not item.config.getoption("xmlpath", default=None):
+    return
+
+  existing_keys = {key for key, _ in item.user_properties}
+  file_path, line_num, _ = item.location
+  if file_path and "file" not in existing_keys:
+    item.user_properties.append(("file", file_path.replace("\\", "/")))
+  if line_num is not None and line_num >= 0 and "line" not in existing_keys:
+    item.user_properties.append(("line", str(line_num + 1)))
+
+  if "base_test_name" not in existing_keys:
+    orig_name = getattr(item, "originalname", None)
+    base_name: str | None = None
+    if orig_name and orig_name != item.name:
+      base_name = orig_name
+    else:
+      obj = getattr(item, "obj", None)
+      if obj is not None and hasattr(obj, "__wrapped__"):
+        func_name = getattr(obj, "__name__", None)
+        candidate = getattr(inspect.unwrap(obj), "__name__", None)
+        if (
+            candidate
+            and candidate != "<lambda>"
+            and item.name.startswith(candidate)
+            and (
+                func_name == item.name
+                or item.name[len(candidate) :].isdigit()
+            )
+        ):
+          base_name = candidate
+      if not base_name:
+        base_name = orig_name
+    if base_name:
+      item.user_properties.append(("base_test_name", base_name))

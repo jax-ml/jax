@@ -23,7 +23,5 @@ some of JAX's (extensible) internals.
    :maxdepth: 1
    :caption: Design and internals
 
-   autodidax
-   autodidax2_part1
    jep/index
    internals/index

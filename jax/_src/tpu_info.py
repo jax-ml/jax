@@ -240,7 +240,7 @@ class TpuInfo:
         return lhs_dtype == rhs_dtype == F32
       case ChipVersion.TPU_V4I | ChipVersion.TPU_V4:
         return lhs_dtype in (F32, BF16) and rhs_dtype in (F32, BF16, S8)
-      case ChipVersion.TPU_V5E | ChipVersion.TPU_V6E | ChipVersion.TPU_V5P:
+      case ChipVersion.TPU_V5E | ChipVersion.TPU_V5P | ChipVersion.TPU_V6E:
         return (
             (
                 lhs_dtype in (F32, BF16, F8E5M2, F8E4M3B11FNUZ)
@@ -249,18 +249,26 @@ class TpuInfo:
             or (lhs_dtype in (U8, S8) and rhs_dtype in (U8, S8))
             or (lhs_dtype in (U4, S4) and rhs_dtype in (U4, S4))
         )
-      case (
-          ChipVersion.TPU_7 |
-          ChipVersion.TPU_7X |
-          ChipVersion.TPU_8I):
-        return (lhs_dtype in (F32, BF16) and rhs_dtype in (F32, BF16)) or (
-            lhs_dtype in (F32, BF16, F8E5M2, F8E4M3FN)
-            and rhs_dtype in (F8E5M2, F8E4M3FN)
+      case ChipVersion.TPU_7 | ChipVersion.TPU_7X:
+        return (
+            lhs_dtype in (F32, BF16)
+            and rhs_dtype in (F32, BF16, F8E5M2, F8E4M3FN)
+        ) or (
+            lhs_dtype in (F8E5M2, F8E4M3FN) and rhs_dtype in (F8E5M2, F8E4M3FN)
         )
-      case ChipVersion.TPU_8T:  # TODO(yinzhong): update the supported dtypes for TPU8T
-        return (lhs_dtype in (F32, BF16) and rhs_dtype in (F32, BF16)) or (
+      case ChipVersion.TPU_8I:
+        return (
+            lhs_dtype in (F32, BF16)
+            and rhs_dtype in (F32, BF16, F8E5M2, F8E4M3FN, U4, S4)
+        ) or (
+            lhs_dtype in (F8E5M2, F8E4M3FN)
+            and rhs_dtype in (F8E5M2, F8E4M3FN, U4, S4)
+        )
+      case ChipVersion.TPU_8T:
+        # TODO: b/543848756 - add the remaining dtypes.
+        return (lhs_dtype in (F32, BF16) and rhs_dtype in (F32, BF16, S4)) or (
             lhs_dtype in (F32, BF16, F8E5M2, F8E4M3FN)
-            and rhs_dtype in (F8E5M2, F8E4M3FN)
+            and rhs_dtype in (F8E5M2, F8E4M3FN, S4)
         )
       case _:
         return False
@@ -324,7 +332,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=16 * 1024,  # 16 KiB per core
-          hbm_capacity_bytes=int(16_000_000_000 // tensor_cores_per_chip),
+          hbm_capacity_bytes=16_000_000_000 // tensor_cores_per_chip,
           mem_bw_bytes_per_second=int(7.16e11 // tensor_cores_per_chip),
           bf16_ops_per_second=int(4.6e13 // tensor_cores_per_chip),
           int8_ops_per_second=0,  # Not Available
@@ -618,11 +626,20 @@ class Tiling(enum.Enum):
 
   @property
   def shape(self) -> tuple[int, ...]:
-    # TODO(slebedev): Use ``get_tpu_info()`` instead of hardcoding the values.
     match self:
       case Tiling.COMPACT:
-        return (8, 128)
+        try:
+          info = get_tpu_info()
+          return (info.num_sublanes, info.num_lanes)
+        except (ValueError, RuntimeError):
+          return (8, 128)
       case Tiling.SPARSE_CORE:
+        try:
+          info = get_tpu_info()
+          if info.sparse_core:
+            return (info.sparse_core.num_lanes,)
+        except (ValueError, RuntimeError):
+          pass
         return (8,)
 
 

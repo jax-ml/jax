@@ -32,10 +32,6 @@ load(
     "verify_manylinux_compliance_test",
 )
 load(
-    "@xla//third_party/py:python_wheel.bzl",
-    "collect_data_files",
-)
-load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
     "compare_srcs_and_test_deps_test",
@@ -48,6 +44,7 @@ load(
     "wheel_sources",
 )
 load("//jaxlib/rocm:rocm_version.bzl", "ROCM_MAJOR_VERSION")
+load("//jaxlib/tools:rocm_wheel_deps.bzl", "collect_rocm_data_files")
 
 licenses(["notice"])  # Apache 2
 
@@ -229,6 +226,7 @@ wheel_sources(
         "//jaxlib/rocm:rocm_gpu_support",
         "//jaxlib/rocm:rocm_plugin_extension",
     ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
         "//jaxlib/oneapi:oneapi_plugin_extension",
     ]),
     py_srcs = [":version"] + if_cuda([
@@ -236,6 +234,8 @@ wheel_sources(
         "//jaxlib/mosaic/gpu:mosaic_gpu",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
+    ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     static_srcs = [
         "LICENSE.txt",
@@ -245,9 +245,11 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",
+        "//jax_plugins/rocm:rocm_version.py",
     ]) + if_sycl([
         "//jax_plugins/oneapi:plugin_pyproject.toml",
         "//jax_plugins/oneapi:plugin_setup.py",
+        "//jax_plugins/oneapi:README.md",
     ]),
 )
 
@@ -362,6 +364,7 @@ wheel_sources(
         "//jaxlib/rocm:rocm_gpu_support",
     ]) + if_sycl([
         "//jax_plugins/oneapi:oneapi_plugin",
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     py_srcs = [
         ":version",
@@ -369,6 +372,8 @@ wheel_sources(
         "//jaxlib/cuda:cuda_gpu_support",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
+    ]) + if_sycl([
+        "//jaxlib/oneapi:oneapi_gpu_support",
     ]),
     static_srcs = [
         "LICENSE.txt",
@@ -379,10 +384,12 @@ wheel_sources(
     ]) + if_rocm([
         "//jax_plugins/rocm:pyproject.toml",
         "//jax_plugins/rocm:setup.py",
+        "//jax_plugins/rocm:rocm_version.py",
         "//jax_plugins/rocm:__init__.py",
     ]) + if_sycl([
         "//jax_plugins/oneapi:pyproject.toml",
         "//jax_plugins/oneapi:setup.py",
+        "//jax_plugins/oneapi:README-pjrt.md",
         "//jax_plugins/oneapi:__init__.py",
     ]),
 )
@@ -539,36 +546,36 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
-collect_data_files(
-    name = "rocm_libs_data",
-    deps = [
-        "@local_config_rocm//rocm:hip_runtime",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:hipfft",
-        "@local_config_rocm//rocm:hiprand",
-        "@local_config_rocm//rocm:hipsolver",
-        "@local_config_rocm//rocm:miopen",
-        "@local_config_rocm//rocm:rccl",
-        "@local_config_rocm//rocm:rocm_smi",
-        "@local_config_rocm//rocm:rocprofiler_sdk",
-        "@local_config_rocm//rocm:rocsolver",
-    ],
+collect_rocm_data_files(
+    name = "rocm_plugin_libs",
+    roots = ["//jaxlib/rocm:rocm_gpu_support"],
+)
+
+collect_rocm_data_files(
+    name = "rocm_pjrt_libs",
+    roots = ["//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so"],
 )
 
 py_import(
     name = "jax_rocm_plugin_py_import",
     wheel = ":jax_rocm_plugin_wheel",
-    wheel_deps = [
-        ":rocm_libs_data",
-    ],
+    deps = [":rocm_plugin_libs"],
 )
 
 py_import(
     name = "jax_rocm_pjrt_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
-    wheel_deps = [
-        ":rocm_libs_data",
-    ],
+    deps = [":rocm_pjrt_libs"],
+)
+
+py_import(
+    name = "jax_oneapi_plugin_py_import",
+    wheel = ":jax_oneapi_plugin_wheel",
+)
+
+py_import(
+    name = "jax_oneapi_pjrt_py_import",
+    wheel = ":jax_oneapi_pjrt_wheel",
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
@@ -632,11 +639,11 @@ jax_wheel(
 
 # Wheel tests.
 
-AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
+AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64", "none")])
 
-PPC64LE_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "ppc64le")])
+PPC64LE_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "ppc64le", "none")])
 
-X86_64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "x86_64")])
+X86_64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "x86_64", "none")])
 
 verify_manylinux_compliance_test(
     name = "jaxlib_manylinux_compliance_test",
@@ -752,6 +759,8 @@ _IGNORED_INIT_PY_FILES = [
     # These files do not exist in JAX sources.
     "jaxlib/mosaic/dialect/gpu/__init__.py",
     "jaxlib/mosaic/python/__init__.py",
+    "jaxlib/thunky/dialect/__init__.py",
+    "jaxlib/thunky/python/__init__.py",
 ]
 
 compare_srcs_and_test_deps_test(
@@ -810,6 +819,7 @@ compare_srcs_and_test_deps_test(
             "tests/mosaic",
             "tests/multiprocess",
             "tests/pallas",
+            "tests/thunky",
         ],
     ),
 )

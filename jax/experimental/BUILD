@@ -22,6 +22,7 @@ load(
     "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_sc_internal_users",
+    "pallas_tpu_ops_users",
     "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
@@ -79,6 +80,12 @@ package_group(
 )
 
 package_group(
+    name = "pallas_tpu_ops_users",
+    includes = ["//jax:internal"],
+    packages = pallas_tpu_ops_users,
+)
+
+package_group(
     name = "serialize_executable_users",
     includes = ["//jax:internal"],
     packages = serialize_executable_internal_users,
@@ -89,7 +96,6 @@ pytype_strict_library(
     srcs = [
         "buffer_callback.py",
     ],
-    type_checking = "pyrefly",
     visibility = [":buffer_callback_users"],
     deps = [
         "//jax/_src:buffer_callback",
@@ -101,7 +107,6 @@ pytype_strict_library(
     srcs = [
         "checkify.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("checkify"),
@@ -121,7 +126,6 @@ pytype_strict_library(
         "colocated_python/obj_backend.py",
         "colocated_python/serialization.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -146,7 +150,6 @@ pytype_strict_library(
         "compilation_cache/__init__.py",
         "compilation_cache/compilation_cache.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = ["//jax/_src:compilation_cache_internal"],
 )
@@ -154,7 +157,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["compute_on.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:compute_on",
@@ -164,18 +166,15 @@ pytype_strict_library(
 pytype_strict_library(
     name = "overlap",
     srcs = ["overlap.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 
 pytype_strict_library(
     name = "custom_partitioning",
     srcs = ["custom_partitioning.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:custom_partitioning",
@@ -202,7 +201,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "key_reuse",
     srcs = glob(["key_reuse/**/*.py"]),
-    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = [
         "//jax",
@@ -226,7 +224,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout",
     srcs = ["layout.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:api",
@@ -237,7 +234,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mesh_utils",
     srcs = ["mesh_utils.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:internal_mesh_utils",
@@ -250,7 +246,6 @@ pytype_strict_library(
         "mosaic/__init__.py",
         "mosaic/dialects.py",
     ],
-    type_checking = "pyrefly",
     visibility = [":mosaic_users"],
     deps = [
         "//jax/_src:tpu_custom_call",
@@ -273,7 +268,6 @@ py_library_providing_imports_info(
         "@cuda_nvvm//:nvvm",
     ]),
     lib_rule = pytype_strict_library,
-    type_checking = "pyrefly",
     visibility = [
         ":mosaic_gpu_users",
     ],
@@ -286,6 +280,8 @@ py_library_providing_imports_info(
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:stages",
+        "//jax/_src:traceback_util",
+        "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas/mosaic:error_handling",
@@ -312,7 +308,6 @@ pytype_strict_library(
     name = "mosaic_gpu_test_util",
     testonly = True,
     srcs = ["mosaic/gpu/test_util.py"],
-    type_checking = "pyrefly",
     deps = [
         ":mosaic_gpu",
         "//jax",
@@ -323,7 +318,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "multihost_utils",
     srcs = ["multihost_utils.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -344,7 +338,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ode",
     srcs = ["ode.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -369,55 +362,31 @@ pytype_strict_library(
             "pallas/triton.py",
         ],
     ),
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
-        "//jax",
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src:lax",
         "//jax/_src:source_info_util",
-        "//jax/_src:state_types",
         "//jax/_src/pallas",
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas",
+        "//jax/pallas:tpu_sc",
     ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "pallas_fuser",
     srcs = ["pallas/fuser.py"],
-    type_checking = "pyrefly",
     visibility = [
         ":pallas_fuser_users",
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/fuser:block_spec",
-        "//jax/_src/pallas/fuser:custom_evaluate",
-        "//jax/_src/pallas/fuser:custom_fusion",
-        "//jax/_src/pallas/fuser:fusible",
-        "//jax/_src/pallas/fuser:fusion",
-        "//jax/_src/pallas/fuser:jaxpr_fusion",
+        "//jax/pallas:fuser",
     ],
-)
-
-pytype_strict_library(
-    name = "pallas_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
-    type_checking = "pyrefly",
-    deps = [
-        ":pallas",
-        ":pallas_triton",
-        "//jax",
-        "//jax/_src:lax",
-    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
-    type_checking = "pyrefly",
     visibility = [
         ":mosaic_gpu_users",
     ],
@@ -436,64 +405,46 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_mosaic_gpu",
     srcs = ["pallas/mosaic_gpu.py"],
-    type_checking = "pyrefly",
     visibility = [
         ":mosaic_gpu_users",
     ],
     deps = [
-        ":mosaic_gpu",
-        "//jax/_src:lax",
-        "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu:helpers",
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pipeline",
-        "//jax/_src/pallas/mosaic_gpu:primitives",
-        "//jax/_src/pallas/mosaic_gpu:torch",
+        "//jax/_src:deprecations",
+        "//jax/pallas:mosaic_gpu",
     ],
 )
 
 pytype_strict_library(
     name = "pallas_tpu",
     srcs = ["pallas/tpu.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:helpers",
-        "//jax/_src/pallas/mosaic:lowering",
-        "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
-        "//jax/_src/pallas/mosaic:primitives",
-        "//jax/_src/pallas/mosaic:random",
-        "//jax/_src/pallas/mosaic:tpu_info",
-        "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
-        "//jax/_src/pallas/mosaic/interpret:params",
+        "//jax/pallas:tpu",
     ],
 )
 
 pytype_strict_library(
     name = "pallas_tpu_sc",
     srcs = ["pallas/tpu_sc.py"],
-    type_checking = "pyrefly",
     visibility = [
         ":pallas_sc_users",
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas:tpu_sc",
     ],
 )
 
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
-    type_checking = "pyrefly",
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":pallas_tpu_ops_users",
+    ],
     deps = [
         ":pallas",
         ":pallas_tpu",
@@ -510,15 +461,14 @@ pytype_strict_library(
     srcs = [
         "pallas/triton.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         ":pallas_triton_users",
     ],
     deps = [
         "//jax/_src:deprecations",
+        "//jax/_src:gpu_info",
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
-        "//jax/_src/pallas/triton:gpu_info",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],
@@ -527,7 +477,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pjit",
     srcs = ["pjit.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:api",
@@ -538,7 +487,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "hijax",
     srcs = ["hijax.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:ad",
@@ -553,7 +501,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "profiler",
     srcs = ["profiler.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src/lib",
@@ -563,7 +510,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "random",
     srcs = ["random.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:stateful_rng",
@@ -573,13 +519,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "rnn",
     srcs = ["rnn.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
         "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
+        "//jax/_src:ffi",
         "//jax/_src:lax",
         "//jax/_src:typing",
     ] + py_deps("numpy"),
@@ -588,31 +534,19 @@ pytype_strict_library(
 pytype_strict_library(
     name = "serialize_executable",
     srcs = ["serialize_executable.py"],
-    type_checking = "pyrefly",
     visibility = [":serialize_executable_users"],
     deps = [
         "//jax",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
     name = "scheduling_groups",
     srcs = ["scheduling_groups.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:xla_metadata",
-    ],
-)
-
-pytype_strict_library(
-    name = "shard_alike",
-    srcs = ["shard_alike.py"],
-    type_checking = "pyrefly",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jax/_src:shard_alike",
     ],
 )
 
@@ -621,7 +555,6 @@ pytype_strict_library(
     # be used in new code. Use jax.shard_map instead.
     name = "shard_map",
     srcs = ["shard_map.py"],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("experimental/shard_map"),
@@ -636,7 +569,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "fused",
     srcs = ["fused.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax/_src:ad",
@@ -656,7 +588,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["source_mapper/**/*.py"]),
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -675,7 +606,6 @@ pytype_strict_library(
         ],
         exclude = ["sparse/test_util.py"],
     ),
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -689,6 +619,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
         "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",
@@ -707,7 +638,6 @@ pytype_strict_library(
     srcs = [
         "sparse/test_util.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//jax:internal"],
     deps = [
         ":sparse",
@@ -722,11 +652,11 @@ pytype_strict_library(
 pytype_strict_library(
     name = "topologies",
     srcs = ["topologies.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         ":mesh_utils",
         "//jax",
+        "//jax/_src:internal_mesh_utils",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ],
@@ -735,7 +665,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "transfer",
     srcs = ["transfer.py"],
-    type_checking = "pyrefly",
     visibility = [
         ":experimental_transfer_users",
         "//jax:internal",
@@ -750,11 +679,21 @@ pytype_strict_library(
 pytype_strict_library(
     name = "xla_metadata",
     srcs = ["xla_metadata.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
         "//jax/_src:xla_metadata",
+    ],
+)
+
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
     ],
 )
 
@@ -790,6 +729,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "topologies.py",
         "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],

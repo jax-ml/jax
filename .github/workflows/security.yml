@@ -25,13 +25,13 @@ jobs:
     name: GitHub Actions Security Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - name: Run zizmor
-        # TODO(belitskiy): Update workflows and unpin/update zizmor version.
-        run: uvx zizmor@1.24.1 --format=github .
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          advanced-security: false
+          annotations: true
+          online-audits: true
+          inputs: .

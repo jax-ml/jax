@@ -15,10 +15,14 @@
 import collections
 import dataclasses
 import itertools
+import logging
 import threading
+from typing import Literal
 
 from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
+
+logger = logging.getLogger(__name__)
 
 
 def _is_empty_slice(slice_or_idx: slice | int):
@@ -69,8 +73,7 @@ def _ranges_overlap(
 
 @dataclasses.dataclass
 class RaceDetectionState[ThreadKey]:
-  # TODO(nrink): Remove this field; it seems to be unused.
-  num_cores: int
+  on_race: Literal["raise", "warn"] = "raise"
 
   # (memory_space, buffer_id, thread_key) -> [(device_id, local_core_id, VectorClock, range)]
   reads: dict = dataclasses.field(
@@ -119,12 +122,14 @@ class RaceDetectionState[ThreadKey]:
         continue
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
-      print(
-          f'RACE DETECTED\n  read of {buffer_key}[{rnge}] from {thread},'
-          f' {user_frame}\n  clock: {clock}\n  write of'
-          f' {buffer_key}[{write_range}] from {write_thread},'
-          f' {write_frame}\n  clock: {write_clock}\n'
-      )
+      msg = (f'RACE DETECTED\n  read of {buffer_key}[{rnge}] from {thread},'
+             f' {user_frame}\n  clock: {clock}\n  write of'
+             f' {buffer_key}[{write_range}] from {write_thread},'
+             f' {write_frame}\n  clock: {write_clock}\n')
+      if self.on_race == "raise":
+        raise RuntimeError(msg)
+      else:
+        logger.warning(msg)
       with self.lock:
         self.races_found = True
       return
@@ -165,12 +170,14 @@ class RaceDetectionState[ThreadKey]:
         continue
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
-      print(
-          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
-          f' {user_frame}\n  clock: {clock}\n  write of'
-          f' {buffer_key}[{write_range}] from {write_thread},'
-          f' {write_frame}\n  clock: {write_clock}\n'
-      )
+      msg = (f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
+             f' {user_frame}\n  clock: {clock}\n  write of'
+             f' {buffer_key}[{write_range}] from {write_thread},'
+             f' {write_frame}\n  clock: {write_clock}\n')
+      if self.on_race == "raise":
+        raise RuntimeError(msg)
+      else:
+        logging.warning(msg)
       with self.lock:
         self.races_found = True
       break
@@ -185,12 +192,14 @@ class RaceDetectionState[ThreadKey]:
         continue
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
-      print(
-          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
-          f' {user_frame}\n  clock: {clock}\n  read of'
-          f' {buffer_key}[{read_range}] from {read_thread},'
-          f' {read_frame}\n  clock: {read_clock}\n'
-      )
+      msg = (f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
+             f' {user_frame}\n  clock: {clock}\n  read of'
+             f' {buffer_key}[{read_range}] from {read_thread},'
+             f' {read_frame}\n  clock: {read_clock}\n')
+      if self.on_race == "raise":
+        raise RuntimeError(msg)
+      else:
+        logging.warning(msg)
       with self.lock:
         self.races_found = True
       return

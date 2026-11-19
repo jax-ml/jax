@@ -26,7 +26,11 @@
 #                           wheels and uploads them to an S3 bucket.
 # 11. run-pytest-rocm:      Calls the `pytest_rocm.yml` workflow which downloads the jaxlib and
 #                           ROCm artifacts and runs the ROCm tests.
-# 12. run-bazel-test-rocm:  Calls the `bazel_rocm.yml` workflow which runs the ROCm Bazel tests.
+# 12. run-bazel-test-rocm:  Calls the `bazel_rocm.yml` workflow which runs the ROCm Bazel tests
+#                           against jaxlib/plugin/pjrt wheels built in this run.
+# 13. run-bazel-test-rocm-pypi: Calls the `bazel_rocm.yml` workflow which runs the same
+#                           ROCm Bazel tests against jaxlib/plugin/pjrt wheels from PyPI
+#                           (same pypi_latest path as bazel_rocm_presubmit.yml).
 
 name: CI - Wheel Tests (Continuous)
 permissions:
@@ -71,8 +75,8 @@ on:
       - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') && github.ref != 'refs/heads/main' }}
 
 jobs:
   check-trigger:
@@ -82,7 +86,7 @@ jobs:
       run-pytest: ${{ steps.determine.outputs.run-pytest }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: |
             build
@@ -107,6 +111,8 @@ jobs:
 
           # PR runs only exercise build/Bazel jobs; pytest jobs are disabled for PRs.
           TRIGGER_PATTERNS=(
+            ".bazelrc"
+            "MODULE.bazel"
             "build/requirements_lock_*.txt"
             ".github/workflows/wheel_tests_continuous.yml"
             ".github/workflows/scripts/select_continuous_wheel_test_jobs.py"
@@ -147,7 +153,7 @@ jobs:
       xla_commit: ${{ steps.select.outputs.xla_commit }}
     steps:
       - name: Checkout selector script
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/workflows/scripts
           ref: ${{ github.workflow_sha }}
@@ -502,23 +508,24 @@ jobs:
         matrix:
           runner: ["amd-do-linux.jax.cpu"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-7.14:latest" },
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
-    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.15"
+    name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
-      manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 0
       halt-for-connection: 'no'
       upload_artifacts_to_s3: true
@@ -545,9 +552,9 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
           ]
-    name: "Pytest ROCm (${{ matrix.rocm.label }})"
+    name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -577,13 +584,13 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
+          runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
           ]
           enable-x64: [0]
-    name: "Bazel ROCm (${{ matrix.rocm.label }})"
+    name: "Bazel ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -596,6 +603,46 @@ jobs:
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
+      run_multiaccelerator_tests: ${{ 'false' }}
+      clone_main_xla: 0
+      xla_commit: ''
+      halt-for-connection: 'no'
+
+  # LINT.IfChange(run_bazel_test_rocm_pypi)
+  run-bazel-test-rocm-pypi:
+    needs: [select-jobs]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_rocm_pypi)
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_rocm_pypi == true
+          && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
+      }}
+    uses: ./.github/workflows/bazel_rocm.yml
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+        fail-fast: false
+        matrix:
+          runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
+          python: ["3.12"]
+          rocm: [
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+          ]
+          enable-x64: [0]
+    name: "Bazel ROCm PyPI ${{ matrix.rocm.label }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
+      enable-x64: ${{ matrix.enable-x64 }}
+      download-jax-from-gcs: 0
+      skip-download-jaxlib-and-plugins-from-gcs: 0
+      jaxlib-version: "pypi_latest"
+      build_jaxlib: ${{ 'false' }}
+      build_jax: ${{ 'true' }}
       run_multiaccelerator_tests: ${{ 'false' }}
       clone_main_xla: 0
       xla_commit: ''

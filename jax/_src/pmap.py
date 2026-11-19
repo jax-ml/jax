@@ -73,7 +73,7 @@ def pmap(
     While :py:func:`jax.pmap` works, you should probably use
     :py:func:`jax.shard_map` or ``jax.smap`` instead. shard_map supports more
     efficient autodiff, and is more composable in the multi-controller setting.
-    See https://docs.jax.dev/en/latest/notebooks/shard_map.html for examples.
+    See https://docs.jax.dev/en/latest/201/shard-map.html for examples.
 
   .. note::
     :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
@@ -171,7 +171,7 @@ def pmap(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
+      `buffer donation docs <https://docs.jax.dev/en/latest/201/jit.html#jax-201-buffer-donation>`_.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of

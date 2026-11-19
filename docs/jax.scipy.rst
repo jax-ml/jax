@@ -177,6 +177,7 @@ jax.scipy.special
    entr
    erf
    erfc
+   erfcinv
    erfcx
    erfinv
    exp1
@@ -188,14 +189,12 @@ jax.scipy.special
    gamma
    gammainc
    gammaincc
+   gammainccinv
+   gammaincinv
    gammaln
    gammasgn
    hyp1f1
    hyp2f1
-   i0
-   i0e
-   i1
-   i1e
    kl_div
    log_ndtr
    log_softmax
@@ -207,6 +206,7 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
+   ndtri_exp
    owens_t
    poch
    polygamma
@@ -219,6 +219,21 @@ jax.scipy.special
    xlog1py
    xlogy
    zeta
+
+Bessel functions
+~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+   i0
+   i0e
+   i1
+   i1e
+   iv
+   jn
+   kn
+   yn
 
 
 jax.scipy.stats

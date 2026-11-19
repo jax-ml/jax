@@ -142,15 +142,15 @@ By default JAX uses a pinned copy of the XLA repository, but we often
 want to use a locally-modified copy of XLA when working on JAX. There are two
 ways to do this:
 
-- use Bazel's `override_repository` feature, which you can pass as a command
+- use Bazel's `override_module` feature, which you can pass as a command
   line flag to `build.py` as follows:
 
   ```
   python build/build.py build --wheels=jaxlib --local_xla_path=/path/to/xla
   ```
 
-- modify the `WORKSPACE` file in the root of the JAX source tree to point to
-  a different XLA tree.
+- modify the `MODULE.bazel` file in the root of the JAX source tree to point to
+  a different XLA archive or use `local_path_override`.
 
 To contribute changes back to XLA, send PRs to the XLA repository.
 
@@ -204,7 +204,7 @@ To make sure that JAX's build is reproducible, behaves uniformly across
 supported platforms (Linux, Windows, MacOS) and is properly isolated from
 specifics of a local system, we rely on hermetic Python (provided by
 [rules_python](https://github.com/bazelbuild/rules_python), see
-[Toolchain Registration](https://rules-python.readthedocs.io/en/latest/toolchains.html#workspace-toolchain-registration)
+[Toolchain Registration](https://rules-python.readthedocs.io/en/latest/toolchains.html#bzlmod-toolchain-registration)
 for details) for all build and test commands executed via Bazel. This means that
 your system Python installation will be ignored during the build and Python
 interpreter itself as well as all the Python dependencies will be managed by
@@ -263,11 +263,7 @@ Alternatively, if you need more control, you may run the bazel command
 directly (the two commands are equivalent):
 
 ```
-# Regular Python
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
-
-# Free-threaded Python
-bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.14-ft
 ```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so
@@ -287,12 +283,8 @@ By default the build scans `dist` directory in the repository root for any local
 version specific, only the wheels that match the selected Python version will
 be included.
 
-The overall local wheel search and selection logic is controlled by the
-arguments to `python_init_repositories()` macro (called directly from the
-`WORKSPACE` file). You may use `local_wheel_dist_folder` to change the location
-of the folder with local wheels. Use `local_wheel_inclusion_list` and
-`local_wheel_exclusion_list` arguments to specify which wheels should be
-included and/or excluded from the search (it supports basic wildcard matching).
+The local wheel search and selection logic is configured in `MODULE.bazel` via
+the `local_wheels` argument to `pip.parse()`.
 
 If necessary, you can also depend on a local `.whl` file manually, bypassing the
 automatic local wheel search mechanism. For example to depend on your newly
@@ -365,22 +357,17 @@ in terms of files, not installations):
    make altinstall
    tar -czpf my_python.tgz python
    ```
-   Once you have the tarball ready, plug it in the build by pointing
-   `HERMETIC_PYTHON_URL` env var to the archive (either local one or from the
-   internet):
-   ```
-   --repo_env=HERMETIC_PYTHON_URL="file:///local/path/to/my_python.tgz"
-   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
-
-   # OR
-   --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
-   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
-
-   # We assume that top-level folder in the tarball is called "python", if it is
-   # something different just pass additional HERMETIC_PYTHON_PREFIX parameter
-   --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
-   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
-   --repo_env=HERMETIC_PYTHON_PREFIX="my_python/install"
+   Once you have the tarball ready, configure the toolchain in `MODULE.bazel` using
+   `python.override()` and `python.single_version_platform_override()`:
+   ```starlark
+   python.override(minor_mapping = {"3.14": "3.14.3"})
+   python.single_version_platform_override(
+       platform = "x86_64-unknown-linux-gnu",
+       python_version = "3.14.3",
+       urls = ["https://remote/url/to/my_python.tgz"],  # or ["file:///local/path/to/my_python.tgz"]
+       sha256 = "<file's_sha256_sum>",
+       strip_prefix = "python",
+   )
    ```
 
 2) Instead of doing `pip install` create `requirements_lock.txt` file with
@@ -400,9 +387,8 @@ in terms of files, not installations):
    to its `.whl` file directly (remember, work in terms of files, not
    installations) from your lock (note, `requirements.txt` and
    `requirements_lock.txt` files support local wheel references). If your
-   `requirements_lock.txt` is already specified as a dependency to
-   `python_init_repositories()` in `WORKSPACE` file you don't have to do
-   anything else. Otherwise you can point to your custom file as follows:
+   `requirements_lock.txt` is already configured in `MODULE.bazel`
+   you don't have to do anything else. Otherwise you can point to your custom file as follows:
    ```
    --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/custom_requirements_lock.txt"
    ```
@@ -417,69 +403,50 @@ dependencies then you fully control your Python environment.
 
 #### Custom hermetic Python examples
 
-Note, for all of the examples below you may also set the environment variables
-globally (i.e. `export` in your shell instead of `--repo_env` argument to your
-command) so calling bazel via `build/build.py` will work just fine.
-
 Build with custom `Python 3.13` from the internet, using default
 `requirements_lock_3_13.txt` already checked in this repo (i.e. custom
 interpreter but default dependencies):
+
+Add to `MODULE.bazel`:
+```starlark
+python.override(minor_mapping = {"3.13": "3.13.0"})
+python.single_version_platform_override(
+    platform = "x86_64-unknown-linux-gnu",
+    python_version = "3.13.0",
+    urls = ["https://github.com/indygreg/python-build-standalone/releases/download/20241016/cpython-3.13.0+20241016-x86_64-unknown-linux-gnu-install_only.tar.gz"],
+    sha256 = "2c8cb15c6a2caadaa98af51df6fe78a8155b8471cb3dd7b9836038e0d3657fb4",
+    strip_prefix = "python",
+)
 ```
-bazel build <target>
-  --repo_env=HERMETIC_PYTHON_VERSION=3.13
-  --repo_env=HERMETIC_PYTHON_URL="https://github.com/indygreg/python-build-standalone/releases/download/20241016/cpython-3.13.0+20241016-x86_64-unknown-linux-gnu-install_only.tar.gz"
-  --repo_env=HERMETIC_PYTHON_SHA256="2c8cb15c6a2caadaa98af51df6fe78a8155b8471cb3dd7b9836038e0d3657fb4"
+Then build with:
+```
+bazel build <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
 ```
 
-Build with custom Python 3.13 from local file system and custom lock file
-(assuming the lock file was put in `jax/build` folder of this repo before
-running the command):
+Build with custom Python 3.13 from local file system:
+
+Add to `MODULE.bazel`:
+```starlark
+python.override(minor_mapping = {"3.13": "3.13.0"})
+python.single_version_platform_override(
+    platform = "x86_64-unknown-linux-gnu",
+    python_version = "3.13.0",
+    urls = ["file:///path/to/cpython.tar.gz"],
+    sha256 = "<sha256_sum>",
+    strip_prefix = "prefix/to/strip/in/cython/tar/gz/archive",
+)
 ```
-bazel test <target>
-  --repo_env=HERMETIC_PYTHON_VERSION=3.13
-  --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
-  --repo_env=HERMETIC_PYTHON_PREFIX="prefix/to/strip/in/cython/tar/gz/archive"
-  --repo_env=HERMETIC_PYTHON_SHA256=<sha256_sum>
-  --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/build:custom_requirements_lock.txt"
+Then test with:
+```
+bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
 ```
 
 If default python interpreter is good enough for you and you just need a custom 
 set of dependencies:
 ```
-bazel test <target>
-  --repo_env=HERMETIC_PYTHON_VERSION=3.13
+bazel test <target> \
+  --repo_env=HERMETIC_PYTHON_VERSION=3.13 \
   --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/build:custom_requirements_lock.txt"
-```
-
-Note, you can have multiple different `requirement_lock.txt` files corresponding
-to the same Python version to support different scenarios. You can control
-which one is selected by specifying `HERMETIC_PYTHON_VERSION`. For example in
-`WORKSPACE` file:
-```
-requirements = {
-  "3.12": "//build:requirements_lock_3_12.txt",
-  "3.13": "//build:requirements_lock_3_13.txt",
-  "3.13-scenario1": "//build:scenario1_requirements_lock_3_13.txt",
-  "3.13-scenario2": "//build:scenario2_requirements_lock_3_13.txt",
-},
-```
-Then you can build and test different combinations of stuff without changing
-anything in your environment:
-```
-# To build with scenario1 dependencies:
-bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
-
-# To build with scenario2 dependencies:
-bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario2
-
-# To build with default dependencies:
-bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
-
-# To build with scenario1 dependencies and custom Python 3.13 interpreter:
-bazel test <target>
-  --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
-  --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
-  --repo_env=HERMETIC_PYTHON_SHA256=<sha256_sum>
 ```
 
 ## Installing `jax`

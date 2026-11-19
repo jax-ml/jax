@@ -20,6 +20,7 @@ from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.stats import norm
 from jax._src.scipy.special import logsumexp, log_ndtr, ndtr
+from jax._src.typing import Array, ArrayLike
 
 
 def _log_diff(x, y):
@@ -62,7 +63,13 @@ def _log_gauss_mass(a, b):
 
 
 @api.jit
-def logpdf(x, a, b, loc=0, scale=1):
+def logpdf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   r"""Truncated normal log probability distribution function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``logpdf``.
@@ -102,11 +109,17 @@ def logpdf(x, a, b, loc=0, scale=1):
 
   x_scaled = lax.div(lax.sub(x, loc), scale)
   val = jnp.where((x_scaled < a) | (x_scaled > b), -np.inf, val)
-  val = jnp.where(a >= b, np.nan, val)
+  val = jnp.where(a < b, val, np.nan)  # NaN if a >= b or a or b is NaN.
   return val
 
 
-def pdf(x, a, b, loc=0, scale=1):
+def pdf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   r"""Truncated normal probability distribution function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``pdf``.
@@ -144,7 +157,13 @@ def pdf(x, a, b, loc=0, scale=1):
   return lax.exp(logpdf(x, a, b, loc, scale))
 
 @api.jit
-def logsf(x, a, b, loc=0, scale=1):
+def logsf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   """Truncated normal distribution log survival function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``logsf``
@@ -180,7 +199,13 @@ def logsf(x, a, b, loc=0, scale=1):
 
 
 @api.jit
-def sf(x, a, b, loc=0, scale=1):
+def sf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   """Truncated normal distribution survival function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``sf``
@@ -215,7 +240,13 @@ def sf(x, a, b, loc=0, scale=1):
 
 
 @api.jit
-def logcdf(x, a, b, loc=0, scale=1):
+def logcdf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   r"""Truncated normal log cumulative distribution function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``logcdf``.
@@ -256,13 +287,20 @@ def logcdf(x, a, b, loc=0, scale=1):
   logcdf = jnp.select(
     # third condition: avoid catastrophic cancellation (from scipy)
     [x >= b, x <= a, logcdf > -0.1, x > a],
-    [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf]
+    [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf],
+    np.nan,  # NaN x matches no condition.
   )
-  logcdf = jnp.where(a >= b, np.nan, logcdf)
+  logcdf = jnp.where(a < b, logcdf, np.nan)  # NaN if a >= b or a or b is NaN.
   return logcdf
 
 @api.jit
-def cdf(x, a, b, loc=0, scale=1):
+def cdf(
+  x: ArrayLike,
+  a: ArrayLike,
+  b: ArrayLike,
+  loc: ArrayLike = 0,
+  scale: ArrayLike = 1,
+) -> Array:
   r"""Truncated normal cumulative distribution function.
 
   JAX implementation of :obj:`scipy.stats.truncnorm` ``cdf``.

@@ -23,7 +23,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, NamedTuple, Never, TypeVar, Union, cast as type_cast, overload
+from typing import Any, NamedTuple, Never, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -41,6 +41,7 @@ from jax._src import ffi
 from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
+from jax._src import reduction_order as reduction_order_lib
 from jax._src import source_info_util
 from jax._src import flattree as ft
 from jax._src import tree_util
@@ -49,6 +50,7 @@ from jax._src import tpu_info
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, ShapedArray, abstract_token,
                            canonicalize_shape)
+from jax._src.custom_derivatives import custom_jvp
 from jax._src.errors import UnexpectedTracerError
 from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
@@ -58,11 +60,14 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.lax import _reduction_order
+from jax._src.layout import Layout
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -70,7 +75,7 @@ from jax._src.sharding import Sharding
 from jax._src.state.types import AbstractRef, WriteEffect
 from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import (NamedSharding, canonicalize_sharding,
-                                     flatten_spec)
+                                     flatten_spec, flatten_spec_no_none)
 from jax._src.typing import (Array, ArrayLike, DimSize, DuckTypedArray, DType,
                              DTypeLike, Shape)
 from jax._src.util import (cache, canonicalize_axis, safe_map, safe_zip,
@@ -79,8 +84,6 @@ from jax._src.util import (cache, canonicalize_axis, safe_map, safe_zip,
 _max = builtins.max
 _min = builtins.min
 _reduce = functools.reduce
-
-T = TypeVar("T")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -491,6 +494,9 @@ def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
     Array of the same shape and dtype as ``x`` containing the element-wise
     exponential.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.exp2`: elementwise base-2 exponentional: :math:`2^x`.
     - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
@@ -503,8 +509,9 @@ def exp(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
 def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
-  This function is implemented in terms of the `stablehlo.exponential`_
-  and `stablehlo.multiply`_ operations.
+  This function is currently implemented in terms of the
+  `stablehlo.exponential`_ and `stablehlo.multiply`_ operations. In the future,
+  it may be implemented directly in terms of a ``stablehlo.exp2`` operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
@@ -518,6 +525,9 @@ def exp2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     base-2 exponential.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
@@ -549,6 +559,9 @@ def expm1(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
     Array of the same shape and dtype as ``x`` containing the element-wise
     exponential minus 1.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
     - :func:`jax.lax.log1p`: elementwise :math:`\mathrm{log}(1 + x)`.
@@ -576,12 +589,48 @@ def log(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
     Array of the same shape and dtype as ``x`` containing the element-wise
     natural logarithm.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
 
   .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
   """
   return log_p.bind(x, accuracy=accuracy)
+
+@export
+def log2(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
+  r"""Elementwise base-2 logarithm: :math:`\mathrm{log}_2(x)`.
+
+  This function is currently implemented in terms of the `stablehlo.log`_
+  and `stablehlo.multiply`_ operations. In the future, it may be implemented
+  directly in terms of a ``stablehlo.log2`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    base-2 logarithm.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  See also:
+    - :func:`jax.lax.exp2`: elementwise base-2 exponential: :math:`2^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
+  return log2_p.bind(x, accuracy=accuracy)
 
 @export
 def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Array:
@@ -603,6 +652,9 @@ def log1p(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     natural logarithm of ``x + 1``.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.expm1`: elementwise :math:`e^x - 1`.
@@ -630,6 +682,21 @@ def tanh(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic tangent.
+
+  Note:
+    By default, the gradient of ``tanh`` is computed from the forward
+    output :math:`y = \mathrm{tanh}(x)` as :math:`(1 + y)(1 - y)`. In the
+    region where :math:`\mathrm{tanh}(x)` rounds to :math:`\pm 1` in
+    floating-point arithmetic (approximately :math:`|x| \ge 9` for ``float32``
+    and :math:`|x| \ge 19` for ``float64``), the computed gradient evaluates
+    to zero, even though the true derivative may still be a non-zero
+    floating-point number. Passing ``accuracy=jax.lax.AccuracyMode.HIGHEST``
+    computes the derivative directly from ``x`` as
+    :math:`4 \, \mathrm{logistic}(2x) \, \mathrm{logistic}(-2x)`, preserving
+    non-zero gradients in this region.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -660,6 +727,9 @@ def logistic(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) 
     Array of the same shape and dtype as ``x`` containing the element-wise
     logistic/sigmoid function.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.nn.sigmoid`: an alternative API for this functionality.
   """
@@ -685,6 +755,9 @@ def sin(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     sine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
@@ -715,6 +788,9 @@ def cos(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     cosine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.sin`: elementwise sine.
@@ -932,6 +1008,9 @@ def sqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
   Returns:
     An array of the same shape and dtype as ``x`` containing the square root.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     :func:`jax.lax.pow`: Elementwise power.
     :func:`jax.lax.cbrt`: Elementwise cube root.
@@ -960,6 +1039,9 @@ def rsqrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> 
     An array of the same shape and dtype as ``x`` containing the
     reciporical square root.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     :func:`jax.lax.pow`: Elementwise power.
     :func:`jax.lax.sqrt`: Elementwise square root.
@@ -986,6 +1068,9 @@ def cbrt(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> A
 
   Returns:
     An array of the same shape and dtype as ``x`` containing the cube root.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     :func:`jax.lax.pow`: Elementwise power.
@@ -1240,6 +1325,93 @@ def mulhi(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   x, y = core.auto_insert_reshard(x, y)
   return mulhi_p.bind(x, y)
+
+
+@export
+def fma(a: ArrayLike, b: ArrayLike, c: ArrayLike) -> Array:
+  r"""Elementwise fused multiply-add: :math:`a \times b + c`.
+
+  Computes ``a * b + c`` with a single IEEE-754 rounding
+  (``fusedMultiplyAdd(a, b, c)``), as if the intermediate product ``a * b`` and
+  sum ``(a * b) + c`` were computed with unbounded range and precision and
+  rounded once to the output dtype. This function lowers directly to the
+  `stablehlo.fma`_ operation.
+
+  Note that upcasting the inputs to a wider floating-point dtype, computing
+  ``fma`` or ``a * b + c`` in that dtype, and rounding back to the target dtype
+  is not equivalent to ``fma`` because of double rounding (and intermediate
+  overflow or underflow when the wider type has the same exponent range, such
+  as ``bfloat16`` and ``float32``). On targets without a native fused
+  multiply-add instruction for the input dtype, ``fma`` is either emulated in
+  software to guarantee single-rounded semantics (as on TPU for ``float32``,
+  ``bfloat16``, and ``float16``, which may be significantly slower than
+  :func:`jax.lax.fmuladd`) or rejected as unimplemented during compilation
+  (such as ``float16`` and ``bfloat16`` on CPU, ``bfloat16`` on pre-Ampere CUDA
+  GPUs, or sub-16-bit floating-point types).
+
+  Args:
+    a, b, c: Input arrays. Must have matching floating-point dtypes. Any
+      non-scalar inputs must have the same number of dimensions and be
+      broadcast compatible.
+
+  Returns:
+    An array of the same dtype and broadcasted shape as the inputs containing
+    the single-rounded fused multiply-add result.
+
+  See also:
+    - :func:`jax.lax.fmuladd`: Elementwise multiply-add where fusion is
+      optional.
+    - :func:`jax.lax.mul`: Elementwise multiplication.
+    - :func:`jax.lax.add`: Elementwise addition.
+
+  .. _stablehlo.fma: https://openxla.org/stablehlo/spec#fma
+  """
+  a, b, c = core.auto_insert_reshard(a, b, c)
+  return fma_p.bind(a, b, c)
+
+
+@export
+def fmuladd(a: ArrayLike, b: ArrayLike, c: ArrayLike) -> Array:
+  r"""Elementwise multiply-add: :math:`a \times b + c`.
+
+  For each element, computes ``a * b + c`` either as a single-rounded IEEE-754
+  fused multiply-add (:func:`jax.lax.fma`) or as a two-rounded multiply
+  followed by an add (``lax.add(lax.mul(a, b), c)``) in the input dtype. For
+  floating-point dtypes narrower than ``float32`` (such as ``float16``,
+  ``bfloat16``, or 8-bit and 4-bit floating-point types), the implementation
+  may alternatively upcast ``a``, ``b``, and ``c`` to ``float32``, evaluate
+  either ``fma`` or ``add(mul(a, b), c)`` in ``float32``, and round the result
+  back to the input dtype.
+
+  The choice is implementation-defined and typically uses a hardware FMA
+  instruction when one is available for the target dtype and device, or in
+  ``float32`` for narrower floating-point dtypes. On TPU, ``fmuladd`` lowers to
+  ``lax.add(lax.mul(a, b), c)``. On CUDA and ROCm GPUs, it lowers to
+  `stablehlo.fma`_ for ``float16``, ``float32``, and ``float64``, and upcasts
+  other narrow floating-point dtypes to ``float32`` `stablehlo.fma`_. On CPU
+  and other platforms, it lowers to `stablehlo.fma`_ for ``float32`` and
+  ``float64``, and upcasts narrower floating-point dtypes to ``float32``
+  `stablehlo.fma`_.
+
+  Args:
+    a, b, c: Input arrays. Must have matching floating-point dtypes. Any
+      non-scalar inputs must have the same number of dimensions and be
+      broadcast compatible.
+
+  Returns:
+    An array of the same dtype and broadcasted shape as the inputs containing
+    the multiply-add result.
+
+  See also:
+    - :func:`jax.lax.fma`: Elementwise fused multiply-add with single IEEE-754
+      rounding.
+    - :func:`jax.lax.mul`: Elementwise multiplication.
+    - :func:`jax.lax.add`: Elementwise addition.
+
+  .. _stablehlo.fma: https://openxla.org/stablehlo/spec#fma
+  """
+  a, b, c = core.auto_insert_reshard(a, b, c)
+  return fmuladd_p.bind(a, b, c)
 
 
 @export
@@ -1659,11 +1831,26 @@ def convert_element_type(operand: ArrayLike,
     - :func:`jax.lax.bitcast_convert_type`: cast bits directly to a new dtype.
 
   .. _stablehlo.convert: https://openxla.org/stablehlo/spec#convert
-  .. _x64 mode: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+  .. _x64 mode: https://docs.jax.dev/en/latest/101/default_dtypes.html
   """
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
   return _convert_element_type(operand, new_dtype, weak_type=False)
+
+
+def _clamp_and_cast_index(x: ArrayLike, dtype: DTypeLike) -> Array:
+  """Casts `x` to `dtype`, clamping unsigned values that exceed `dtype`'s max."""
+  x_dtype = dtypes.dtype(x)
+  if (
+      dtypes.issubdtype(x_dtype, np.unsignedinteger)
+      and dtypes.iinfo(x_dtype).max > dtypes.iinfo(dtype).max
+  ):
+    max_val = dtypes.iinfo(dtype).max
+    if isinstance(x, (int, np.integer)):
+      x = _min(int(x), max_val)
+    else:
+      x = min(x, _const(x, max_val))
+  return convert_element_type(x, dtype)
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
@@ -1676,7 +1863,6 @@ def _convert_element_type(
     operand = jax_array_method()
 
   old_dtype = dtypes.dtype(operand)
-  weak_type = bool(weak_type)
 
   if (isinstance(new_dtype, dtypes.ExtendedDType) or
       isinstance(old_dtype, dtypes.ExtendedDType)):
@@ -1936,7 +2122,7 @@ def composite(
         name=name,
         attributes=tuple(attributes),
         version=version,
-        jaxpr=closed_jaxpr,
+        call_jaxpr=closed_jaxpr,
     )
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -1949,24 +2135,13 @@ def _composite_lowering(
     name: str,
     attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
-    jaxpr: core.Jaxpr,
+    call_jaxpr: core.Jaxpr,
 ):
-  """Makes composite which calls the implementation function.
-
-  Lowering a composite primitive to a ``stablehlo.composite`` op.
-
-  Args:
-    ctx: The MLIR context.
-    *args: The arguments to the composite.
-    name: The name of the composite.
-    attributes: The attributes of the composite.
-    version: The version of the composite.
-    jaxpr: The jaxpr of the underlying composite.
-
-  Returns:
-    The results of the composite.
-  """
-  const_args_and_avals = core.jaxpr_const_args(jaxpr)
+  const_args_and_avals = (
+      core.jaxpr_const_args(call_jaxpr)
+      if ctx.module_context.lowering_parameters.hoist_constants_as_args
+      else []
+  )
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = tuple(
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -1975,7 +2150,7 @@ def _composite_lowering(
   in_avals = (*const_avals, *ctx.avals_in)
   func_op, _, _ = mlir.lower_called_computation(
       name,
-      jaxpr,
+      call_jaxpr,
       ctx.module_context,
       len(const_args),
       in_avals,
@@ -1989,7 +2164,10 @@ def _composite_lowering(
     if v is not None:
       composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
-  flat_args, _ = mlir.ir_tree_registry.flatten(const_arg_values + args)
+  # lower_jaxpr_to_fun adds dim_var_values to the decomposition. The same
+  # variables must be added to the composite.
+  flat_args, _ = mlir.ir_tree_registry.flatten(
+      (*ctx.dim_var_values, *const_arg_values, *args))
   return hlo.CompositeOp(
       func_op.type.results,
       flat_args,
@@ -2000,13 +2178,13 @@ def _composite_lowering(
   ).results
 
 
-def _composite_impl(*args, jaxpr, **_):
-  return core.jaxpr_as_fun(jaxpr)(*args)
+def _composite_impl(*args, call_jaxpr, **_):
+  return core.jaxpr_as_fun(call_jaxpr)(*args)
 
 
-def _composite_abstract_eval(*args, jaxpr, **_):
+def _composite_abstract_eval(*args, call_jaxpr, **_):
   del args
-  return jaxpr.out_avals
+  return call_jaxpr.out_avals
 
 
 def composite_jvp(*args, **_):
@@ -2031,6 +2209,7 @@ composite_p = core.Primitive("composite")
 composite_p.def_impl(_composite_impl)
 composite_p.def_abstract_eval(_composite_abstract_eval)
 composite_p.multiple_results = True
+composite_p.to_lojax = partial(pe._eval_jaxpr_to_lojax, composite_p)
 ad.primitive_jvps[composite_p] = composite_jvp
 ad.primitive_transposes[composite_p] = composite_transpose
 mlir.register_lowering(composite_p, _composite_lowering)
@@ -2077,8 +2256,12 @@ def split(operand: ArrayLike, sizes: Sequence[DimSize],
     taken along ``axis``.
   """
   operand = asarray(operand)
-  return split_p.bind(operand, sizes=tuple(sizes),
-                      axis=canonicalize_axis(axis, operand.ndim))
+  sizes = tuple(sizes)
+  axis = canonicalize_axis(axis, operand.ndim)
+  if len(sizes) == 1:
+    _split_shape_rule(core.typeof(operand), sizes=sizes, axis=axis)
+    return [operand]
+  return split_p.bind(operand, sizes=sizes, axis=axis)
 
 
 def stack(operands: Sequence[ArrayLike], axis: int = 0) -> Array:
@@ -2341,6 +2524,20 @@ class DotAlgorithmPreset(enum.Enum):
   BF16_BF16_F32_X9 = enum.auto()
   """Like ``BF16_BF16_F32_X3``, but using 9 operations instead of 3."""
 
+  F8E4M3FN_F8E4M3FN_F32_X3 = enum.auto()
+  """Accepts ``bfloat16`` or ``float32`` inputs, scales operands to account for
+  the narrower ``float8_e4m3fn`` exponent range, decomposes each into an initial
+  ``float8_e4m3fn`` term and a residual term, and computes 3 ``float8_e4m3fn``
+  dot products (dropping the residual by residual product) accumulated in
+  ``float32``.
+  """
+
+  F8E4M3FN_F8E4M3FN_F32_X4 = enum.auto()
+  """Like ``F8E4M3FN_F8E4M3FN_F32_X3``, but using all 4 ``float8_e4m3fn`` dot
+  products, including the residual by residual product for higher accuracy,
+  accumulated in ``float32``.
+  """
+
   TF32_TF32_F32 = enum.auto()
   TF32_TF32_F32_X3 = enum.auto()
   """The ``_X3`` suffix indicates that the algorithm uses 3 operations to
@@ -2369,14 +2566,18 @@ class DotAlgorithmPreset(enum.Enum):
         return None
       case DotAlgorithmPreset.F16_F16_F16 | DotAlgorithmPreset.F16_F16_F32:
         return (np.float16,)
-      case (
-          DotAlgorithmPreset.BF16_BF16_BF16 |
-          DotAlgorithmPreset.BF16_BF16_F32
-      ):
-        # These algorithms support either f32 or bf32 input storage types.
+      case DotAlgorithmPreset.BF16_BF16_BF16 | DotAlgorithmPreset.BF16_BF16_F32:
+        # These algorithms support either f32 or bf16 input storage types.
         # If either of those types are provided as input, we use the provided
         # type. If not, we explicitly cast to bfloat16.
         return (dtypes.bfloat16, np.float32)
+      case (
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+      ):
+        # Preserve bfloat16 and float32 input storage types directly; cast other
+        # input types to float32 to avoid intermediate bfloat16 truncation.
+        return (np.float32, dtypes.bfloat16)
       case DotAlgorithmPreset.F64_F64_F64:
         return (np.float64,)
       case _:
@@ -2434,6 +2635,11 @@ class DotAlgorithmPreset(enum.Enum):
           return (np.float32, dtypes.bfloat16)
         else:
           return (np.float32,)
+      case (
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+      ):
+        return (np.float32, dtypes.bfloat16)
       case _:
         accumulation_type = self.accumulation_type
         return None if accumulation_type is None else (accumulation_type,)
@@ -2461,6 +2667,7 @@ class DotAlgorithmPreset(enum.Enum):
             np.dtype(dtypes.float8_e3m4),
             np.dtype(dtypes.float8_e4m3),
             np.dtype(dtypes.float8_e8m0fnu),
+            np.dtype(dtypes.float8_e5m3fnu),
         ]
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
@@ -2493,6 +2700,20 @@ class DotAlgorithmPreset(enum.Enum):
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 6, False)
       case DotAlgorithmPreset.BF16_BF16_F32_X9:
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 9, False)
+      case (
+          DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+          | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+      ):
+        if jaxlib_extension_version < 514:
+          raise ValueError(
+              f"The dot algorithm '{self}' requires jaxlib_extension_version "
+              '>= 514.'
+          )
+        f8 = ir.Float8E4M3FNType.get()
+        num_ops = (
+            3 if self == DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3 else 4
+        )
+        return hlo.DotAlgorithm.get(f8, f8, f32, 1, 1, num_ops, False)
       case DotAlgorithmPreset.TF32_TF32_F32:
         return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 1, False)
       case DotAlgorithmPreset.TF32_TF32_F32_X3:
@@ -2505,26 +2726,30 @@ class DotAlgorithmPreset(enum.Enum):
         return None
 
 
-PrecisionLike = Union[
-    None,
-    str,
-    Precision,
-    tuple[str, str],
-    tuple[Precision, Precision],
-    DotAlgorithm,
-    DotAlgorithmPreset,
-]
-CanonicalPrecision = Union[
-    None,
-    tuple[Precision, Precision],
-    DotAlgorithm,
-    DotAlgorithmPreset,
-]
+PrecisionLike = (
+    None
+    | str
+    | Precision
+    | tuple[str, str]
+    | tuple[Precision, Precision]
+    | DotAlgorithm
+    | DotAlgorithmPreset
+)
+CanonicalPrecision = (
+    None
+    | tuple[Precision, Precision]
+    | DotAlgorithm
+    | DotAlgorithmPreset
+)
 
 
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
+
+def _reduction_order_kw(reduction_order: Any) -> dict[str, Any]:
+  norm = reduction_order_lib.normalize_order(reduction_order)
+  return {} if norm is None else {'reduction_order': norm}
 
 # TODO(jakevdp): consider deprecating jax.lax.dot_general.
 def dot_general(lhs: ArrayLike, rhs: ArrayLike,
@@ -2532,7 +2757,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike,
                 precision: PrecisionLike = None,
                 preferred_element_type: DTypeLike | None = None,
                 *,
-                out_sharding=None) -> Array:
+                out_sharding=None, reduction_order: Any = None) -> Array:
   """Alias of :func:`jax.lax.dot`.
 
   Prefer use of :func:`jax.lax.dot` directly, but note that it requires
@@ -2540,14 +2765,14 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike,
   rather than position.
   """
   return dot(lhs, rhs, dimension_numbers=dimension_numbers, precision=precision,
-             preferred_element_type=preferred_element_type, out_sharding=out_sharding)
+             preferred_element_type=preferred_element_type, out_sharding=out_sharding, reduction_order=reduction_order)
 
 
 def dot(lhs: ArrayLike, rhs: ArrayLike, *,
         dimension_numbers: DotDimensionNumbers | None = None,
         precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None,
-        out_sharding=None) -> Array:
+        out_sharding=None, reduction_order: Any = None) -> Array:
   """General dot product/contraction operator.
 
   This operation lowers directly to the `stablehlo.dot_general`_ operation.
@@ -2626,7 +2851,7 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type,
-                            out_sharding=out_sharding)
+                            out_sharding=out_sharding, **_reduction_order_kw(reduction_order))
 
 
 def ragged_dot(
@@ -2637,7 +2862,9 @@ def ragged_dot(
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
     out_sharding: NamedSharding | P | None = None,
-    ) -> Array:
+    *,
+    reduction_order: Any = None,
+) -> Array:
   """Ragged matrix multiplication.
 
   Args:
@@ -2646,7 +2873,7 @@ def ragged_dot(
     group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
     precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. () shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to 0.
 
   Results:
     (m, n) shaped array with preferred_element_type element type.
@@ -2660,6 +2887,7 @@ def ragged_dot(
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
       out_sharding=out_sharding,
+      reduction_order=reduction_order,
   )
 
 
@@ -2718,6 +2946,8 @@ def ragged_dot_general(
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
     out_sharding: NamedSharding | P | None = None,
+    *,
+    reduction_order: Any = None,
 ) -> Array:
   """Ragged matrix multiplication.
 
@@ -2754,8 +2984,8 @@ def ragged_dot_general(
       :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for
       :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that indicates the group in
-      group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. () shaped array that indicates the group in
+      group_sizes to start computing from. If not specified, defaults to 0.
 
   Results:
     An array whose shape is the same as that produced by `dot_general`, with an
@@ -2764,6 +2994,9 @@ def ragged_dot_general(
   """
   lhs, rhs, group_sizes = core.auto_insert_reshard(lhs, rhs, group_sizes)
   out_sharding = canonicalize_sharding(out_sharding, 'ragged_dot_general')
+  if preferred_element_type is not None:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, 'ragged_dot_general')
   return ragged_dot_general_p.bind(
       lhs,
       rhs,
@@ -2773,6 +3006,7 @@ def ragged_dot_general(
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
       out_sharding=out_sharding,
+      **_reduction_order_kw(reduction_order),
   )
 
 
@@ -3340,7 +3574,7 @@ def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
     raise ValueError(f"Unsupported dtype for min: {dtype}")
 
 def reduce_sum(operand: ArrayLike, axes: Sequence[int], *,
-               out_sharding=None) -> Array:
+               out_sharding=None, reduction_order: Any = None) -> Array:
   """Compute the sum of elements over one or more array axes.
 
   Args:
@@ -3365,7 +3599,8 @@ def reduce_sum(operand: ArrayLike, axes: Sequence[int], *,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
   out_sharding = canonicalize_sharding(out_sharding, 'reduce_sum')
-  return reduce_sum_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding)
+  return reduce_sum_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding,
+                           **_reduction_order_kw(reduction_order))
 
 def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
   """Compute the product of elements over one or more array axes.
@@ -3394,7 +3629,7 @@ def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_prod_p.bind(operand, axes=tuple(axes))
 
 def reduce_max(operand: ArrayLike, axes: Sequence[int], *,
-               out_sharding=None) -> Array:
+               out_sharding=None, reduction_order: Any = None) -> Array:
   """Compute the maximum of elements over one or more array axes.
 
   Args:
@@ -3414,7 +3649,8 @@ def reduce_max(operand: ArrayLike, axes: Sequence[int], *,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
   out_sharding = canonicalize_sharding(out_sharding, 'reduce_max')
-  return reduce_max_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding)
+  return reduce_max_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding,
+                           **_reduction_order_kw(reduction_order))
 
 def reduce_min(operand: ArrayLike, axes: Sequence[int], *,
                out_sharding=None) -> Array:
@@ -3556,6 +3792,7 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
                  is_stable: bool = True) -> tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies the same permutation to ``values``."""
   dimension = canonicalize_axis(dimension, len(keys.shape))
+  keys, values = core.auto_insert_reshard(keys, values)
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
@@ -3597,8 +3834,7 @@ def top_k(
     >>> indices
     Array([4, 0, 2], dtype=int32)
   """
-  if core.is_constant_dim(k):
-    k = int(k)
+  k = core._canonicalize_dimension(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   axis = canonicalize_axis(axis, np.ndim(operand))
@@ -3631,7 +3867,9 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
-  if (sharding is not None and
+  has_unreduced = (isinstance(sharding, NamedSharding) and
+                   bool(sharding.spec.unreduced))
+  if (sharding is not None and not has_unreduced and
       isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
@@ -3639,7 +3877,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     return array.make_array_from_callback(
         shape, sharding, lambda _: shard, dtype=fill_dtype)
 
-  if sharding is not None and not sharding._is_concrete:
+  if sharding is not None and (not sharding._is_concrete or has_unreduced):
     return broadcast(fill_value, shape, out_sharding=sharding)
   else:
     return broadcast(fill_value, shape)
@@ -3653,14 +3891,32 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  return core.pvary(out, tuple(aval.mat.varying))
+  out = core.pvary(out, tuple(aval.mat.varying))
+  if aval.mat.reduced:
+    from jax._src.lax import parallel as lax_parallel  # type: ignore
+    out = lax_parallel.preduced(out, tuple(aval.mat.reduced))
+  if aval.mat.unreduced:
+    from jax._src.lax import parallel as lax_parallel  # type: ignore
+    if aval.mat.unreduced_kind is not UnreducedKind.sum:
+      raise ValueError(
+          'zeros_like_shaped_array only supports UnreducedKind.sum, got'
+          f' {aval.mat.unreduced_kind} on {aval}')
+    u_axes = tuple(aval.mat.unreduced)
+    out = lax_parallel.vary_unreduced_cast(core.pvary(out, u_axes), u_axes)
+  # TODO(yashkatariya): Add `out_layout` to `broadcast`.
+  if core.typeof(out).layout != aval.layout:
+    out = pjit.relayout(out, aval.layout)
+  return out
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def empty_like_shaped_array(aval):
   out = core.pvary(empty2(aval.dtype, memory_space=aval.memory_space),
                    tuple(aval.mat.varying))
   with use_abstract_mesh(aval.sharding.mesh):
-    return broadcast(out, aval.shape, out_sharding=aval.sharding)
+    out = broadcast(out, aval.shape, out_sharding=aval.sharding)
+  if core.typeof(out).layout != aval.layout:
+    out = pjit.relayout(out, aval.layout)
+  return out
 ad_util.aval_empty_likers[ShapedArray] = empty_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -3730,7 +3986,7 @@ def _stop_gradient(x):
   else:
     return ad_util.stop_gradient_p.bind(x)
 
-def stop_gradient(x: T) -> T:
+def stop_gradient[T](x: T) -> T:
   """Stops gradient computation.
 
   Operationally ``stop_gradient`` is the identity function, that is, it returns
@@ -3738,7 +3994,7 @@ def stop_gradient(x: T) -> T:
   gradients during forward or reverse-mode automatic differentiation. If there
   are multiple nested gradient computations, ``stop_gradient`` stops gradients
   for all of them. For some discussion of where this is useful, refer to
-  :ref:`stopping-gradients`.
+  :ref:`jax-301-stopping-gradients`.
 
   Args:
     x: array or pytree of arrays
@@ -3772,7 +4028,7 @@ def stop_gradient(x: T) -> T:
     This is used in a number of places within the JAX codebase; for example
     :func:`jax.nn.softmax` internally normalizes the input by its maximum
     value, and this maximum value is wrapped in ``stop_gradient`` for
-    efficiency. Refer to :ref:`stopping-gradients` for more discussion of
+    efficiency. Refer to :ref:`jax-301-stopping-gradients` for more discussion of
     the applicability of ``stop_gradient``.
   """
   return tree_util.tree_map(_stop_gradient, x)
@@ -3792,7 +4048,39 @@ def reduce_precision(operand: float | ArrayLike,
                                  mantissa_bits=mantissa_bits)
 
 def squeeze(array: ArrayLike, dimensions: Sequence[int]) -> Array:
-  """Squeeze any number of size 1 dimensions from an array."""
+  """Squeeze any number of size 1 dimensions from an array.
+
+  Args:
+    array: input array
+    dimensions: sequence of integers specifying axes to remove. If any specified axis
+      does not have a size of 1, an error is raised.
+
+  Returns:
+    Array with the specified size-1 dimensions removed.
+
+  See Also:
+    - :func:`jax.lax.expand_dims`: the inverse of ``squeeze``: add dimensions of size 1.
+    - :func:`jax.numpy.squeeze`: equivalent numpy API.
+
+  Examples:
+    >>> x = jnp.array([[[0]], [[1]], [[2]]])
+    >>> x.shape
+    (3, 1, 1)
+
+    Squeeze the specified size-1 dimensions:
+
+    >>> jax.lax.squeeze(x, dimensions=(1, 2))
+    Array([0, 1, 2], dtype=int32)
+    >>> _.shape
+    (3,)
+
+    Attempting to squeeze a non-unit axis results in an error:
+
+    >>> jax.lax.squeeze(x, dimensions=(0,)) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ValueError: cannot select an axis to squeeze out which has size not equal to one, got shape=(3, 1, 1) and dimensions=(0,)
+  """
   ndim = np.ndim(array)
   dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions and isinstance(array, Array):
@@ -3840,9 +4128,9 @@ def full_like(x: ArrayLike | DuckTypedArray,
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return dtype._rules.full(fill_shape, fill_value, dtype)
+  dtype_ = _dtype(dtype) if dtype is not None else _dtype(x)
+  if isinstance(dtype_, dtypes.ExtendedDType):
+    return dtype_._rules.full(fill_shape, fill_value, dtype_)
 
   if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
@@ -3858,14 +4146,14 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and hasattr(x, 'sharding')
         and x.sharding is not None
         and (x.sharding._is_concrete or not get_concrete_mesh().empty or
-             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh.are_all_axes_explicit))
+             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh._any_axis_explicit))
         and getattr(x, '_committed', True)
         and not weak_type
         and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # pyrefly: ignore[no-matching-overload]
     )
     if use_x_sharding:
       sharding = x.sharding  # pyrefly: ignore[missing-attribute]
-  val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
+  val = full(fill_shape, _convert_element_type(fill_value, dtype_, weak_type),
              sharding=sharding)
   val = _full_like_insert_pvary(val, x)
   return val
@@ -3881,7 +4169,19 @@ def _full_like_insert_pvary(val, x):
     return core.pvary(val, all_varying)
   else:
     val, _ = core.auto_insert_reshard(val, x)
-    return val
+    if not (isinstance(x, core.Tracer) and isinstance(x.aval, ShapedArray)):
+      return val
+    return _insert_reduced_unreduced(val, x.aval.mat)
+
+def _insert_reduced_unreduced(val, x_mat):
+  from jax._src.lax import parallel as lax_parallel  # type: ignore
+  if r := tuple(x_mat.reduced - typeof(val).mat.reduced):
+    val = lax_parallel.preduced(val, r)
+  if u := tuple(x_mat.unreduced - typeof(val).mat.unreduced):
+    # Keep the value on one device and 0 on the rest so the sum over `u` is it.
+    val = select(lax_parallel.axis_index(u) == 0, val, full_like(val, 0))
+    val = lax_parallel.vary_unreduced_cast(val, u)
+  return val
 
 def empty_like(x: ArrayLike | DuckTypedArray, *,
                dtype: DTypeLike | None = None,
@@ -3912,7 +4212,7 @@ def empty_like(x: ArrayLike | DuckTypedArray, *,
         and hasattr(x, 'sharding')
         and x.sharding is not None
         and (x.sharding._is_concrete or not get_concrete_mesh().empty or
-             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh.are_all_axes_explicit))
+             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh._any_axis_explicit))
         and getattr(x, '_committed', True)
         and not weak_type
         and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # pyrefly: ignore[no-matching-overload]
@@ -3981,11 +4281,86 @@ def batch_matmul(lhs: Array, rhs: Array,
 # as non-primitive to maintain a smaller set of autodiff primitives.
 
 def square(x: ArrayLike) -> Array:
-  r"""Elementwise square: :math:`x^2`."""
+  r"""Elementwise square: :math:`x^2`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  """
   return square_p.bind(x)
 
+def one_minus_square(x: ArrayLike) -> Array:
+  r"""Elementwise :math:`1 - x^2`.
+
+  Evaluates :math:`(1 + x)(1 - x)` to preserve precision when :math:`|x|` is
+  close to :math:`1`, while defining its primitive JVP rule directly as
+  :math:`-2x` to avoid catastrophic cancellation when differentiating near
+  :math:`x = 0`.
+  """
+  return one_minus_square_p.bind(x)
+
+def polynomial(
+    x: ArrayLike, coeffs: Sequence[ArrayLike], *, unroll: int | None = None
+) -> Array:
+  r"""Evaluates a polynomial using Horner's rule:
+
+  .. math::
+
+    P(x) = \sum_{k=0}^{N} a_k x^k = a_0 + x (a_1 + x (a_2 + \dots + x a_N))
+
+  The coefficients ``coeffs = (a_0, a_1, ..., a_N)`` are ordered from lowest
+  degree (:math:`a_0`, the constant term) to highest degree (:math:`a_N`, the
+  coefficient of :math:`x^N`). For floating-point inputs, each Horner step is
+  evaluated using :func:`jax.lax.fmuladd`.
+
+  Derivatives with respect to ``x`` are computed as lower-degree
+  polynomials (:math:`\sum_{k=1}^{N} k a_k x^{k-1}`), making first- and
+  higher-order differentiation cheaper than differentiating an open-coded
+  Horner loop.
+
+  Args:
+    x: Input array at which to evaluate the polynomial.
+    coeffs: Sequence of polynomial coefficients ``(a_0, a_1, ..., a_N)`` from
+      lowest to highest degree. Non-scalar coefficients must have the same rank
+      as ``x`` (or broadcastable size-1 dimensions).
+    unroll: Maximum number of terms to unroll directly in the lowered Horner
+      recurrence before falling back to :func:`jax.lax.scan`. Defaults to ``None``
+      (which uses an unroll threshold of 8).
+
+  Returns:
+    An array with the broadcast shape and dtype of ``x`` and ``coeffs``
+    containing the evaluated polynomial.
+
+  Examples:
+    Evaluate :math:`1 + 5x + 2x^2` at :math:`x = 3.0`:
+
+    >>> from jax import lax
+    >>> lax.polynomial(3.0, [1.0, 5.0, 2.0])
+    Array(34., dtype=float32, weak_type=True)
+  """
+  coeffs = tuple(coeffs)
+  dtype = typeof(x).dtype
+  c_args = [
+      _const(x, c) if not isinstance(c, core.Tracer) and np.ndim(c) == 0 else convert_element_type(c, dtype)
+      for c in coeffs
+  ]
+  if not c_args:
+    return _zeros(x)
+  if len(c_args) == 1:
+    out_shape = broadcasting_shape_rule('polynomial', typeof(x), typeof(c_args[0]))
+    out_sharding = broadcasting_sharding_rule('polynomial', typeof(x), typeof(c_args[0]))
+    return _maybe_broadcast(out_shape, c_args[0], out_sharding)
+  x, *c_args = core.auto_insert_reshard(x, *c_args)
+  kwargs = {} if unroll is None else {'unroll': unroll}
+  return polynomial_p.bind(x, *c_args, **kwargs)
+
 def reciprocal(x: ArrayLike) -> Array:
-  r"""Elementwise reciprocal: :math:`1 \over x`."""
+  r"""Elementwise reciprocal: :math:`1 \over x`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  """
   return integer_pow(x, -1)
 
 @export
@@ -4006,6 +4381,9 @@ def tan(x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None) -> Ar
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
@@ -4030,6 +4408,9 @@ def asin(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.sin`: elementwise sine.
     - :func:`jax.lax.acos`: elementwise arc cosine.
@@ -4050,6 +4431,9 @@ def acos(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc cosine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.cos`: elementwise cosine.
     - :func:`jax.lax.asin`: elementwise arc sine.
@@ -4069,6 +4453,9 @@ def atan(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the
     element-wise arc tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.tan`: elementwise tangent.
@@ -4091,6 +4478,9 @@ def sinh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
     - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
@@ -4110,6 +4500,9 @@ def cosh(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     hyperbolic cosine.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
@@ -4131,6 +4524,9 @@ def asinh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic sine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -4151,6 +4547,9 @@ def acosh(x: ArrayLike) -> Array:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic cosine.
 
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
   See also:
     - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
     - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
@@ -4170,6 +4569,9 @@ def atanh(x: ArrayLike) -> Array:
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
     inverse hyperbolic tangent.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
 
   See also:
     - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
@@ -4240,22 +4642,33 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval,
 def default_unop_reduced_rule(aval):
   return getr(aval)
 
+
 def unop_ur_rule(name, aval, **kwargs):
   reduced = default_unop_reduced_rule(aval)
-  if any(getu(aval)):
-    raise NotImplementedError(
-        f'unreduced rule for {name} is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
+  if getu(aval)[0]:
+    raise core.ShardingTypeError(
+        f'{name} is a non-linear operation and cannot accept input that is'
+        f' unreduced. Got {aval}')
   return frozenset(), reduced, None
 
-def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
+def unop_layout_rule(out_aval, aval, **kwargs):
+  return aval.layout
+
+_unop_collective_rule = (
+    lambda in_avals, out_avals, **params: mlir.PartitioningRule())
+
+def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
+         ur_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
                        supports_narrow_ints=supports_narrow_ints)
-  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
-                            sharding_rule=_attrgetter('sharding'),
-                            vma_rule=lambda x, **kwargs: x.mat.varying,
-                            ur_rule=partial(unop_ur_rule, name))
+  prim = standard_primitive(
+      _attrgetter('shape'), dtype_rule, name,
+      sharding_rule=_attrgetter('sharding'),
+      vma_rule=lambda x, **kwargs: x.mat.varying,
+      ur_rule=partial(unop_ur_rule, name) if ur_rule is None else ur_rule,
+      layout_rule=unop_layout_rule)
   batching.defvectorized(prim)
+  mlir.shard_map_collective_rules[prim] = _unop_collective_rule
   return prim
 
 standard_unop = partial(unop, _identity)
@@ -4352,7 +4765,7 @@ def broadcasting_sharding_rule(name, *avals, **kwargs):
 
 def replicated_axes(aval, mesh):
   spec = aval.sharding.spec
-  flat_spec = frozenset(s for s in flatten_spec(spec) if s is not None)
+  flat_spec = frozenset(flatten_spec_no_none(spec))
   return frozenset(mesh.axis_names) - (
       flat_spec | spec.unreduced | spec.reduced | aval.mat.varying |
       aval.mat.unreduced | aval.mat.reduced)
@@ -4382,11 +4795,75 @@ def default_nary_reduced_rule(*avals, **params):
 
 def nary_ur_rule(name, *avals, **params):
   reduced = default_nary_reduced_rule(*avals, **params)
-  if any(getu(a) for a in avals):
-    raise NotImplementedError(
-        f'unreduced rule for {name} is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
+  if any(getu(a)[0] for a in avals):
+    raise core.ShardingTypeError(
+        f'{name} is a non-linear operation and cannot accept inputs that are'
+        f' unreduced. Got {avals}')
   return frozenset(), reduced, None
+
+
+def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
+  prev_aval = None
+  for a in avals:
+    if not a.ndim:
+      continue
+    if prev_aval is not None and prev_aval.layout != a.layout:
+      raise ValueError(
+          f'layout of all inputs passed to `{name}` must be the same. Got one'
+          f' operand with layout: {prev_aval.layout} and another operand with'
+          f' layout: {a.layout}')
+    prev_aval = a
+  if prev_aval is None:
+    raise NotImplementedError
+  return prev_aval.layout
+
+
+def _naryop_collective_rule(in_avals, out_avals, **params):
+  from jax._src.lax import parallel
+
+  out_aval, *rest = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  assert all(o.sharding.spec.partitions == out_partitions for o in rest)
+
+  if all(not a.ndim or a.sharding.spec.partitions == out_partitions
+         for a in in_avals):
+    return mlir.PartitioningRule()
+
+  for a in in_avals:
+    if a.ndim and any(s not in (out_s, None) for s, out_s in
+                      zip(a.sharding.spec.partitions, out_partitions)):
+      raise NotImplementedError
+
+  mesh = get_abstract_mesh()
+
+  def _slice_to_shard(x_shard, global_in_aval):
+    if (not global_in_aval.ndim or
+        global_in_aval.sharding.spec.partitions == out_partitions):
+      return x_shard
+
+    starts, sizes, needs_slice = [], [], False
+    for d, in_s, out_s in safe_zip(
+        x_shard.shape, global_in_aval.sharding.spec.partitions, out_partitions):
+      if in_s == out_s or d == 1:
+        starts.append(np.int32(0))
+        sizes.append(d)
+      else:
+        out_axes_d = out_s if isinstance(out_s, tuple) else (out_s,)
+        local_d = d // math.prod(mesh.shape[a] for a in out_axes_d)
+        shard_idx = parallel.axis_index(out_s)
+        starts.append(shard_idx * local_d)
+        sizes.append(local_d)
+        needs_slice = True
+    if needs_slice:
+      x_shard = slicing.dynamic_slice(
+          x_shard, starts, sizes, allow_negative_indices=False)
+    return x_shard
+
+  def in_collective(*xs):
+    return tuple(_slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals))
+
+  return mlir.PartitioningRule(in_collective=in_collective)
+
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, ur_rule=None):
@@ -4395,11 +4872,14 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
   sharding_rule = partial(broadcasting_sharding_rule, name)
+  layout_rule = partial(broadcasting_layout_rule, name)
   prim = standard_primitive(
       shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
       vma_rule=partial(core.standard_vma_rule, name),
-      ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule)
+      ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule,
+      layout_rule=layout_rule)
   batching.defbroadcasting(prim)
+  mlir.shard_map_collective_rules[prim] = _naryop_collective_rule
   return prim
 standard_naryop = partial(naryop, input_dtype)
 
@@ -4459,7 +4939,7 @@ def _nary_lower_hlo(
   out = op(*args)
   if accuracy:
     out = op(*args, result_accuracy=accuracy_attr(accuracy))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _unary_with_accuracy_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
@@ -4479,12 +4959,36 @@ _any = _int | _float | _complex | _bool
 _bool_or_int = _int | _bool
 _ordered = _int | _float | _bool
 
-neg_p = standard_unop(_num, 'neg')
+def _neg_ur_rule(aval, **kwargs):
+  out_u, _ = getu(aval)
+  return out_u, getr(aval), UnreducedKind.sum if out_u else None
+
+neg_p = unop(_identity, _num, 'neg', ur_rule=_neg_ur_rule)
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.negate))
+lax_utils.register_unreduced_lojax(neg_p)
 
 sign_p = standard_unop(_num, 'sign')
-ad.defjvp_zero(sign_p)
+
+def _sign_jvp_rule(g, ans, x):
+  if not _iscomplex(x):
+    # sign is piecewise constant on the real line, so its derivative is zero
+    # (we also take it to be zero at the discontinuity at x == 0).
+    return ad_util.p2tz(ans)
+  # For complex inputs, sign(x) = x / |x| is not holomorphic. For x != 0,
+  # sign(x) = exp(i * theta) with theta = angle(x), so its differential is
+  #   d sign(x) = i * sign(x) * dtheta, where
+  #   dtheta = Im(dx / x) = Im(conj(sign(x)) * dx) / |x|.
+  # This is equivalent to the Wirtinger form
+  #   d sign(x) = (dx - sign(x)**2 * conj(dx)) / (2 * |x|),
+  # but does not rely on |sign(x)| == 1 (which holds only approximately in
+  # floating point) to cancel the component of dx parallel to x.
+  # sign is not differentiable at x == 0; there sign(x) == 0, so this evaluates
+  # to a zero tangent, matching the real case.
+  dtheta = div(imag(mul(conj(ans), g)), _replace_zero(abs(x)))
+  return mul(ans, complex(_zeros(dtheta), dtheta))
+
+ad.defjvp2(sign_p, _sign_jvp_rule)
 
 def _sign_lower_hlo(ctx, x):
   x_aval, = ctx.avals_in
@@ -4500,6 +5004,12 @@ mlir.register_lowering(sign_p, _sign_lower_hlo)
 
 nextafter_p = standard_naryop([_float, _float], 'nextafter')
 mlir.register_lowering(nextafter_p, partial(_nary_lower_hlo, chlo.next_after))
+ad.defjvp(
+    nextafter_p,
+    lambda xdot, x, y: _maybe_broadcast(
+        broadcast_shapes(np.shape(x), np.shape(y)), xdot,
+        broadcast_shardings(typeof(x), typeof(y))),
+    None)
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
@@ -4535,14 +5045,16 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  x_aval, = ctx.avals_in
-  log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
-  log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
-  return [
-      hlo.exponential(
-          hlo.multiply(log2, x), result_accuracy=accuracy_attr(accuracy)
-      )
-  ]
+  if ctx.is_forward_compat() or xla_version < 80:
+    x_aval, = ctx.avals_in
+    log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
+    log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
+    return [
+        hlo.exponential(
+            hlo.multiply(log2, x), result_accuracy=accuracy_attr(accuracy)
+        )
+    ]
+  return _nary_lower_hlo(hlo.exp2, ctx, x, accuracy=accuracy)  # pyrefly: ignore[missing-attribute]
 
 mlir.register_lowering(exp2_p, _exp2_lower)
 core.pp_eqn_rules[exp2_p] = _unary_with_accuracy_pp_rule
@@ -4552,14 +5064,35 @@ ad.defjvp(log_p, lambda g, x, **kwargs: div(g, x))
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 core.pp_eqn_rules[log_p] = _unary_with_accuracy_pp_rule
 
+log2_p = standard_unop(_float | _complex, 'log2')
+ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
+
+def _log2_lower(ctx, x, accuracy):
+  if ctx.is_forward_compat() or xla_version < 80:
+    x_aval, = ctx.avals_in
+    log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
+    if np.issubdtype(x_aval.dtype, np.complexfloating):
+      re = hlo.real(log_x)
+      im = hlo.imag(log_x)
+      real_dtype = _real_dtype(x_aval.dtype)
+      one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, real_dtype))
+      one_over_ln2 = mlir.broadcast_in_dim(
+          ctx, one_over_ln2, core.ShapedArray(x_aval.shape, real_dtype), broadcast_dimensions=()
+      )
+      return [hlo.complex(hlo.multiply(re, one_over_ln2), hlo.multiply(im, one_over_ln2))]
+    else:
+      one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, x_aval.dtype))
+      one_over_ln2 = mlir.broadcast_in_dim(ctx, one_over_ln2, x_aval, broadcast_dimensions=())
+      return [hlo.multiply(log_x, one_over_ln2)]
+  return _nary_lower_hlo(hlo.log2, ctx, x, accuracy=accuracy)  # pyrefly: ignore[missing-attribute]
+
+mlir.register_lowering(log2_p, _log2_lower)
+core.pp_eqn_rules[log2_p] = _unary_with_accuracy_pp_rule
+
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(
     expm1_p,
-    lambda g, ans, x, accuracy: (
-        mul(g, exp(x, accuracy=accuracy))
-        if accuracy is AccuracyMode.HIGHEST
-        else mul(g, add(ans, _one(ans)))
-    ),
+    lambda g, ans, x, accuracy: mul(g, exp(x, accuracy=accuracy)),
 )
 mlir.register_lowering(expm1_p,
                        partial(_nary_lower_hlo, hlo.exponential_minus_one))
@@ -4570,36 +5103,102 @@ ad.defjvp(log1p_p, lambda g, x, **kwargs: div(g, add(x, _one(x))))
 mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.log_plus_one))
 core.pp_eqn_rules[log1p_p] = _unary_with_accuracy_pp_rule
 
+@custom_jvp
+def _tanh_sech2(x: Array) -> tuple[Array, Array]:
+  """Returns `(tanh(x), sech^2(x))` with a closed JVP.
+
+  Evaluating `sech^2(x)` as `(2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2` avoids
+  losing accuracy in `1 - tanh(x)^2` for large `|x|` and avoids premature
+  overflow or underflow when `2 * |x|` is out of range. Using a custom JVP
+  with `t' = s` and `s' = -2 * t * s` avoids subtracting nearly equal terms
+  in higher derivatives near `x = 0` and for large `|x|`.
+  """
+  x = asarray(x)
+  t = tanh(x, accuracy=AccuracyMode.HIGHEST)
+  if _iscomplex(x):
+    neg_x = select(ge(real(x), _const(real(x), 0)), neg(x), x)
+  else:
+    neg_x = neg(abs(x))
+  e = exp(neg_x, accuracy=AccuracyMode.HIGHEST)
+  sech = div(mul(_const(x, 2), e), add(_const(x, 1), square(e)))
+  return t, square(sech)
+
+
+@_tanh_sech2.defjvp
+def _tanh_sech2_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  t, s = _tanh_sech2(x)
+  s_dot = mul(s, x_dot)
+  return (t, s), (s_dot, mul(mul(_const(t, -2), t), s_dot))
+
+
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp2(
-    tanh_p,
-    lambda g, ans, x, accuracy: mul(g,
-        mul(_const(x, 4),
-            mul(logistic(mul(_const(x, 2), x), accuracy=accuracy),
-                logistic(mul(_const(x, -2), x), accuracy=accuracy)),
+
+
+def _tanh_jvp_rule(g, ans, x, accuracy):
+  if accuracy is AccuracyMode.HIGHEST:
+    if config.jax_tanh_sech_jvp.value:
+      return mul(g, _tanh_sech2(x)[1])
+    return mul(
+        g,
+        mul(
+            _const(x, 4),
+            mul(
+                logistic(mul(_const(x, 2), x), accuracy=accuracy),
+                logistic(mul(_const(x, -2), x), accuracy=accuracy),
+            ),
         ),
     )
-    if accuracy is AccuracyMode.HIGHEST
-    else mul(add(g, mul(g, ans)), sub(_one(x), ans)),
-)
+  return mul(g, one_minus_square(ans))
+
+
+ad.defjvp2(tanh_p, _tanh_jvp_rule)
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
 
 logistic_p = standard_unop(_float | _complex, 'logistic')
-ad.defjvp2(
-    logistic_p,
-    lambda g, ans, x, accuracy: mul(g, mul(ans, logistic(neg(x))))
-    if accuracy is AccuracyMode.HIGHEST
-    else mul(g, mul(ans, sub(_one(ans), ans))),
-)
+
+
+def _logistic_jvp_rule(g, ans, x, accuracy):
+  if accuracy is AccuracyMode.HIGHEST:
+    if config.jax_tanh_sech_jvp.value:
+      return mul(
+          g, mul(_const(x, 0.25), _tanh_sech2(mul(_const(x, 0.5), x))[1])
+      )
+    return mul(g, mul(ans, logistic(neg(x))))
+  return mul(g, mul(ans, sub(_one(ans), ans)))
+
+
+ad.defjvp2(logistic_p, _logistic_jvp_rule)
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
-def logistic_impl(x, accuracy):
-  del accuracy
-  one = _const(x, 1)
-  return div(one, add(one, exp(neg(x))))
+def logistic_impl(x, accuracy, *, preserve_subnormals=False):
+  one = full_like(x, 1)
+  if (
+      preserve_subnormals
+      or x.dtype == np.float16
+      or (
+          accuracy is AccuracyMode.HIGHEST
+          and config.jax_accurate_logistic.value
+      )
+  ) and dtypes.issubdtype(x.dtype, np.floating):
+    # For x < 0, 1 / (1 + exp(-x)) loses accuracy when adding 1 to exp(-x)
+    # and overflows exp(-x) to inf (yielding 0) well before subnormal
+    # logistic(x) underflows. Computing e = exp(-|x|) keeps the exponent
+    # non-positive so exp never overflows.
+    e = exp(-abs(x), accuracy=accuracy)
+    return select(x >= _const(x, 0), one, e) / (one + e)
+  return one / (one + exp(-x))
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
+# Unlike CPU and TPU, GPU preserves subnormals by default.
+mlir.register_lowering(
+    logistic_p,
+    mlir.lower_fun(
+        partial(logistic_impl, preserve_subnormals=True), multiple_results=False
+    ),
+    platform='gpu',
+)
 
 def _logistic_tpu_lowering(ctx, x, *, accuracy):
   old_impl = lambda: mlir.lower_fun(logistic_impl, multiple_results=False
@@ -4685,11 +5284,25 @@ mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 core.pp_eqn_rules[tan_p] = _unary_with_accuracy_pp_rule
 
 asin_p = standard_unop(_float | _complex, 'asin')
-ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(sub(_const(x, 1), square(x)))))
-mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
+ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
+
+
+def _asin_lowering(ctx, x, **params):
+  use_chlo = jaxlib_extension_version >= 512 and not ctx.is_forward_compat()
+  if use_chlo or dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return _nary_lower_hlo(chlo.asin, ctx, x, **params)
+  def _asin_real(x):
+    one = _const(x, 1)
+    return atan2(x, sqrt(mul(sub(one, x), add(one, x))))
+  return mlir.lower_fun(_asin_real, multiple_results=False)(ctx, x, **params)
+
+mlir.register_lowering(asin_p, _asin_lowering)
+mlir.register_lowering(
+    asin_p, partial(_nary_lower_hlo, chlo.asin), platform='gpu'
+)
 
 acos_p = standard_unop(_float | _complex, 'acos')
-ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(sub(_const(x, 1), square(x))))))
+ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(one_minus_square(x)))))
 mlir.register_lowering(acos_p, partial(_nary_lower_hlo, chlo.acos))
 
 atan_p = standard_unop(_float | _complex, 'atan')
@@ -4697,9 +5310,37 @@ ad.defjvp(atan_p, lambda g, x: div(g, add(_const(x, 1), square(x))))
 mlir.register_lowering(atan_p, partial(_nary_lower_hlo, chlo.atan))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
-ad.defjvp(atan2_p,
-          lambda g, x, y: mul(g, div(y, add(square(x), square(y)))),
-          lambda g, x, y: mul(g, div(neg(x), add(square(x), square(y)))))
+
+
+def _atan2_jvp(primals, tangents):
+  # lax.atan2(x, y) computes theta = atan(x / y), which has derivative:
+  #   dtheta = d(x / y) / (1 + (x / y)^2) = (y * dx - x * dy) / (x^2 + y^2).
+  # For real inputs, x^2 + y^2 can overflow or underflow. Using
+  # (r, u1, u2) = hypot(x, y) = (sqrt(x^2 + y^2), x / r, y / r) factors out r:
+  #   dtheta = ((y / r) * dx - (x / r) * dy) / r = (u2 * dx - u1 * dy) / r,
+  # avoiding x^2 + y^2 overflow/underflow and keeping higher-order derivatives
+  # closed through _hypot_jvp (where dtheta is the same polar angle rate with
+  # (x1, x2) = (y, x)).
+  x, y = primals
+  dx, dy = tangents
+  out = atan2(x, y)
+  if _iscomplex(x):
+    # TODO(phawkins): Avoid overflow/underflow in x^2 + y^2 for complex inputs
+    # too (real hypot uses abs, which does not apply to complex atan2).
+    d = add(square(x), square(y))
+    tx = dx if type(dx) is ad_util.Zero else mul(dx, div(y, d))
+    ty = dy if type(dy) is ad_util.Zero else mul(dy, neg(div(x, d)))
+    t = ad.add_tangents(tx, ty)
+    return out, ad_util.p2tz(out) if type(t) is ad_util.Zero else t
+  r, u1, u2 = hypot(x, y)
+  num = ad.add_tangents(
+      dx if type(dx) is ad_util.Zero else mul(u2, dx),
+      dy if type(dy) is ad_util.Zero else neg(mul(u1, dy)),
+  )
+  return out, ad_util.p2tz(out) if type(num) is ad_util.Zero else div(num, r)
+
+
+ad.primitive_jvps[atan2_p] = _atan2_jvp
 mlir.register_lowering(atan2_p, partial(_nary_lower_hlo, hlo.atan2))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
@@ -4710,20 +5351,64 @@ cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
+def _asinh_jvp(g, x):
+  # Computes g * rsqrt(x**2 + 1) while avoiding overflow, catastrophic
+  # cancellation, and branch-cut sign errors:
+  # 1. Scaling: We scale by s = clamp(1, |x|*inv_t, max_scale) with
+  #    inv_t = 2**-(maxexp//2 - 2). For |x| <= 1/inv_t, s = 1 exactly
+  #    (introducing no rounding error). For larger finite |x|, x/s <= 1/inv_t
+  #    so (x/s)**2 never overflows. Clamping to finite max_scale ensures
+  #    inv_scale = 1/s > 0 when |x| = inf, avoiding inf * 0 = NaN.
+  # 2. Complex domain: Evaluating Re(z_s**2 + inv_scale**2) as
+  #    rx_s**2 + one_minus_square(ix_s) avoids catastrophic cancellation near
+  #    the branch points z = +-i, while evaluating Im as 2 * rx_s * ix_s avoids
+  #    adding +0.0, preserving IEEE 754 signed zeros (-0.0) along the branch
+  #    cuts.
+  inv_t = 2.0 ** -(dtypes.finfo(x.dtype).maxexp // 2 - 2)
+  max_scale = 2.0 ** (dtypes.finfo(x.dtype).maxexp // 2 + 2)
+  if _iscomplex(x):
+    rx, ix = real(x), imag(x)
+    max_abs = max(abs(rx), abs(ix))
+    scale = stop_gradient(
+        clamp(
+            _one(rx),
+            mul(max_abs, _const(rx, inv_t)),
+            _const(rx, max_scale)
+        )
+    )
+    inv_scale = reciprocal(scale)
+    rx_s = mul(rx, inv_scale)
+    ix_s = mul(ix, inv_scale)
+    re_w = add(square(rx_s), one_minus_square(ix_s))
+    im_w = mul(_const(rx_s, 2), mul(rx_s, ix_s))
+    r = rsqrt(complex(re_w, im_w))
+    deriv = select(
+        eq(max_abs, _const(rx, np.inf)),
+        _zeros(x),
+        complex(mul(real(r), inv_scale), mul(imag(r), inv_scale)),
+    )
+  else:
+    scale = stop_gradient(
+        clamp(_one(x), mul(abs(x), _const(x, inv_t)), _const(x, max_scale))
+    )
+    inv_scale = reciprocal(scale)
+    x_scaled = mul(x, inv_scale)
+    deriv = mul(inv_scale, rsqrt(add(square(x_scaled), square(inv_scale))))
+  return mul(g, deriv)
+
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(add(square(x), _one(x)))))
+ad.defjvp(asinh_p, _asinh_jvp)
 mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
-ad.defjvp(acosh_p,
-          # We use x^2-1 rather than (x+1)(x-1). The latter is more accurate
-          # for x near zero, but the function domain is x>=1.
-          lambda g, x: mul(g, rsqrt(sub(square(x), _one(x)))))
+ad.defjvp(
+    acosh_p,
+    lambda g, x: mul(g, mul(rsqrt(sub(x, _one(x))), rsqrt(add(x, _one(x))))),
+)
 mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.acosh))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
-ad.defjvp(atanh_p,
-          lambda g, x: mul(reciprocal(add(_one(x), x)), div(g, sub(_one(x), x))))
+ad.defjvp(atanh_p, lambda g, x: div(g, one_minus_square(x)))
 mlir.register_lowering(atanh_p, partial(_nary_lower_hlo, chlo.atanh))
 
 real_p = unop(_complex_basetype, _complex, 'real')
@@ -4784,19 +5469,116 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
+@custom_jvp
+def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
+  """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
+  # Rescale by a power of two so that (x1 * scale)^2 + (x2 * scale)^2 cannot
+  # overflow or underflow. This avoids the traditional x1 * sqrt(1 + (x2/x1)^2)
+  # formulation, which has larger rounding error from the division and fails on
+  # TPU for |x1| > 2^126 where 1/x1 underflows and flushes to zero.
+  a1, a2 = abs(x1), abs(x2)
+  m = max(a1, a2)
+  finfo = dtypes.finfo(x1.dtype)
+  # e_hi is the largest exponent where 2 * m**2 cannot overflow.
+  # k is large enough that (x * 2**k)**2 does not underflow even when x is the
+  # smallest subnormal (2**(minexp - nmant)). Scaling down by 2**-k for
+  # m >= 2**e_hi and up by 2**k for m <= 2**(e_hi - k) keeps y1**2 + y2**2
+  # from overflowing or underflowing in all regimes.
+  k = (finfo.nmant - finfo.minexp + 1) // 2
+  e_hi = (finfo.maxexp - 1) // 2
+  # Use m (which has the broadcast shape of x1 and x2) for constants and
+  # full_like, since callers like _atan2_jvp may pass broadcast-compatible
+  # inputs of different shapes and select requires matching shapes.
+  hi = m >= _const(m, 2.0**e_hi)
+  lo = m <= _const(m, 2.0 ** (e_hi - k))
+  s_down, s_up, one = (
+      full_like(m, 2.0**-k), full_like(m, 2.0**k), full_like(m, 1.0)
+  )
+  inv_scale = select(hi, s_up, select(lo, s_down, one))
+  scale = select(hi, s_down, select(lo, s_up, one))
+  y1, y2 = x1 * scale, x2 * scale
+  r_scaled = sqrt(square(y1) + square(y2))
+  r = r_scaled * inv_scale
+  # The unit vector (x1 / r, x2 / r) is computed from the scaled values, so it
+  # stays accurate when r is near the top of the floating-point range (where
+  # 1 / r is subnormal and flushed on TPU) or overflows to inf.
+  u1, u2 = y1 / r_scaled, y2 / r_scaled
+  if dtypes.supports_inf(x1.dtype):
+    inf = full_like(m, np.inf)
+    inf1, inf2 = a1 == inf, a2 == inf
+    # IEEE 754 defines hypot(±inf, y) = hypot(x, ±inf) = +inf even when the
+    # other argument is NaN, whereas y1^2 + y2^2 evaluates to NaN in that case.
+    r = select(inf1 | inf2, inf, r)
+    # If one input is ±inf and the other is finite, r_scaled is inf, so
+    # dividing y_i by r_scaled evaluates inf / inf = NaN along the infinite
+    # axis even though x_i / r approaches ±1 (while the finite axis already
+    # gives finite / inf = ±0). Replace that NaN with sign(y_i) so derivatives
+    # of hypot, abs, and atan2 give ±1 and 0 instead of NaN. Checking
+    # `a_j < inf` leaves u1 and u2 as NaN when the other input is ±inf or NaN,
+    # where the direction (x1 / r, x2 / r) is undefined.
+    u1 = select(inf1 & (a2 < inf), sign(y1), u1)
+    u2 = select(inf2 & (a1 < inf), sign(y2), u2)
+  return r, u1, u2
+
+
+@hypot.defjvp
+def _hypot_jvp(primals, tangents):
+  # Write (x1, x2) in polar coordinates as (r cos theta, r sin theta), where
+  # u1 = cos theta and u2 = sin theta satisfy u1^2 + u2^2 = 1.
+  # Differentiating u1 and u2 gives:
+  #   du1 = -sin theta * dtheta = -u2 * dtheta
+  #   du2 =  cos theta * dtheta =  u1 * dtheta
+  # Differentiating x1 = r * u1 and x2 = r * u2 by the product rule gives:
+  #   dx1 = u1 * dr + r * du1 = u1 * dr - u2 * r * dtheta
+  #   dx2 = u2 * dr + r * du2 = u2 * dr + u1 * r * dtheta
+  # Taking linear combinations cancels the +-u1 * u2 cross terms:
+  #   u1 * dx1 + u2 * dx2 = (u1^2 + u2^2) * dr         = dr
+  #   u1 * dx2 - u2 * dx1 = (u1^2 + u2^2) * r * dtheta = r * dtheta
+  # Expressing (dr, du1, du2) in terms of (r, u1, u2) and dtheta avoids
+  # 1 - u_i^2 cancellation when one operand dominates and keeps higher-order
+  # derivatives closed without differentiating hypot's power-of-two rescaling.
+  x1, x2 = primals
+  dx1, dx2 = tangents
+  r, u1, u2 = hypot(x1, x2)
+  dr = add(mul(u1, dx1), mul(u2, dx2))
+  dtheta = div(sub(mul(u1, dx2), mul(u2, dx1)), r)
+  return (r, u1, u2), (dr, neg(mul(u2, dtheta)), mul(u1, dtheta))
+
+
+def _abs_lowering(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return mlir.lower_fun(
+        lambda x: hypot(real(x), imag(x))[0], multiple_results=False
+    )(ctx, x)
+  return _nary_lower_hlo(hlo.abs, ctx, x)
+
+
 abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs',
              supports_narrow_ints=False)
-mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
+mlir.register_lowering(abs_p, _abs_lowering)
 
-def _abs_jvp_rule(g, ans, x):
+def _abs_jvp(primals, tangents):
+  (x,) = primals
+  (g,) = tangents
   if _iscomplex(x):
-    return _maybe_real(mul(g, div(_maybe_conj(x),
-           _replace_zero(convert_element_type(ans, _dtype(x))))))
+    # For complex x = a + bj, |x| = hypot(a, b) and d|x| = (a/r)*da + (b/r)*db.
+    # Compute both |x| and its derivative from a single hypot(a, b) call rather
+    # than dividing x by |x|: when a and b are large finite numbers whose
+    # magnitude r overflows to inf, x / r collapses to 0 whereas hypot's
+    # rescaled (u1, u2) = (a/r, b/r) stays finite and accurate; when one part is
+    # ±inf and the other is finite, hypot gives ±1 and 0 instead of
+    # inf / inf = NaN; and second and higher derivatives go through _hypot_jvp
+    # without overflowing r^2 or losing accuracy when one part dominates.
+    r, u1, u2 = hypot(real(x), imag(x))
+    # At 0 + 0j, hypot gives u1 = u2 = 0 / 0 = NaN; zero them out to keep JAX's
+    # convention that the derivative of complex abs at zero is zero.
+    z = r == _zero(r)
+    u1 = select(z, _zeros(u1), u1)
+    u2 = select(z, _zeros(u2), u2)
+    return r, add(mul(u1, real(g)), mul(u2, imag(g)))
   else:
-    return select(ge(x, _zero(x)), g, neg(g))
-ad.defjvp2(abs_p, _abs_jvp_rule)
-_maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
-_maybe_real = lambda x: real(x) if _iscomplex(x) else x
+    return abs(x), select(ge(x, _zero(x)), g, neg(g))
+ad.primitive_jvps[abs_p] = _abs_jvp
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x, **kwargs: mul(g, div(_const(x, 0.5), ans)))
@@ -4830,6 +5612,123 @@ def _square_lower_hlo(ctx, x):
 
 ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
 mlir.register_lowering(square_p, _square_lower_hlo)
+
+# one_minus_square_p computes 1 - x^2.
+#
+# Purpose:
+# 1. Accuracy when |x| is close to 1 (evaluating 1 - x^2):
+#    Evaluates (1 + x) * (1 - x) rather than 1 - x^2. When |x| is close to 1,
+#    squaring x first produces a value near 1.0 whose lower significant bits
+#    are rounded away before subtracting from 1.0, losing up to half of all
+#    significant bits on hardware without vector FMA (such as TPU). Subtracting
+#    1 - x first cancels the leading bits before multiplication, preserving
+#    full floating-point precision across all hardware.
+#
+# 2. Accuracy when x is close to 0 (differentiating 1 - x^2):
+#    If (1 + x) * (1 - x) were expressed directly using standard mul/add/sub
+#    primitives, differentiating it via the product rule would produce
+#    (1 - x) - (1 + x). For tiny |x| < machine epsilon (e.g., x = 1e-300 in
+#    float64), both 1 - x and 1 + x round to 1.0, causing catastrophic
+#    cancellation to 0.0 instead of -2x. Defining one_minus_square_p as a
+#    primitive with JVP rule d/dx (1 - x^2) = -2x avoids this cancellation
+#    when differentiating.
+one_minus_square_p = standard_unop(_int | _float | _complex, 'one_minus_square')
+ad.defjvp(one_minus_square_p, lambda g, x: mul(g, mul(_const(x, -2), x)))
+mlir.register_lowering(
+    one_minus_square_p,
+    mlir.lower_fun(
+        lambda x: mul(add(_one(x), x), sub(_one(x), x)),
+        multiple_results=False,
+    ),
+)
+
+def _polynomial_dtype_rule(*avals, **kwargs):
+  return naryop_dtype_rule(input_dtype, [_num] * len(avals), 'polynomial', *avals, **kwargs)
+
+polynomial_p = standard_primitive(
+    partial(broadcasting_shape_rule, 'polynomial'),
+    _polynomial_dtype_rule,
+    'polynomial',
+    sharding_rule=partial(broadcasting_sharding_rule, 'polynomial'),
+    vma_rule=partial(core.standard_vma_rule, 'polynomial'),
+    ur_rule=partial(nary_ur_rule, 'polynomial'),
+)
+batching.defbroadcasting(polynomial_p)
+
+def _polynomial_jvp(primals, tangents, *, unroll=None):
+  x, *coeffs = primals
+  dot_x, *dot_coeffs = tangents
+  kwargs = {} if unroll is None else {'unroll': unroll}
+  y = polynomial_p.bind(x, *coeffs, **kwargs)
+  dot_y = ad.Zero(core.typeof(y).to_tangent_aval())
+
+  if not isinstance(dot_x, ad.Zero):
+    deriv_coeffs = [mul(_const(c, k), c) for k, c in enumerate(coeffs[1:], 1)]
+    dy_dx = polynomial(x, deriv_coeffs, unroll=unroll)
+    dot_y = ad.add_tangents(dot_y, mul(dot_x, dy_dx))
+
+  if any(not isinstance(dc, ad.Zero) for dc in dot_coeffs):
+    concrete_dot_coeffs = [
+        _zeros(c) if isinstance(dc, ad.Zero) else dc
+        for c, dc in zip(coeffs, dot_coeffs)
+    ]
+    dy_dc = polynomial(x, concrete_dot_coeffs, unroll=unroll)
+    dot_y = ad.add_tangents(dot_y, dy_dc)
+
+  return y, dot_y
+
+ad.primitive_jvps[polynomial_p] = _polynomial_jvp
+
+def _polynomial_transpose(ct, x, *coeffs, unroll=None):
+  del unroll
+  assert not ad.is_undefined_primal(x)
+  if isinstance(ct, ad.Zero):
+    return [None] + [
+        ad.Zero(c.aval) if ad.is_undefined_primal(c) else None
+        for c in coeffs
+    ]
+  ct_bars = []
+  xk_ct = ct
+  for k, c in enumerate(coeffs):
+    ct_bars.append(_unbroadcast(c.aval, xk_ct) if ad.is_undefined_primal(c) else None)
+    if k + 1 < len(coeffs):
+      xk_ct = mul(xk_ct, x)
+  return [None] + ct_bars
+
+ad.primitive_transposes[polynomial_p] = _polynomial_transpose
+
+def polynomial_lower(x, *coeffs, unroll=None):
+  unroll_threshold = 8 if unroll is None else unroll
+  use_fmuladd = dtypes.issubdtype(typeof(x).dtype, np.floating)
+  step = (
+      (lambda acc, c: fmuladd(acc, x, c))
+      if use_fmuladd
+      else (lambda acc, c: add(mul(acc, x), c))
+  )
+  if len(coeffs) <= unroll_threshold:
+    acc = coeffs[-1]
+    for c in reversed(coeffs[:-1]):
+      acc = step(acc, c)
+    return acc
+  from jax._src.lax import control_flow  # pytype: disable=import-error
+  out_shape = broadcasting_shape_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
+  out_sharding = broadcasting_sharding_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
+  coeff_shape = broadcasting_shape_rule('polynomial', *(typeof(c) for c in coeffs))
+  coeff_sharding = broadcasting_sharding_rule('polynomial', *(typeof(c) for c in coeffs))
+  b_coeffs = [_maybe_broadcast(coeff_shape, c, coeff_sharding) for c in reversed(coeffs)]
+  y, _ = control_flow.scan(
+      lambda acc, c: (step(acc, c), None),
+      full_like(x, 0, shape=out_shape, sharding=out_sharding),
+      stack(b_coeffs, axis=0),
+      unroll=unroll_threshold,
+  )
+  return y
+
+mlir.register_lowering(
+    polynomial_p,
+    mlir.lower_fun(polynomial_lower, multiple_results=False),
+    shard_map_collective_rule=_naryop_collective_rule,
+)
 
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and
@@ -4895,9 +5794,13 @@ def _integer_pow_jvp(g, x, *, y):
     return mul(g, mul(_const(x, y), x))
   return mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
+def _integer_pow_layout_rule(out_aval, x, *, y):
+  return x.layout
+
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
-  sharding_rule=_attrgetter('sharding'), vma_rule=lambda x, **_: x.mat.varying)
+  sharding_rule=_attrgetter('sharding'), vma_rule=lambda x, **_: x.mat.varying,
+  layout_rule=_integer_pow_layout_rule)
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
@@ -4935,9 +5838,11 @@ def _integer_pow_lowering(ctx, x, *, y):
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
     out, = lowering(ctx, x, y=y)
   aval_out, = ctx.avals_out
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
+mlir.register_lowering(
+    integer_pow_p, _integer_pow_lowering,
+    shard_map_collective_rule=_unop_collective_rule)
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
@@ -4990,14 +5895,14 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_ur_rule(x, y):
+def _add_ur_rule(name, u_kind, x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x, u_kind), getu(y, u_kind)
   if x_ur and y_ur:
     if x_ur != y_ur:
       raise core.ShardingTypeError(
-          'lhs and rhs to `add` must be unreduced along the same mesh axes. '
-          f'Got lhs={x_ur}, rhs={y_ur}')
+          f'lhs and rhs to `{name}` must be unreduced along the same mesh axes.'
+          f' Got lhs={x_ur}, rhs={y_ur}')
     out_unreduced = x_ur
   elif x_ur or y_ur:
     if x_ur and not y_ur:
@@ -5006,19 +5911,20 @@ def _add_ur_rule(x, y):
       assert not x_ur and y_ur
       lhs_str, rhs_str = 'rhs', 'lhs'
     raise core.ShardingTypeError(
-        f'{lhs_str} is unreduced while {rhs_str} is not. `add` operation does'
+        f'{lhs_str} is unreduced while {rhs_str} is not. `{name}` operation does'
         ' not allow this because there will be implicit communication. Please'
-        f' reduce {lhs_str} via `reshard` before calling `add`.')
+        f' reduce {lhs_str} via `reshard` before calling `{name}`.')
   else:
     out_unreduced = frozenset()
-  kind = UnreducedKind.sum if out_unreduced else None
+  kind = u_kind if out_unreduced else None
   return out_unreduced, out_reduced, kind
 
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          ur_rule=_add_ur_rule)
+                          ur_rule=partial(_add_ur_rule, 'add', UnreducedKind.sum))
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
+lax_utils.register_unreduced_lojax(add_p)
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -5039,22 +5945,24 @@ def _sub_transpose(t, x, y):
   # Morally the following assertion is true, but see the comment in add_p's
   # transpose rule.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x).to_ct_aval()
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y).to_ct_aval()
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, neg(t))]
 
-sub_p = standard_naryop([_num, _num], 'sub')
+sub_p = standard_naryop([_num, _num], 'sub',
+                        ur_rule=partial(_add_ur_rule, 'sub', UnreducedKind.sum))
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
+lax_utils.register_unreduced_lojax(sub_p)
 
 def _mul_ur_rule(x, y, *, out_dtype=None):
   del out_dtype  # unused
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x), getu(y)
   if x_ur and y_ur:
     raise core.ShardingTypeError(
           'lhs and rhs to `mul` cannot be unreduced since mul is bilinear. '
@@ -5101,10 +6009,191 @@ def _mul_transpose_right(ct, x, y, *, out_dtype):
 ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
+lax_utils.register_unreduced_lojax(mul_p)
+
+
+def _mulhi_u64_hlo(ctx, lhs, rhs, u64_aval):
+  c32 = mlir.full_like_aval(ctx, np.uint64(32), u64_aval)
+  mask_lo = mlir.full_like_aval(ctx, np.uint64(0xFFFFFFFF), u64_aval)
+  a_hi = hlo.shift_right_logical(lhs, c32)
+  b_hi = hlo.shift_right_logical(rhs, c32)
+  a_lo = hlo.and_(lhs, mask_lo)
+  b_lo = hlo.and_(rhs, mask_lo)
+  p0 = hlo.multiply(a_lo, b_lo)
+  p1 = hlo.multiply(a_lo, b_hi)
+  p2 = hlo.multiply(a_hi, b_lo)
+  p3 = hlo.multiply(a_hi, b_hi)
+  mid1 = hlo.add(p1, hlo.shift_right_logical(p0, c32))
+  mid2 = hlo.add(p2, hlo.and_(mid1, mask_lo))
+  return hlo.add(
+      hlo.add(p3, hlo.shift_right_logical(mid1, c32)),
+      hlo.shift_right_logical(mid2, c32),
+  )
+
+
+def _mulhi_lower(ctx, x, y):
+  # HloFunctionImporter (used by ShardyXLA) added HloOpcode::kMulhi support in
+  # xla_version 84; decompose to StableHLO on older jaxlib or forward-compat.
+  if not ctx.is_forward_compat() and xla_version >= 84:
+    return _nary_lower_hlo(chlo.mulhi, ctx, x, y)
+  aval_out, = ctx.avals_out
+  dtype = aval_out.dtype
+  nbits = dtypes.iinfo(dtype).bits
+  is_signed = dtypes.issubdtype(dtype, np.signedinteger)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
+  if nbits < 64:
+    widen_bits = _max(nbits * 2, 8)
+    widen_dtype = np.dtype(f"{'i' if is_signed else 'u'}{widen_bits // 8}")
+    widen_aval = core.ShapedArray(aval_out.shape, widen_dtype)
+    widen_type = mlir.aval_to_ir_type(ctx.module_context, widen_aval)
+    shift_op = (
+        hlo.shift_right_arithmetic if is_signed else hlo.shift_right_logical
+    )
+
+    def _mulhi_narrow(lhs, rhs):
+      shift = mlir.full_like_aval(ctx, nbits, widen_aval)
+      prod = hlo.multiply(
+          hlo.convert(widen_type, lhs), hlo.convert(widen_type, rhs)
+      )
+      return hlo.convert(out_type, shift_op(prod, shift))
+
+    return _nary_lower_hlo(_mulhi_narrow, ctx, x, y)
+
+  u64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.uint64))
+  u64_type = mlir.aval_to_ir_type(ctx.module_context, u64_aval)
+  if not is_signed:
+    return _nary_lower_hlo(
+        lambda a, b: _mulhi_u64_hlo(ctx, a, b, u64_aval), ctx, x, y
+    )
+
+  s64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.int64))
+
+  def _mulhi_s64(lhs, rhs):
+    zero_s64 = mlir.full_like_aval(ctx, np.int64(0), s64_aval)
+    zero_u64 = mlir.full_like_aval(ctx, np.uint64(0), u64_aval)
+    u_lhs = hlo.convert(u64_type, lhs)
+    u_rhs = hlo.convert(u64_type, rhs)
+    hi = _mulhi_u64_hlo(ctx, u_lhs, u_rhs, u64_aval)
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(lhs, zero_s64, 'LT'), u_rhs, zero_u64),
+    )
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(rhs, zero_s64, 'LT'), u_lhs, zero_u64),
+    )
+    return hlo.convert(out_type, hi)
+
+  return _nary_lower_hlo(_mulhi_s64, ctx, x, y)
+
+
 mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
-mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
+mlir.register_lowering(mulhi_p, _mulhi_lower)
+
+
+def _fma_jvp(prim, primals, tangents):
+  a, b, c = primals
+  adot, bdot, cdot = tangents
+  primal_out = prim.bind(a, b, c)
+  op = fma if prim is fma_p else fmuladd
+  acc = cdot
+  if type(bdot) is not ad_util.Zero:
+    acc = mul(a, bdot) if type(acc) is ad_util.Zero else op(a, bdot, acc)
+  if type(adot) is not ad_util.Zero:
+    acc = mul(adot, b) if type(acc) is ad_util.Zero else op(adot, b, acc)
+  if type(acc) is ad_util.Zero:
+    return primal_out, ad_util.p2tz(primal_out)
+  return primal_out, _maybe_broadcast(
+      primal_out.shape, acc, typeof(primal_out).sharding)
+
+
+def _fma_transpose(ct, a, b, c):
+  assert not (ad.is_undefined_primal(a) and ad.is_undefined_primal(b))
+  if type(ct) is ad_util.Zero:
+    return [
+        ad_util.Zero(x.aval) if ad.is_undefined_primal(x) else None
+        for x in (a, b, c)
+    ]
+  ct_a = _unbroadcast(a.aval, mul(ct, b)) if ad.is_undefined_primal(a) else None
+  ct_b = _unbroadcast(b.aval, mul(a, ct)) if ad.is_undefined_primal(b) else None
+  ct_c = _unbroadcast(c.aval, ct) if ad.is_undefined_primal(c) else None
+  return [ct_a, ct_b, ct_c]
+
+
+def _fma_lower(ctx, a, b, c):
+  if jaxlib_extension_version < 515:
+    raise NotImplementedError(
+        'lax.fma requires jaxlib_extension_version >= 515.'
+    )
+  return _nary_lower_hlo(hlo.fma, ctx, a, b, c)  # pyrefly: ignore[missing-attribute]
+
+
+fma_p = standard_naryop([_float, _float, _float], 'fma')
+ad.primitive_jvps[fma_p] = partial(_fma_jvp, fma_p)
+ad.primitive_transposes[fma_p] = _fma_transpose
+mlir.register_lowering(fma_p, _fma_lower)
+
+
+def _muladd_hlo(x, y, z):
+  return hlo.add(hlo.multiply(x, y), z)
+
+
+def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
+  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
+    return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
+  aval_out, = ctx.avals_out
+  if aval_out.dtype in native_dtypes:
+    return _nary_lower_hlo(hlo.fma, ctx, a, b, c)  # pyrefly: ignore[missing-attribute]
+  f32_type = mlir.aval_to_ir_type(
+      ctx.module_context, aval_out.update(dtype=np.dtype(np.float32))
+  )
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
+  return _nary_lower_hlo(
+      lambda x, y, z: hlo.convert(
+          out_type,
+          hlo.fma(  # pyrefly: ignore[missing-attribute]
+              hlo.convert(f32_type, x),
+              hlo.convert(f32_type, y),
+              hlo.convert(f32_type, z),
+          ),
+      ),
+      ctx,
+      a,
+      b,
+      c,
+  )
+
+
+fmuladd_p = standard_naryop([_float, _float, _float], 'fmuladd')
+ad.primitive_jvps[fmuladd_p] = partial(_fma_jvp, fmuladd_p)
+ad.primitive_transposes[fmuladd_p] = _fma_transpose
+mlir.register_lowering(
+    fmuladd_p,
+    partial(
+        _fmuladd_lower,
+        native_dtypes=(np.dtype(np.float32), np.dtype(np.float64)),
+    ),
+)
+for _gpu_platform in ('cuda', 'rocm'):
+  mlir.register_lowering(
+      fmuladd_p,
+      partial(
+          _fmuladd_lower,
+          native_dtypes=(
+              np.dtype(np.float16),
+              np.dtype(np.float32),
+              np.dtype(np.float64),
+          ),
+      ),
+      platform=_gpu_platform,
+  )
+mlir.register_lowering(
+    fmuladd_p,
+    partial(_nary_lower_hlo, _muladd_hlo),
+    platform='tpu',
+)
 
 
 def _div_transpose_rule(cotangent, x, y):
@@ -5118,7 +6207,7 @@ def _div_transpose_rule(cotangent, x, y):
 
 def _div_ur_rule(x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x), getu(y)
   if y_ur:
     raise ValueError(
         f'The denominator cannot be unreduced passed to `div`. Got {y=}')
@@ -5133,12 +6222,27 @@ def _div_ur_rule(x, y):
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, out_reduced, kind
 
+def _div_jvp(primals, tangents):
+  # Writing d(x / y) = (dx - q * dy) / y with q = x / y shares a single tangent
+  # division across dx and dy (in both JVP and VJP) and avoids squaring y, which
+  # would overflow for |y| > sqrt(maxfloat) or underflow for |y| < sqrt(min).
+  x, y = primals
+  xdot, ydot = tangents
+  q = div(x, y)
+  if type(xdot) is type(ydot) is ad_util.Zero:
+    return q, ad_util.p2tz(q)
+  if type(ydot) is ad_util.Zero:
+    return q, div(xdot, y)
+  if type(xdot) is ad_util.Zero:
+    # Divide at y.shape before broadcasting with q (and after reducing in VJP).
+    return q, mul(q, neg(div(ydot, y)))
+  return q, div(sub(xdot, mul(q, ydot)), y)
+
 div_p = standard_naryop([_num, _num], 'div', ur_rule=_div_ur_rule)
-ad.defjvp(div_p,
-          lambda g, x, y: div(g, y),
-          lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
+ad.primitive_jvps[div_p] = _div_jvp
 ad.primitive_transposes[div_p] = _div_transpose_rule
 mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.divide))
+lax_utils.register_unreduced_lojax(div_p)
 
 rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
@@ -5149,17 +6253,21 @@ ad.defjvp(
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
-max_p: core.Primitive = standard_naryop([_any, _any], 'max')
-ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+max_p: core.Primitive = standard_naryop(
+    [_any, _any], 'max', ur_rule=partial(_add_ur_rule, 'max', UnreducedKind.max))
+ad.defjvp(max_p,
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)),
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
+lax_utils.register_unreduced_lojax(max_p)
 
-min_p: core.Primitive = standard_naryop([_any, _any], 'min')
-ad.defjvp2(min_p,
-           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+min_p: core.Primitive = standard_naryop(
+    [_any, _any], 'min', ur_rule=partial(_add_ur_rule, 'min', UnreducedKind.min))
+ad.defjvp(min_p,
+          lambda g, x, y: mul(g, _balanced_cmp(y, x)),
+          lambda g, x, y: mul(g, _balanced_cmp(x, y)))
 mlir.register_lowering(min_p, partial(_nary_lower_hlo, mlir.min_hlo))
+lax_utils.register_unreduced_lojax(min_p)
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
@@ -5270,27 +6378,57 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
     return operand.sharding
   if sharding._is_concrete:
     if isinstance(sharding, NamedSharding):
-      return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
+      out_s = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
     else:
-      return core.get_cur_mesh_sharding()
-  return sharding
+      out_s = core.get_cur_mesh_sharding()
+  else:
+    out_s = sharding
+  if isinstance(out_s, NamedSharding):
+    lax_utils._check_no_collectives_dim_change(
+        'convert_element_type',
+        operand.sharding.spec.partitions, out_s.spec.partitions)
+  return out_s
+
+def _convert_element_type_unreduced_rule(operand, sharding):
+  op_u, op_kind = getu(operand, None)
+  if sharding is not None:
+    if not isinstance(sharding, NamedSharding):
+      return op_u, op_kind
+    if (sharding.mesh.explicit_axes and
+        sharding.mesh.are_all_axes_explicit_or_manual):
+      assert not operand.mat.unreduced
+      if operand.sharding.spec.unreduced:
+        if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+          raise ValueError(
+              'sharding passed to convert_element_type must be unreduced over'
+              f' the same mesh axes as operand. Got sharding: {sharding.spec}'
+              f' and operand type: {operand.str_short(True)}')
+        if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+          raise ValueError(
+              'sharding passed to convert_element_type must have the same'
+              f' unreduced_kind as operand. Got sharding: {sharding.spec}'
+              f' and operand type: {operand.str_short(True)}')
+      elif (sharding.spec.unreduced and
+            sharding.spec.unreduced_kind is not UnreducedKind.sum):
+        raise ValueError(
+            '`sharding` passed to `convert_element_type` can only contain'
+            f' unreduced of kind `sum` when operand is not unreduced.'
+            f' Got sharding={sharding}')
+      return sharding.spec.unreduced, sharding.spec.unreduced_kind
+  return op_u, op_kind
+
+def _convert_element_type_reduced_rule(operand, sharding):
+  if (sharding is not None and isinstance(sharding, NamedSharding) and
+      sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.reduced
+    return sharding.spec.reduced
+  return getr(operand)
 
 def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
-  if (sharding is not None and isinstance(sharding, NamedSharding) and
-      sharding.spec.unreduced):
-    kind = sharding.spec.unreduced_kind
-    if kind is not None and kind is not UnreducedKind.sum:
-      raise ValueError(
-          '`sharding` passed to `convert_element_type` can only contain'
-          f' unreduced of kind `sum`. Got sharding={sharding}')
-    unreduced = sharding.spec.unreduced
-  else:
-    unreduced = getu(operand)
-  reduced = (sharding.spec.reduced
-             if sharding is not None and isinstance(sharding, NamedSharding)
-             and sharding.spec.reduced else getr(operand))
-  kind = UnreducedKind.sum if unreduced else None
-  return unreduced, reduced, kind
+  out_unreduced, kind = _convert_element_type_unreduced_rule(operand, sharding)
+  out_reduced = _convert_element_type_reduced_rule(operand, sharding)
+  return out_unreduced, out_reduced, kind
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
@@ -5299,6 +6437,14 @@ def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
                                          sharding):
   return weak_type
+
+def _convert_element_type_layout_rule(out_aval, operand, *, new_dtype, weak_type,
+                                      sharding):
+  if not operand.ndim:
+    return operand.layout
+  if operand.layout.tiling:
+    raise NotImplementedError()
+  return operand.layout
 
 def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
                                          sharding):
@@ -5344,7 +6490,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   out_aval, = out_avals
   new_dtype = params['new_dtype']
   if (type(c) in _foldable_types and isinstance(out_aval, ShapedArray)
-      and not np.shape(c)
+      and not out_aval.shape
       and not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.asarray(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
@@ -5375,7 +6521,8 @@ convert_element_type_p = standard_primitive(
     'convert_element_type', weak_type_rule=_convert_element_type_weak_type_rule,
     sharding_rule=_convert_element_type_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'convert_element_type'),
-    ur_rule=_convert_element_type_ur_rule)
+    ur_rule=_convert_element_type_ur_rule,
+    layout_rule=_convert_element_type_layout_rule)
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
@@ -5423,9 +6570,19 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
     operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+def _convert_element_type_collective_rule(in_avals, out_avals, **params):
+  # TODO(rdyro): Support `convert_element_type` with a resharding `sharding`.
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  if in_aval.sharding != out_aval.sharding:
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={'sharding': None})
+
+mlir.register_lowering(
+    convert_element_type_p, _convert_element_type_lower,
+    shard_map_collective_rule=_convert_element_type_collective_rule)
+lax_utils.register_unreduced_lojax(convert_element_type_p, 'sharding')
 
 
 stage_p.def_abstract_eval(
@@ -5435,7 +6592,7 @@ stage_p.def_abstract_eval(
             lambda aval: aval.weak_type,
             lambda x: x.sharding,
             lambda x: x.mat.varying,
-            lambda x: (getu(x), getr(x)),
+            lambda x: (getu(x)[0], getr(x)),
             None))
 
 def _stage_impl(x):
@@ -5505,8 +6662,11 @@ def _to_edtype_abstract_eval(x, *, edtype):
           "axes that are not explicitly sharded, but tried to convert from "
           f"{x.str_short(short_dtypes=True)} to an extended dtype with element "
           f"shape {rep_aval.shape}")
-    return x.update(shape=shape_prefix, dtype=edtype,
-                    sharding=x.sharding.update(spec=spec_prefix))
+    out_aval = x.update(shape=shape_prefix, dtype=edtype,
+                        sharding=x.sharding.update(spec=spec_prefix))
+    out_layout = lax_utils.call_layout_rule(
+        to_edtype_p, None, [x], [out_aval], edtype=edtype)
+    return out_aval.update(layout=out_layout)
   else:
     assert False  # unreachable, see isinstance check above
 
@@ -5519,7 +6679,9 @@ ad.defjvp(to_edtype_p,
 ad.primitive_transposes[to_edtype_p] = \
     lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
-mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
+mlir.register_lowering(
+    to_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _from_edtype_abstract_eval(x, *, dtype):
@@ -5545,7 +6707,10 @@ def _from_edtype_abstract_eval(x, *, dtype):
         f"{dtype_to_string(dtype)} which doesn't match the representation type "
         f"{dtype_to_string(rep_aval.dtype)}.")
   if isinstance(x, ShapedArray):
-    return x.update(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+    out_aval = x.update(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+    out_layout = lax_utils.call_layout_rule(
+        from_edtype_p, None, [x], [out_aval], dtype=dtype)
+    return out_aval.update(layout=out_layout)
   else:
     assert False  # unreachable, see isinstance check above
 
@@ -5558,7 +6723,9 @@ ad.defjvp(from_edtype_p,
 ad.primitive_transposes[from_edtype_p] = \
     lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
 batching.defvectorized(from_edtype_p)
-mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
+mlir.register_lowering(
+    from_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -5621,7 +6788,18 @@ def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   out = hlo.bitcast_convert(out_type, operand)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
+def _bitcast_convert_type_collective_rule(in_avals, out_avals, *, new_dtype):
+  del out_avals
+  in_aval, = in_avals
+  # Widening consumes the trailing dim, which requires an all-gather if sharded.
+  if (dtypes.itemsize_bits(in_aval.dtype) < dtypes.itemsize_bits(new_dtype) and
+      in_aval.sharding.spec.partitions[-1] is not None):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    bitcast_convert_type_p, _bitcast_convert_type_lower,
+    shard_map_collective_rule=_bitcast_convert_type_collective_rule)
 
 
 def _validate_preferred_element_type(input_dtype, preferred_element_type):
@@ -5652,7 +6830,7 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: DTypeLike | None,
-                            out_sharding):
+                            out_sharding, reduction_order=None):
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = _from_maybe_ragged(dimension_numbers)
@@ -5731,22 +6909,45 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
 
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               out_sharding):
+                               out_sharding, reduction_order=None):
   if (not lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty and
       lhs.sharding.mesh != rhs.sharding.mesh):
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
-  if out_sharding is not None:
-    assert isinstance(out_sharding, NamedSharding)
-    return out_sharding
-
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_spec = tuple(lhs.sharding.spec.partitions[i]
                                for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
                                for i in rhs_contracting)
+  contract_axes = flatten_spec_no_none(
+      lhs_contracting_spec + rhs_contracting_spec)
+  _check_ordered_reduction_sharding(
+      'dot_general', reduction_order, contract_axes, out_sharding=out_sharding
+  )
+  if out_sharding is not None:
+    assert isinstance(out_sharding, NamedSharding)
+    if forbidden_axes := config.no_collectives.value:
+      lhs_out_parts = _dot_general_sharding_computation(
+          lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
+      rhs_out_parts = _dot_general_sharding_computation(
+          lhs.sharding.spec, rhs.sharding.spec, dimension_numbers,
+          use_rhs_batch=True)
+      contract_axes_set = set(contract_axes)
+      for r in forbidden_axes:
+        if r in contract_axes_set and r not in out_sharding.spec.unreduced:
+          raise core.ForbiddenCollectiveError(
+              f"Collective across axis '{r}' is forbidden by `no_collectives`,"
+              f" but `dot_general` contracts over axis '{r}' without marking"
+              " it unreduced in the output."
+          )
+      lax_utils._check_no_collectives_dim_change(
+          'dot_general', lhs_out_parts, out_sharding.spec.partitions)
+      lax_utils._check_no_collectives_dim_change(
+          'dot_general', rhs_out_parts, out_sharding.spec.partitions)
+    return out_sharding
+
   lhs_batch_spec = tuple(lhs.sharding.spec.partitions[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec.partitions[i] for i in rhs_batch)
 
@@ -5768,22 +6969,25 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
     mesh = rhs.sharding.mesh
   else:
     mesh = lhs.sharding.mesh
-  return _dot_general_sharding_computation(
-      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, mesh)
+  out_parts = _dot_general_sharding_computation(
+      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
+  return NamedSharding(mesh, P(*out_parts))
 
 def _dot_general_sharding_computation(
-    lhs_spec, rhs_spec, dimension_numbers, mesh):
+    lhs_spec, rhs_spec, dimension_numbers, use_rhs_batch: bool = False):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  batch_spec = tuple(lhs_spec.partitions[i] for i in lhs_batch)
+  batch_spec = (tuple(rhs_spec.partitions[i] for i in rhs_batch)
+                if use_rhs_batch else
+                tuple(lhs_spec.partitions[i] for i in lhs_batch))
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
   lhs_tensored_spec = tuple_delete(lhs_spec.partitions, lhs_contract_or_batch)
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
   rhs_tensored_spec = tuple_delete(rhs_spec.partitions, rhs_contract_or_batch)
-  return NamedSharding(mesh, P(*(batch_spec + lhs_tensored_spec + rhs_tensored_spec)))
+  return batch_spec + lhs_tensored_spec + rhs_tensored_spec
 
 
 def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
-  if getu(lhs) or getu(rhs):
+  if getu(lhs)[0] or getu(rhs)[0]:
     raise core.ShardingTypeError(
         f'lhs or rhs passed to dot_general cannot be unreduced. Got {lhs=} and'
         f' {rhs=}')
@@ -5798,7 +7002,7 @@ def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
           'lhs and rhs contracting dims should be sharded identically when'
           ' out_sharding provided to dot_general mentions unreduced_axes.'
           f' Got {lhs_contracting_spec=}, {rhs_contracting_spec=}')
-    flat_spec = [s for s in flatten_spec(lhs_contracting_spec) if s is not None]
+    flat_spec = flatten_spec_no_none(lhs_contracting_spec)
     if out_sharding.spec.unreduced != frozenset(flat_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be equal to the contracting"
@@ -5825,10 +7029,11 @@ def tuple_delete(tup, idx):
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: DTypeLike | None,
-                            out_sharding, name: str = 'lax.dot_general'):
+                            out_sharding, name: str = 'lax.dot_general',
+                            reduction_order=None):
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError
-  del dimension_numbers  # unused
+  del dimension_numbers, reduction_order  # unused
   # We're mostly matching XLA's logic here, namely in shape_inference.cc and
   # primitive_util.h's HigherPrecisionType, e.g.
   # https://github.com/openxla/xla/blob/ea3a841768d0dcf192e5820c9b25c34c73f2226a/xla/primitive_util.h#L329
@@ -5873,7 +7078,7 @@ def _maybe_upcast(result_dtype, preferred_element_type, check_bit_width):
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               out_sharding, swap_ans=False):
+                               out_sharding, swap_ans=False, reduction_order=None):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
@@ -5902,7 +7107,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               out_sharding):
+                               out_sharding, reduction_order=None):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
@@ -5923,14 +7128,15 @@ def _dot_batch_rule(
     out_sharding,
     precision,
     preferred_element_type: DTypeLike | None,
-    **_,
+    reduction_order=None, **_,
 ):
   lhs, rhs = unpack_args(batched_args)
   lbd, rbd = unpack_dims(batch_dims)
+  reduction_order_kw = {} if reduction_order is None else {'reduction_order': reduction_order}
   if lbd is None and rbd is None:
     out = invoke_prim(lhs, rhs, dimension_numbers, precision=precision,
                       preferred_element_type=preferred_element_type,
-                      out_sharding=out_sharding)
+                      out_sharding=out_sharding, **reduction_order_kw)
     return out, None
   new_dimension_numbers, result_stack_dim = _dot_general_batch_dim_nums(
       (np.ndim(lhs), np.ndim(rhs)), (lbd, rbd),
@@ -5944,6 +7150,10 @@ def _dot_batch_rule(
   if out_sharding is not None:
     out_sharding = batching.get_sharding_for_vmap(
         axis_data, out_sharding, result_batch_dim)
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    shifted = _reduction_order.shift_order_for_vmap(
+        reduction_order, result_batch_dim, len(result_shape) - 1)
+    reduction_order_kw = {'reduction_order': shifted}
 
   batched_out = invoke_prim(
       lhs,
@@ -5951,7 +7161,7 @@ def _dot_batch_rule(
       new_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
-      out_sharding=out_sharding,
+      out_sharding=out_sharding, **reduction_order_kw,
   )
   return batched_out, result_batch_dim
 
@@ -6037,6 +7247,75 @@ def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   printed_params.pop('out_sharding', None)  # implied by the let binder type
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
+
+def _dot_general_layout_rule(out_aval, lhs, rhs, *, dimension_numbers, **kwargs):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_m2m = lhs.layout.major_to_minor
+  rhs_m2m = rhs.layout.major_to_minor
+
+  num_batch = len(lhs_batch)
+  if set(lhs_m2m[:num_batch]) != set(lhs_batch):
+    raise ValueError(
+        f'dot_general requires lhs batch dims {lhs_batch} to be most major in'
+        f' lhs layout, got {lhs.layout}')
+  if set(rhs_m2m[:num_batch]) != set(rhs_batch):
+    raise ValueError(
+        f'dot_general requires rhs batch dims {rhs_batch} to be most major in'
+        f' rhs layout, got {rhs.layout}')
+
+  lhs_batch_order = tuple(lhs_batch.index(d) for d in lhs_m2m[:num_batch])
+  rhs_batch_order = tuple(rhs_batch.index(d) for d in rhs_m2m[:num_batch])
+  if lhs_batch_order != rhs_batch_order:
+    raise ValueError(
+        'dot_general requires lhs and rhs batch dimensions to have the same'
+        f' relative layout order, got {lhs.layout} and {rhs.layout}')
+
+  lhs_cont_order = tuple(lhs_contract.index(d)
+                         for d in lhs_m2m if d in lhs_contract)
+  rhs_cont_order = tuple(rhs_contract.index(d)
+                         for d in rhs_m2m if d in rhs_contract)
+  if lhs_cont_order != rhs_cont_order:
+    raise ValueError(
+        'dot_general requires lhs and rhs contracting dimensions to have the'
+        f' same relative layout order, got {lhs.layout} and {rhs.layout}')
+
+  lhs_tensor = [d for d in range(lhs.ndim)
+                if d not in lhs_contract and d not in lhs_batch]
+  rhs_tensor = [d for d in range(rhs.ndim)
+                if d not in rhs_contract and d not in rhs_batch]
+
+  if lhs_tensor and lhs_contract:
+    if not (len({lhs_m2m[-2], lhs_m2m[-1]} & set(lhs_tensor)) == 1 and
+            len({lhs_m2m[-2], lhs_m2m[-1]} & set(lhs_contract)) == 1):
+      raise ValueError(
+          'dot_general requires the 2 minor-most dims of lhs to be one'
+          f' non-contracting and one contracting dim, got {lhs.layout}')
+  if rhs_tensor and rhs_contract:
+    if not (len({rhs_m2m[-2], rhs_m2m[-1]} & set(rhs_tensor)) == 1 and
+            len({rhs_m2m[-2], rhs_m2m[-1]} & set(rhs_contract)) == 1):
+      raise ValueError(
+          'dot_general requires the 2 minor-most dims of rhs to be one'
+          f' non-contracting and one contracting dim, got {rhs.layout}')
+
+  lhs_tensor_to_out = {d: num_batch + i for i, d in enumerate(lhs_tensor)}
+  rhs_tensor_to_out = {d: num_batch + len(lhs_tensor) + i
+                       for i, d in enumerate(rhs_tensor)}
+
+  out_batch_m2m = lhs_batch_order
+  out_lhs_tensor_m2m = tuple(lhs_tensor_to_out[d] for d in lhs_m2m
+                             if d in lhs_tensor_to_out)
+  out_rhs_tensor_m2m = tuple(rhs_tensor_to_out[d] for d in rhs_m2m
+                             if d in rhs_tensor_to_out)
+
+  out_m2m = (out_batch_m2m + out_lhs_tensor_m2m[:-1] + out_rhs_tensor_m2m[:-1]
+             + out_lhs_tensor_m2m[-1:] + out_rhs_tensor_m2m[-1:])
+  tiling = lhs.layout.tiling if lhs.layout.tiling == rhs.layout.tiling else None
+  sub_byte = (lhs.layout.sub_byte_element_size_in_bits
+              if lhs.layout.sub_byte_element_size_in_bits == rhs.layout.sub_byte_element_size_in_bits
+              else 0)
+  return Layout(out_m2m, tiling=tiling, sub_byte_element_size_in_bits=sub_byte)
+
+
 dot_general_p = standard_primitive(
     _dot_general_shape_rule,
     _dot_general_dtype_rule,
@@ -6044,29 +7323,89 @@ dot_general_p = standard_primitive(
     sharding_rule=_dot_general_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dot_general'),
     ur_rule=_dot_general_ur_rule,
+    layout_rule=_dot_general_layout_rule,
 )
 
 
+def _wrap_reduction_order_abstract_eval(prim):
+  # Composite reduction orders raise their (sharding) type errors at trace
+  # time: abstract_eval traces the same `to_lojax` lowering that runs later.
+  base_ae = prim.abstract_eval
+  def abstract_eval(*avals, **params):
+    out = base_ae(*avals, **params)
+    if not reduction_order_lib.is_leaf_order(params.get('reduction_order')):
+      dbg = api_util.debug_info(prim.name, prim.to_lojax, avals, {})
+      pe.abstract_eval_fun(prim.to_lojax, *avals, debug_info=dbg, **params)
+    return out
+  prim.def_effectful_abstract_eval(abstract_eval)
+_wrap_reduction_order_abstract_eval(dot_general_p)
+
+
+def _dot_general_is_high(
+    *avals, out_sharding=None, reduction_order=None, **__):
+  return ((out_sharding is not None and bool(out_sharding.spec.unreduced))
+          or not reduction_order_lib.is_leaf_order(reduction_order))
+dot_general_p.is_high = _dot_general_is_high  # type: ignore[method-assign]
+
+
+def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
+                          preferred_element_type, out_sharding,
+                          reduction_order=None):
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    return _reduction_order.dot_general(
+        lhs, rhs, dimension_numbers, precision, preferred_element_type,
+        out_sharding, reduction_order)
+  from jax._src import shard_map  # pyrefly: ignore[missing-import]
+  assert out_sharding.spec.unreduced
+  assert reduction_order is None
+  lhs_aval, rhs_aval = core.typeof(lhs), core.typeof(rhs)
+  out_aval, _ = dot_general_p.abstract_eval(
+      lhs_aval, rhs_aval, dimension_numbers=dimension_numbers,
+      precision=precision, preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
+  lo_lhs, = lhs_aval.lower_val(lhs)
+  lo_rhs, = rhs_aval.lower_val(rhs)
+
+  u_axes = core.order_wrt_mesh(
+      out_aval.sharding.mesh, out_aval.sharding.spec.unreduced)
+  out_specs = P(*u_axes, *(None,) * out_aval.ndim)
+
+  def _local_dot(l, r):
+    out = dot(
+        l, r, dimension_numbers=dimension_numbers, precision=precision,
+        preferred_element_type=preferred_element_type,
+        out_sharding=P(*out_sharding.spec.partitions))
+    return expand_dims(out, tuple(range(len(u_axes))))
+
+  lo_out = shard_map.shard_map(
+      _local_dot, out_specs=out_specs, mesh=out_aval.sharding.mesh,
+      axis_names=frozenset(u_axes))(lo_lhs, lo_rhs)
+  return out_aval.raise_val(lo_out)
+dot_general_p.to_lojax = _dot_general_to_lojax  # type: ignore[method-assign]
+
+
 def _dot_general_remat(trace, lhs, rhs, **params):
-  from jax._src.ad_checkpoint import (
-      DotsSaveable, OffloadDotWithNoBatchDims, primal_left_tangent_right)
+  from jax._src.ad_checkpoint import primal_left_tangent_right
   dot = partial(dot_general_p.bind, **params)
   out = dot(lhs, rhs)
-  if (isinstance(trace.policy, DotsSaveable) and
-      trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)):
-    return out, lambda lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
-  if isinstance(trace.policy, OffloadDotWithNoBatchDims):
-    verdict = trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)
-    if isinstance(verdict, pe.Offloadable):
-      from jax._src.api import device_put
-      out_host = device_put(out, core.mem_kind_to_space(verdict.dst),
-                            may_alias=False)
-      src_space = core.mem_kind_to_space(verdict.src)
-      def rem(lhs, rhs):
-        out_dev = device_put(out_host, src_space, may_alias=False)
-        return primal_left_tangent_right(out_dev, dot(lhs, rhs))
-      return out, rem
-  return out, dot  # full remat
+  if trace.policy is None:
+    return out, (), lambda _, lhs, rhs: dot(lhs, rhs)  # full remat
+  case = pe.ensure_enum(
+      trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params))
+  if isinstance(case, pe.SaveableType):
+    out = remat.reduce_precision(out)
+    return out, out, lambda out, lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
+  if isinstance(case, pe.Offloadable):
+    out = remat.reduce_precision(out)
+    from jax._src.api import device_put
+    out_host = device_put(out, core.mem_kind_to_space(case.dst),
+                          may_alias=False)
+    src_space = core.mem_kind_to_space(case.src)
+    def rem(out_host, lhs, rhs):
+      out_dev = device_put(out_host, src_space, may_alias=False)
+      return primal_left_tangent_right(out_dev, dot(lhs, rhs))
+    return out, out_host, rem
+  return out, (), lambda _, lhs, rhs: dot(lhs, rhs)  # full remat
 remat.rules[dot_general_p] = _dot_general_remat
 
 def _dot_general_batch_unpack_args(batch_args):
@@ -6079,8 +7418,19 @@ def _dot_general_batch_unpack_dims(batch_dims):
   return (lbd, rbd)
 
 
+def _tangent_ro_kw(kw: dict[str, Any]) -> dict[str, Any]:
+  if reduction_order_lib.is_leaf_order(kw.get('reduction_order')):
+    return kw
+  return {k: v for k, v in kw.items() if k != 'reduction_order'}
+
+
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
+ad.defjvp(
+    dot_general_p,
+    lambda g, x, y, **kw: dot_general_p.bind(g, y, **_tangent_ro_kw(kw)),
+    lambda g, x, y, **kw: dot_general_p.bind(x, g, **_tangent_ro_kw(kw)),
+)
 _dot_general_batch_rule = functools.partial(
     _dot_batch_rule, _dot_general_batch_unpack_args,
     _dot_general_batch_unpack_dims, dot_general)
@@ -6148,7 +7498,7 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
   if accuracy is None:
     return None
   elif isinstance(accuracy, AccuracyMode):
-    return hlo.ResultAccuracyAttr.get(0.0, 0.0, int(0), str(accuracy.name))
+    return hlo.ResultAccuracyAttr.get(0.0, 0.0, int(0), accuracy.name)
   elif isinstance(accuracy, Tolerance):
     return hlo.ResultAccuracyAttr.get(
         atol=accuracy.atol,
@@ -6160,10 +7510,10 @@ def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr | None:
 
 def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
-    fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
+    fp8_dtypes = [dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz,
                   dtypes.float8_e3m4, dtypes.float8_e4m3,
-                  dtypes.float8_e8m0fnu)
+                  dtypes.float8_e8m0fnu, dtypes.float8_e5m3fnu]
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
 
   # The *_ lets us reuse this for ragged_dot_general, which has group_sizes.
@@ -6180,6 +7530,7 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
     # it's probably sufficient to just check the presets here.
     if platform == "cpu" and precision not in {
         DotAlgorithmPreset.DEFAULT, DotAlgorithmPreset.F16_F16_F16,
+        DotAlgorithmPreset.F16_F16_F32,
         DotAlgorithmPreset.F32_F32_F32, DotAlgorithmPreset.F64_F64_F64,
         DotAlgorithmPreset.BF16_BF16_F32, DotAlgorithmPreset.BF16_BF16_F32_X3,
         DotAlgorithmPreset.BF16_BF16_F32_X6,
@@ -6197,6 +7548,8 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
 
     lhs_dtype, rhs_dtype, accumulation_dtype = get_algorithm_compute_types(
         precision, lhs_dtype, rhs_dtype, aval_out.dtype)
+    if platform == "cpu":
+      accumulation_dtype = precision.accumulation_type
     lhs = maybe_convert_dtype(lhs, lhs_aval, lhs_dtype)
     rhs = maybe_convert_dtype(rhs, rhs_aval, rhs_dtype)
     if accumulation_dtype is not None:
@@ -6231,14 +7584,118 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   return lhs, rhs, accumulation_aval, algorithm_kwarg
 
 
+def _is_ordered(order: Any) -> bool:
+  return (order is not None
+          and order is not reduction_order_lib.ReductionOrder.unordered
+          and not isinstance(order, reduction_order_lib.Unordered))
+
+def _check_ordered_reduction_sharding(
+    name, reduction_order, sharded_axes, unreduced_axes=(), out_sharding=None
+):
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    return
+  if (
+      reduction_order is not None
+      and out_sharding is not None
+      and (u_overlap := set(sharded_axes) & set(out_sharding.spec.unreduced))
+  ):
+    raise core.ShardingTypeError(
+        f'{name} with explicit reduction_order={reduction_order!r} cannot leave'
+        f' reduced mesh axes {sorted(u_overlap)} unreduced in'
+        f' out_sharding={out_sharding}; use reduction_order="unreduced".'
+    )
+  if not _is_ordered(reduction_order):
+    return
+  if sharded_axes:
+    axes_tup = tuple(dict.fromkeys(sharded_axes))
+    raise core.ShardingTypeError(
+        f'{name} with ordered reduction_order={reduction_order!r} cannot reduce'
+        f' across Explicit-sharded mesh axes {axes_tup};'
+        " use reduction_order='unordered', ro.tiled(..., outer=ro.ring(...)),"
+        ' or jax.sharding.reshard first.'
+    )
+  if unreduced_axes:
+    raise core.ShardingTypeError(
+        f'{name} with ordered reduction_order={reduction_order!r} cannot'
+        f' operate on unreduced mesh axes {sorted(unreduced_axes)}; reduce via'
+        ' jax.sharding.reshard first.'
+    )
+
+def _lower_ordered(ctx, order, linear_fn, intr_kw, *args):
+  if order is reduction_order_lib.ReductionOrder.linear:
+    fn = linear_fn
+  else:
+    if (impl := reduction_order_lib._INTRINSIC_IMPLS.get(order.name)) is None:
+      raise NotImplementedError(f"No XLA lowering registered for {order!r}")
+    fn = partial(impl, **intr_kw)
+  out_s = ctx.avals_out[0].sharding
+  # `_linear_dot` / intrinsic decompositions lower `dot_general` via broadcast +
+  # `mul`, where shared Explicit axes on free dims or `out_sharding` resharding
+  # would error in Explicit mode.
+  if (axes := out_s.mesh.explicit_axes):
+    fn = pjit.auto_axes(fn, out_sharding=out_s, axes=axes)
+  return mlir.lower_fun(fn, multiple_results=False)(ctx, *args)
+
+_UINT_BY_BITS = {8: np.uint8, 16: np.uint16, 32: np.uint32, 64: np.uint64}
+
+def _bitexact_view(x, prep, step=lambda z: z):
+  dt = x.dtype
+  if dtypes.issubdtype(dt, np.complexfloating):
+    re_f = _bitexact_view(real(x), prep, step)
+    im_f = _bitexact_view(imag(x), prep, step)
+    return lambda *a: complex(re_f(*a), im_f(*a))
+  if dtypes.issubdtype(dt, np.floating) and (u_dt := _UINT_BY_BITS.get(dtypes.itemsize_bits(dt))) is not None:
+    ux = prep(bitcast_convert_type(x, u_dt))
+    return lambda *a: bitcast_convert_type(optimization_barrier(step(ux, *a)), dt)
+  px = prep(x)
+  return lambda *a: step(px, *a)
+
+def _linear_dot(out_dtype, lhs, rhs, *, dimension_numbers):
+  from jax._src.lax import control_flow
+  (lc, rc), (lb, rb) = dimension_numbers
+  lf = tuple(i for i in range(lhs.ndim) if i not in lc and i not in lb)
+  rf = tuple(i for i in range(rhs.ndim) if i not in rc and i not in rb)
+  b_sh, lf_sh, rf_sh = (tuple(lhs.shape[i] for i in lb),
+                        tuple(lhs.shape[i] for i in lf), tuple(rhs.shape[i] for i in rf))
+  out_sh = b_sh + lf_sh + rf_sh
+  if (k := math.prod(lhs.shape[i] for i in lc)) == 0:
+    return full(out_sh, 0, out_dtype)
+  la_sh = (k, *b_sh, *lf_sh, *((1,) * len(rf)))
+  ra_sh = (k, *b_sh, *((1,) * len(lf)), *rf_sh)
+  bcast = lambda z, sh: broadcast_in_dim(z, sh, tuple(range(len(sh))))
+  sl = partial(slicing.dynamic_index_in_dim, keepdims=False, allow_negative_indices=False)
+  lhs_c, rhs_c = convert_element_type(lhs, out_dtype), convert_element_type(rhs, out_dtype)
+  if math.prod(out_sh) * k * np.dtype(out_dtype).itemsize <= 8192:
+    full_sh = (k, *out_sh)
+    la = _bitexact_view(lhs_c, lambda z: bcast(reshape(transpose(z, (*lc, *lb, *lf)), la_sh), full_sh))()
+    ra = _bitexact_view(rhs_c, lambda z: bcast(reshape(transpose(z, (*rc, *rb, *rf)), ra_sh), full_sh))()
+    return _linear_reduce(add, _get_sum_identity, optimization_barrier(mul(la, ra)), axes=(0,))
+  la_at = _bitexact_view(lhs_c, lambda z: reshape(transpose(z, (*lc, *lb, *lf)), la_sh), lambda z, i: bcast(sl(z, i), out_sh))
+  ra_at = _bitexact_view(rhs_c, lambda z: reshape(transpose(z, (*rc, *rb, *rf)), ra_sh), lambda z, i: bcast(sl(z, i), out_sh))
+  prod = lambda i: optimization_barrier(mul(la_at(i), ra_at(i)))
+  return control_flow.fori_loop(1, k, lambda i, acc: add(acc, prod(i)), prod(0))
+
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
-                       out_sharding, platform: str = "default"):
+                       out_sharding, reduction_order=None, platform: str = "default"):
+  if _is_ordered(reduction_order):
+    dt = ctx.avals_out[0].dtype
+    return _lower_ordered(
+        ctx, reduction_order,
+        partial(_linear_dot, dt, dimension_numbers=dimension_numbers),
+        dict(dimension_numbers=dimension_numbers, preferred_element_type=dt),
+        lhs, rhs)
   del preferred_element_type  # Implied by the output aval
   lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
       ctx, lhs, rhs, precision, platform
   )
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  if not lhs_contracting and precision in {
+      DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+      DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+  }:
+    # Outer products have no contracting reduction axis to decompose.
+    algorithm_kwarg = {}
   dot_dnums = hlo.DotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
       rhs_batching_dimensions=list(rhs_batch),
@@ -6254,12 +7711,44 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       **algorithm_kwarg,
   )
   aval_out, = ctx.avals_out
-  result = mlir.lower_with_sharding_in_types(ctx, result, aval_out)
+  result = mlir.lower_with_explicit_types(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
 
-mlir.register_lowering(dot_general_p, _dot_general_lower)
+
+def _dot_general_collective_rule(
+    in_avals, out_avals, *, dimension_numbers, **params
+):
+  del params
+  (lhs_aval, rhs_aval), (out_aval,) = in_avals, out_avals
+  lhs_spec, rhs_spec = lhs_aval.sharding.spec, rhs_aval.sharding.spec
+  (lhs_c, rhs_c), _ = dimension_numbers
+  if any(lhs_spec.partitions[i] is not None for i in lhs_c) or any(
+      rhs_spec.partitions[i] is not None for i in rhs_c
+  ):
+    raise NotImplementedError
+  try:
+    expected_out = _dot_general_sharding_rule(
+        lhs_aval,
+        rhs_aval,
+        dimension_numbers=dimension_numbers,
+        precision=None,
+        preferred_element_type=None,
+        out_sharding=None,
+    )
+  except (core.ShardingTypeError, lax_utils.DuplicateSpecError):
+    raise NotImplementedError from None
+  if out_aval.sharding.spec.partitions != expected_out.spec.partitions:
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+
+mlir.register_lowering(
+    dot_general_p,
+    _dot_general_lower,
+    shard_map_collective_rule=_dot_general_collective_rule,
+)
 
 for platform in ["cpu", "tpu"]:
   mlir.register_lowering(dot_general_p,
@@ -6333,7 +7822,9 @@ def _ragged_dot_general_shape_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ):
+  del reduction_order
   def _check_in_range(dim, rank, dim_name, arg_name):
     if dim < 0 or dim >= rank:
       raise TypeError(
@@ -6432,7 +7923,9 @@ def _ragged_dot_general_dtype_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ) -> np.dtype:
+  del reduction_order
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError(
         'ragged_dot_general requires that '
@@ -6450,57 +7943,6 @@ def _ragged_dot_general_dtype_rule(
   )
 
 
-def _ragged_dot_general_jvp_rule(
-    primals, tangents, ragged_dot_dimension_numbers,
-    precision, preferred_element_type, group_offset, out_sharding
-):
-  # note - we could ostensibly just get this by passing on the
-  # value to ragged_dot below, but, this feels cleaner.
-  if group_offset is not None:
-    raise NotImplementedError('Unimplemented group_offset support.')
-  x, y, gs = primals
-  dx, dy, _ = tangents  # no tan on the gs
-
-  # primal
-  primal_out = ragged_dot_general(
-      x,
-      y,
-      gs,
-      ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-      precision=precision,
-      preferred_element_type=preferred_element_type,
-  )
-
-  # tangent
-  dx_out = (
-      ragged_dot_general(
-          dx,
-          y,
-          gs,
-          ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-          precision=precision,
-          preferred_element_type=preferred_element_type,
-      )
-      if type(dx) is not ad_util.Zero
-      else _zeros(primal_out)
-  )
-  dy_out = (
-      ragged_dot_general(
-          x,
-          dy,
-          gs,
-          ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-          precision=precision,
-          preferred_element_type=preferred_element_type,
-      )
-      if type(dy) is not ad_util.Zero
-      else _zeros(primal_out)
-  )
-  tangent_out = add(dx_out, dy_out)
-
-  return primal_out, tangent_out
-
-
 def _ragged_dot_general_transpose_rule(
     ct,
     x,
@@ -6512,6 +7954,7 @@ def _ragged_dot_general_transpose_rule(
     preferred_element_type: DTypeLike | None,
     group_offset: Array | None,
     out_sharding: NamedSharding | P | None = None,
+    reduction_order=None,
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
@@ -6593,38 +8036,6 @@ def _ragged_dot_general_transpose_rule(
   return x_bar, y_bar, None
 
 
-def _ragged_dot_batch_unpack_args(batched_args):
-  lhs, rhs, _ = batched_args
-  return (lhs, rhs)
-
-
-def _ragged_dot_batch_unpack_dims(batch_dims):
-  if not all(dim == 0 for dim in batch_dims):
-    raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
-  lbd, rbd, _ = batch_dims
-  return (lbd, rbd)
-
-
-def _ragged_dot_general_invoke_prim(
-    group_sizes,
-    lhs,
-    rhs,
-    new_ragged_dot_dimension_numbers,
-    precision,
-    preferred_element_type,
-    out_sharding,
-):
-  del out_sharding
-  return ragged_dot_general(
-      lhs,
-      rhs,
-      group_sizes,
-      ragged_dot_dimension_numbers=new_ragged_dot_dimension_numbers,
-      precision=precision,
-      preferred_element_type=preferred_element_type,
-  )
-
-
 def _ragged_dot_general_batch_rule(
     axis_data,
     batched_args,
@@ -6635,29 +8046,29 @@ def _ragged_dot_general_batch_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ):
-  invoke = partial(_ragged_dot_general_invoke_prim, batched_args[2])
+  if not all(dim == 0 for dim in batch_dims):
+    raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
+  lhs, rhs, gs = batched_args
+  invoke = lambda l, r, d, **kw: ragged_dot_general(l, r, gs, d, **kw)
   batched_out, result_batch_dim = _dot_batch_rule(
-      _ragged_dot_batch_unpack_args,
-      _ragged_dot_batch_unpack_dims,
-      invoke,
-      axis_data,
-      batched_args,
-      batch_dims,
+      lambda xs: xs, lambda ds: ds, invoke, axis_data, (lhs, rhs), (0, 0),
       dimension_numbers=ragged_dot_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=None,
+      reduction_order=reduction_order,
   )
-  if _is_ragged_contracting(batched_args[0].ndim - 1,
-                            ragged_dot_dimension_numbers):
+  if _is_ragged_contracting(lhs.ndim - 1, ragged_dot_dimension_numbers):
     result_batch_dim += 1
   return batched_out, result_batch_dim
 
 
 def _ragged_dot_general_sharding_rule(
     lhs, rhs, group_sizes, *, ragged_dot_dimension_numbers, precision,
-    preferred_element_type: DTypeLike | None, group_offset, out_sharding):
+    preferred_element_type: DTypeLike | None, group_offset, out_sharding,
+    reduction_order=None):
   mesh_set = {x.sharding.mesh for x in [lhs, rhs, group_sizes]
               if not x.sharding.mesh.empty}
   if len(mesh_set) > 1:
@@ -6665,6 +8076,14 @@ def _ragged_dot_general_sharding_rule(
       'All argument meshes must be the same or unspecified, but got'
       f' lhs mesh = {lhs.sharding.mesh}, rhs mesh = {rhs.sharding.mesh},'
       f' group_sizes mesh = {group_sizes.sharding.mesh}')
+  (lc, rc), _ = ragged_dot_dimension_numbers.dot_dimension_numbers
+  contract_axes = flatten_spec_no_none(
+      tuple(lhs.sharding.spec.partitions[i] for i in lc)
+      + tuple(rhs.sharding.spec.partitions[i] for i in rc))
+  # No out_sharding: ragged_dot_general has no unreduced rule, so unreduced
+  # out_shardings raise NotImplementedError instead.
+  _check_ordered_reduction_sharding(
+      'ragged_dot_general', reduction_order, contract_axes)
 
   if out_sharding is None:
     raise NotImplementedError(
@@ -6680,7 +8099,25 @@ ragged_dot_general_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'ragged_dot'),
     sharding_rule=_ragged_dot_general_sharding_rule,
 )
-ad.primitive_jvps[ragged_dot_general_p] = _ragged_dot_general_jvp_rule
+_wrap_reduction_order_abstract_eval(ragged_dot_general_p)
+
+
+def _ragged_dot_general_is_high(*avals, reduction_order=None, **_):
+  return not reduction_order_lib.is_leaf_order(reduction_order)
+ragged_dot_general_p.is_high = (  # type: ignore[method-assign]
+    _ragged_dot_general_is_high)
+
+
+def _ragged_dot_general_to_lojax(lhs, rhs, group_sizes, **params):
+  return _reduction_order.ragged_dot_general(lhs, rhs, group_sizes, **params)
+ragged_dot_general_p.to_lojax = (  # type: ignore[method-assign]
+    _ragged_dot_general_to_lojax)
+ad.defjvp(
+    ragged_dot_general_p,
+    lambda g, x, y, gs, **kw: ragged_dot_general_p.bind(
+        g, y, gs, **_tangent_ro_kw(kw)),
+    lambda g, x, y, gs, **kw: ragged_dot_general_p.bind(
+        x, g, gs, **_tangent_ro_kw(kw)), None)
 ad.primitive_transposes[ragged_dot_general_p] = _ragged_dot_general_transpose_rule
 batching.fancy_primitive_batchers[ragged_dot_general_p] = _ragged_dot_general_batch_rule
 
@@ -6705,10 +8142,7 @@ def _ragged_dot_general_impl(
     x = broadcast_in_dim(x, shape, list(range(1, len(shape))))
     iota = broadcasted_iota(gs.dtype, shape, dim+1)
     group_ends = control_flow.cumsum(gs)
-    group_starts = concatenate(
-        [_zeros(gs)[:1], group_ends[:-1]],
-        dimension=0,
-    )
+    group_starts = group_ends - gs
     group_ends = broadcast_in_dim(group_ends, shape, (0,))
     group_starts = broadcast_in_dim(group_starts, shape, (0,))
     mask = bitwise_and(group_starts <= iota, iota < group_ends)
@@ -6803,12 +8237,17 @@ def _ragged_dot_general_lower(
     preferred_element_type: np.dtype | None,
     group_offset: Array | None = None,
     out_sharding=None,
+    reduction_order=None,
     platform: str = 'default',
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
+  if _is_ordered(reduction_order):
+    raise NotImplementedError(
+        f'ragged_dot has no XLA lowering for {reduction_order=}.')
 
-  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
+  if (platform == 'default' or
+      not config.jax_ragged_dot_use_ragged_dot_instruction.value):
     return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
@@ -6852,27 +8291,14 @@ def _ragged_dot_general_lower(
   return [result]
 
 
-mlir.register_lowering(
-  ragged_dot_general_p,
-  mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False),
-)
+mlir.register_lowering(ragged_dot_general_p, _ragged_dot_general_lower)
 
-def _ragged_dot_general_gpu_lowering(ctx, *args, **kwargs):
-  if config.jax_ragged_dot_use_gpu_pallas_triton_lowering.value:
-    from jax._src.lax.pallas_lowerings.gpu import ragged_dot
-
-    if ragged_dot._backend_supports_triton(ctx):
-      return mlir.lower_fun(ragged_dot._pallas_ragged_dot_general_impl,
-                            multiple_results=False)(ctx, *args, **kwargs)
-  # fall back to the default gpu lowering
-  return _ragged_dot_general_lower(ctx, *args, **kwargs, platform='gpu')
-
-mlir.register_lowering(
-  ragged_dot_general_p, _ragged_dot_general_gpu_lowering, platform='gpu')
-
-mlir.register_lowering(
-    ragged_dot_general_p, partial(_ragged_dot_general_lower, platform='tpu'),
-    platform='tpu')
+for platform in ['tpu', 'gpu']:
+  mlir.register_lowering(
+      ragged_dot_general_p,
+      partial(_ragged_dot_general_lower, platform=platform),
+      platform=platform,
+  )
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,
@@ -6912,31 +8338,47 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,
 
 def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
                                     sharding):
-  if sharding is not None:
-    return sharding
   bds = set(broadcast_dimensions)
   orig_spec = iter(operand.sharding.spec.partitions)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
+  if sharding is not None:
+    lax_utils._check_no_collectives_dim_change(
+        'broadcast_in_dim', new_spec, sharding.spec.partitions)
+    return sharding
   mesh = (get_abstract_mesh() if operand.sharding.mesh.empty else
           operand.sharding.mesh)
   return operand.sharding.update(
       mesh=mesh, spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _broadcast_in_dim_unreduced_rule(operand, sharding):
-  if sharding is not None and sharding.mesh.are_all_axes_explicit:
-    out = sharding.spec.unreduced
-    if out and sharding.spec.unreduced_kind is not UnreducedKind.sum:
+  if (sharding is not None and sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.unreduced
+    if operand.sharding.spec.unreduced:
+      if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+        raise ValueError(
+            'out_sharding passed to broadcast_in_dim must be unreduced over'
+            f' the same mesh axes as operand. Got out_sharding:'
+            f' {sharding.spec} and operand type: {operand.str_short(True)}')
+      if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+        raise ValueError(
+            'out_sharding passed to broadcast_in_dim must have the same'
+            f' unreduced_kind as operand. Got out_sharding: {sharding.spec}'
+            f' and operand type: {operand.str_short(True)}')
+    elif (sharding.spec.unreduced and
+          sharding.spec.unreduced_kind is not UnreducedKind.sum):
       raise ValueError(
           '`out_sharding` passed to `broadcast_in_dim` can only contain'
-          f' unreduced of kind `sum`. Got out_sharding={sharding}')
-  else:
-    out = getu(operand)
-  kind = UnreducedKind.sum if out else None
-  return out, kind
+          f' unreduced of kind `sum` when operand is not unreduced.'
+          f' Got out_sharding={sharding}')
+    return sharding.spec.unreduced, sharding.spec.unreduced_kind
+  return getu(operand, None)
 
 def _broadcast_in_dim_reduced_rule(operand, sharding):
-  if sharding is not None and sharding.mesh.are_all_axes_explicit:
+  if (sharding is not None and sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.reduced
     return sharding.spec.reduced
   return getr(operand)
 
@@ -7034,12 +8476,43 @@ def _broadcast_in_dim_partial_eval(
       dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
            sharding=sharding))
 
+def _broadcast_in_dim_layout_rule(out_aval, operand, *, shape,
+                                  broadcast_dimensions, sharding):
+  if operand.ndim == 0:
+    if out_aval.ndim == 0:
+      return operand.layout
+    return Layout(tuple(range(out_aval.ndim)))
+
+  bcast_set = set(broadcast_dimensions)
+  new_dims = [i for i in range(out_aval.ndim) if i not in bcast_set]
+  out_m2m = (*new_dims,
+             *(broadcast_dimensions[d] for d in operand.layout.major_to_minor))
+  assert sorted(out_m2m) == list(range(out_aval.ndim))
+
+  if operand.layout.tiling:
+    tiles = operand.layout.tiling[0]
+    for op_d, out_d, tile_size in zip(
+        operand.layout.major_to_minor[-len(tiles):], out_m2m[-len(tiles):], tiles):
+      in_size, out_size = operand.shape[op_d], out_aval.shape[out_d]
+      if in_size != out_size and (
+          in_size == 1 or out_size == 1 or
+          in_size < tile_size or out_size < tile_size):
+        raise ValueError(
+            '`broadcast_in_dim` cannot change the shard shape of a tiled minor'
+            f' dimension below its tile size (or from/to size 1). Dimension'
+            f' {op_d} has tile size {tile_size}, input shard shape'
+            f' {operand.shape}, and output shard shape {out_aval.shape} with'
+            f' layout {operand.layout}.')
+    if operand.ndim == 1 and out_aval.ndim >= 2:
+      return operand.layout.update(major_to_minor=out_m2m, tiling=None)
+  return operand.layout.update(major_to_minor=out_m2m)
+
 def _broadcast_in_dim_lower(ctx, x, shape, broadcast_dimensions,
                             sharding) -> Sequence[ir.Value]:
   aval_out, = ctx.avals_out
   out = mlir.broadcast_in_dim(ctx, x, aval_out,
                               broadcast_dimensions=broadcast_dimensions)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
@@ -7054,7 +8527,8 @@ broadcast_in_dim_p = standard_primitive(
     sharding_rule=_broadcast_in_dim_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'broadcast_in_dim'),
     ur_rule=_broadcast_in_dim_ur_rule,
-    memory_space_rule=_broadcast_in_dim_memory_space_rule)
+    memory_space_rule=_broadcast_in_dim_memory_space_rule,
+    layout_rule=_broadcast_in_dim_layout_rule)
 broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p))
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
@@ -7063,8 +8537,47 @@ pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eval
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
-mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+
+def _broadcast_in_dim_collective_rule(
+    in_avals, out_avals, *, shape, broadcast_dimensions, sharding):
+  from jax._src.lax import parallel
+  del shape, sharding
+  in_aval, = in_avals
+  out_aval, = out_avals
+  out_parts = out_aval.sharding.spec.partitions
+  out_shard_shape = out_aval.sharding.shard_shape(out_aval.shape)
+  per_shard_params = {'shape': out_shard_shape, 'sharding': None}
+
+  slice_dims = []
+  for i, (in_size, in_s, out_dim) in enumerate(zip(
+      in_aval.shape, in_aval.sharding.spec.partitions, broadcast_dimensions)):
+    if in_s == out_parts[out_dim] or (in_s is None and in_size == 1):
+      continue
+    if in_s is not None:
+      raise NotImplementedError
+    assert in_s is None and out_parts[out_dim] is not None
+    slice_dims.append((i, out_dim))
+
+  if not slice_dims:
+    return mlir.PartitioningRule(per_shard_params=per_shard_params)
+  else:
+    def _slice_to_shard(x_shard):
+      starts = [np.int32(0)] * x_shard.ndim
+      sizes = list(x_shard.shape)
+      for i, out_dim in slice_dims:
+        sizes[i] = out_shard_shape[out_dim]
+        starts[i] = parallel.axis_index(out_parts[out_dim]) * sizes[i]
+      return [slicing.dynamic_slice(
+          x_shard, starts, sizes, allow_negative_indices=False)]
+
+    return mlir.PartitioningRule(
+        in_collective=_slice_to_shard, per_shard_params=per_shard_params)
+
+mlir.register_lowering(
+    broadcast_in_dim_p, _broadcast_in_dim_lower,
+    shard_map_collective_rule=_broadcast_in_dim_collective_rule)
 core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
+lax_utils.register_unreduced_lojax(broadcast_in_dim_p, 'sharding')
 
 
 def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
@@ -7088,17 +8601,25 @@ def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
   out = mlir.reshape(ctx, broadcasted, aval_out)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-def _tile_abstract_eval(x, reps):
-  if x.ndim != len(reps):
-    raise TypeError(
-        f"reps length must be equal to the ndim of x, got {len(reps)=} "
-        f"and {x.ndim=}.")
+def _tile_sharding_rule(x, *, reps):
   for i, (r, sh) in enumerate(zip(reps, x.sharding.spec)):
     if r != 1 and sh is not None:
       raise core.ShardingTypeError(
           f'Operand cannot be sharded on dimension {i} when the tiling is'
           f' non-trivial. Got input type: {x} with reps: {reps}')
-  return x.update(shape=tuple(np.multiply(x.shape, reps)))
+  return x.sharding
+
+def _tile_abstract_eval(x, reps):
+  if x.ndim != len(reps):
+    raise TypeError(
+        f"reps length must be equal to the ndim of x, got {len(reps)=} "
+        f"and {x.ndim=}.")
+  out_s = lax_utils.call_sharding_rule(
+      tile_p, _tile_sharding_rule, None, None, x, reps=reps)
+  out_aval = x.update(shape=tuple(np.multiply(x.shape, reps)), sharding=out_s)
+  out_layout = lax_utils.call_layout_rule(
+      tile_p, None, [x], [out_aval], reps=reps)
+  return out_aval.update(layout=out_layout)
 
 def _tile_transpose_rule(ct, operand, *, reps):
   if type(ct) is ad_util.Zero:
@@ -7124,7 +8645,8 @@ tile_p.def_abstract_eval(_tile_abstract_eval)
 tile_p.def_impl(partial(dispatch.apply_primitive, tile_p))
 ad.deflinear2(tile_p, _tile_transpose_rule)
 batching.primitive_batchers[tile_p] = _tile_batch_rule
-mlir.register_lowering(tile_p, _tile_lower)
+mlir.register_lowering(
+    tile_p, _tile_lower, shard_map_collective_rule=_unop_collective_rule)
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -7179,9 +8701,23 @@ def _clamp_batch_rule(batched_args, batch_dims, **params):
     x = broadcast(x, min.shape)
   return clamp_p.bind(min, x, max), 0
 
+def _clamp_layout_rule(out_aval, min, operand, max):
+  if min.ndim and min.layout != operand.layout:
+    raise ValueError(
+        'layout of all inputs passed to `clamp` must be the same. Got min'
+        f' with layout: {min.layout} and operand with layout:'
+        f' {operand.layout}')
+  if max.ndim and max.layout != operand.layout:
+    raise ValueError(
+        'layout of all inputs passed to `clamp` must be the same. Got max'
+        f' with layout: {max.layout} and operand with layout:'
+        f' {operand.layout}')
+  return operand.layout
+
 clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp',
                              sharding_rule=_clamp_sharding_rule,
-                             vma_rule=partial(core.standard_vma_rule, 'clamp'))
+                             vma_rule=partial(core.standard_vma_rule, 'clamp'),
+                             layout_rule=_clamp_layout_rule)
 ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(bitwise_and(gt(min, operand), lt(min, max)),
@@ -7192,7 +8728,9 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-mlir.register_lowering(clamp_p, partial(_nary_lower_hlo, hlo.clamp))
+mlir.register_lowering(
+    clamp_p, partial(_nary_lower_hlo, hlo.clamp),
+    shard_map_collective_rule=_naryop_collective_rule)
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -7233,22 +8771,21 @@ def _concatenate_sharding_rule(*operands, **kwargs):
   return non_empty_s[0]
 
 def _concatenate_reduced_rule(*operands, **kwargs):
-  reduced_specs = {r for o in operands if (r := getr(o))}
-  if len(reduced_specs) > 1:
+  out_reduced = getr(operands[0])
+  if any(getr(o) != out_reduced for o in operands[1:]):
     raise core.ShardingTypeError(
         'All operands should be reduced along the same mesh axes. Got reduced'
-        f' specs: {reduced_specs}')
-  reduced_s, = reduced_specs if reduced_specs else (frozenset(),)
-  return reduced_s
+        f' specs: {[getr(o) for o in operands]}')
+  return out_reduced
 
 def _concatenate_unreduced_rule(*operands, **kwargs):
-  unreduced_specs = {u for o in operands if (u := getu(o))}
-  if len(unreduced_specs) > 1:
+  out_unreduced, kind = getu(operands[0], None)
+  if any(getu(o, None) != (out_unreduced, kind) for o in operands[1:]):
     raise core.ShardingTypeError(
-        'All operands should be unreduced along the same mesh axes. Got'
-        f' unreduced specs: {unreduced_specs}')
-  unreduced_s, = unreduced_specs if unreduced_specs else (frozenset(),)
-  return unreduced_s, UnreducedKind.sum if unreduced_s else None
+        'All operands should be unreduced along the same mesh axes and have the'
+        f' same unreduced_kind. Got unreduced specs:'
+        f' {[getu(o, None) for o in operands]}')
+  return out_unreduced, kind
 
 def _concatenate_ur_rule(*operands, **kwargs):
   out_unreduced, kind = _concatenate_unreduced_rule(*operands, **kwargs)
@@ -7281,14 +8818,28 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
+def _concatenate_layout_rule(out_aval, *operands, dimension):
+  first_layout = operands[0].layout
+  for o in operands[1:]:
+    if o.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `concatenate` must be the same. Got'
+          f' one operand with layout: {first_layout} and another operand with'
+          f' layout: {o.layout}')
+  for o in operands:
+    lax_utils.check_minor_dims_tile_size('concatenate', o, out_aval)
+  return first_layout
+
 concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'concatenate'),
-    ur_rule=_concatenate_ur_rule)
+    ur_rule=_concatenate_ur_rule,
+    layout_rule=_concatenate_layout_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
+lax_utils.register_unreduced_lojax(concatenate_p)
 
 def _concatenate_tree(xs, dimension: int):
   # concatenate can be slow to compile for wide concatenations, so form a
@@ -7305,9 +8856,21 @@ def _concatenate_tree(xs, dimension: int):
 def _concatenate_lower(ctx, *xs, dimension):
   aval_out, = ctx.avals_out
   out = _concatenate_tree(xs, dimension)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(concatenate_p, _concatenate_lower)
+
+def _concatenate_collective_rule(in_avals, out_avals, *, dimension):
+  out_aval, = out_avals
+  if out_aval.sharding.spec.partitions[dimension] is not None:
+    raise NotImplementedError
+  return _naryop_collective_rule(in_avals, out_avals)
+
+
+mlir.register_lowering(
+    concatenate_p,
+    _concatenate_lower,
+    shard_map_collective_rule=_concatenate_collective_rule,
+)
 
 # --- stack and unstack primitives ---
 
@@ -7369,12 +8932,12 @@ def _stack_lower(ctx, *xs, axis):
     expanded_xs.append(expanded_x)
 
   out = _concatenate_tree(expanded_xs, axis)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _stack_batch_rule(batched_args, batch_dims, *, axis):
   bdim = batch_dims[0]
   if all(b == bdim for b in batch_dims) and bdim is not None:
-    if axis <= bdim:
+    if axis < bdim:
       out_axis = axis
       out_bdim = bdim + 1
     else:
@@ -7394,13 +8957,41 @@ def _stack_ur_rule(*operands, **kwargs):
   out_reduced = _concatenate_reduced_rule(*operands, **kwargs)
   return out_unreduced, out_reduced, kind
 
+def _stack_layout_rule(out_aval, *operands, axis):
+  first_layout = operands[0].layout
+  for o in operands[1:]:
+    if o.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `stack` must be the same. Got'
+          f' one operand with layout: {first_layout} and another operand with'
+          f' layout: {o.layout}')
+  out_m2m = (axis, *(d if d < axis else d + 1 for d in first_layout.major_to_minor))
+  assert sorted(out_m2m) == list(range(out_aval.ndim))
+  if first_layout.tiling and operands[0].ndim == 1:
+    return first_layout.update(major_to_minor=out_m2m, tiling=None)
+  return first_layout.update(major_to_minor=out_m2m)
+
 stack_p = standard_primitive(
     _stack_shape_rule, _stack_dtype_rule, 'stack',
     sharding_rule=_stack_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'stack'),
-    ur_rule=_stack_ur_rule)
+    ur_rule=_stack_ur_rule,
+    layout_rule=_stack_layout_rule)
 ad.deflinear2(stack_p, _stack_transpose_rule)
-mlir.register_lowering(stack_p, _stack_lower)
+
+def _stack_collective_rule(in_avals, out_avals, *, axis):
+  out_aval, = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  if out_partitions[axis] is not None:
+    raise NotImplementedError
+  elem_spec = out_aval.sharding.spec.update(
+      partitions=out_partitions[:axis] + out_partitions[axis + 1:])
+  elem_aval = in_avals[0].update(sharding=out_aval.sharding.update(spec=elem_spec))
+  return _naryop_collective_rule(in_avals, [elem_aval])
+
+mlir.register_lowering(
+    stack_p, _stack_lower, shard_map_collective_rule=_stack_collective_rule)
+lax_utils.register_unreduced_lojax(stack_p)
 
 
 def _unstack_shape_rule(operand, *, axis):
@@ -7420,13 +9011,13 @@ def _unstack_weak_type_rule(operand, *, axis):
   return (operand.weak_type,) * num_results
 
 def _unstack_sharding_rule(operand, *, axis):
-  if operand.sharding.spec[axis] is not None:
+  if operand.sharding.spec.partitions[axis] is not None:
     raise core.ShardingTypeError(
         f"unstack operand cannot be sharded on the unstacking axis {axis}. "
         f"Got operand type={operand.str_short(True)}"
     )
   out_shapes = _unstack_shape_rule(operand, axis=axis)
-  new_spec = list(operand.sharding.spec)
+  new_spec = list(operand.sharding.spec.partitions)
   new_spec.pop(axis)
   out_sharding = operand.sharding.update(
     spec=operand.sharding.spec.update(partitions=tuple(new_spec)))
@@ -7437,10 +9028,27 @@ def _unstack_vma_rule(operand, *, axis):
   return [out_vma] * operand.shape[axis]
 
 def _unstack_ur_rule(operand, *, axis):
-  out_u = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * operand.shape[axis], [getr(operand)] * operand.shape[axis],
           [kind] * operand.shape[axis])
+
+def _unstack_layout_rule(out_avals, operand, *, axis):
+  if axis != operand.layout.major_to_minor[0]:
+    raise ValueError(
+        f'`unstack` requires `axis` ({axis}) to be the major-most dimension in'
+        f' operand layout {operand.layout} for shape {operand.shape}.')
+  if operand.layout.tiling:
+    tiles = operand.layout.tiling[0]
+    if axis in operand.layout.major_to_minor[-len(tiles):]:
+      raise ValueError(
+          f'`unstack` along axis {axis} cannot remove one of the'
+          f' {len(tiles)} tiled minor-most dimensions of operand with shape'
+          f' {operand.shape} and layout {operand.layout}.')
+  out_m2m = tuple(d if d < axis else d - 1
+                  for d in operand.layout.major_to_minor[1:])
+  assert sorted(out_m2m) == list(range(operand.ndim - 1))
+  out_layout = operand.layout.update(major_to_minor=out_m2m)
+  return [out_layout] * len(out_avals)
 
 def _unstack_transpose_rule(cotangents, operand, *, axis):
   if all(type(ct) is ad_util.Zero for ct in cotangents):
@@ -7467,7 +9075,7 @@ def _unstack_lower(ctx, x, *, axis):
                               start_indices=start_indices,
                               limit_indices=limit_indices, strides=strides)
     squeezed_out = mlir.reshape(ctx, slice_out, aval_out)
-    outs.append(mlir.lower_with_sharding_in_types(ctx, squeezed_out, aval_out))
+    outs.append(mlir.lower_with_explicit_types(ctx, squeezed_out, aval_out))
 
     start_indices[axis] = limit_indices[axis]
 
@@ -7495,10 +9103,12 @@ unstack_p.multiple_results = True
 unstack_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, unstack_p, _unstack_shape_rule,
             _unstack_dtype_rule, _unstack_weak_type_rule, _unstack_sharding_rule,
-            _unstack_vma_rule, _unstack_ur_rule))
+            _unstack_vma_rule, _unstack_ur_rule, _unstack_layout_rule))
 unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
 ad.deflinear2(unstack_p, _unstack_transpose_rule)
-mlir.register_lowering(unstack_p, _unstack_lower)
+mlir.register_lowering(
+    unstack_p, _unstack_lower, shard_map_collective_rule=_unop_collective_rule)
+lax_utils.register_unreduced_lojax(unstack_p)
 
 batching.primitive_batchers[stack_p] = _stack_batch_rule
 batching.primitive_batchers[unstack_p] = _unstack_batch_rule
@@ -7550,7 +9160,7 @@ def _split_lower(ctx, x, *, sizes, axis):
     limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
     out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                         limit_indices=limit_indices, strides=strides)
-    outs.append(mlir.lower_with_sharding_in_types(ctx, out, aval_out))
+    outs.append(mlir.lower_with_explicit_types(ctx, out, aval_out))
     start_indices[axis] = limit_indices[axis]
   return outs
 
@@ -7563,8 +9173,7 @@ def _split_sharding_rule(operand, *, sizes, axis):
 
 def _split_ur_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
-  out_u = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * len(out_shapes), [getr(operand)] * len(out_shapes),
           [kind] * len(out_shapes))
 
@@ -7573,16 +9182,31 @@ def _split_vma_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
   return [out_vma] * len(out_shapes)
 
+def _split_layout_rule(out_avals, operand, *, sizes, axis):
+  for out_aval in out_avals:
+    lax_utils.check_minor_dims_tile_size('split', operand, out_aval)
+  return [operand.layout] * len(sizes)
+
 split_p = core.Primitive('split')
 split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule, _split_ur_rule))
+            _split_vma_rule, _split_ur_rule, _split_layout_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
-mlir.register_lowering(split_p, _split_lower)
+
+def _split_collective_rule(in_avals, out_avals, *, sizes, axis):
+  del out_avals, sizes
+  in_aval, = in_avals
+  if in_aval.sharding.spec.partitions[axis] is not None:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    split_p, _split_lower, shard_map_collective_rule=_split_collective_rule)
+lax_utils.register_unreduced_lojax(split_p)
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
   if operand.dtype != padding_value.dtype:
@@ -7620,9 +9244,23 @@ def _pad_sharding_rule(operand, padding_value, *, padding_config):
       out_shape, operand, 'padding')
 
 def _pad_ur_rule(operand, padding_value, *, padding_config):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, core.getr(operand), kind
+  op_u, op_k = core.getu(operand, None)
+  pv_u, pv_k = core.getu(padding_value, None)
+  if op_u != pv_u or (op_u and op_k is not pv_k):
+    raise core.ShardingTypeError(
+        'pad operand and padding_value must be unreduced along the same mesh'
+        f' axes and have the same unreduced_kind. Got operand={operand} and'
+        f' padding_value={padding_value}')
+  if op_u and op_k is not UnreducedKind.sum:
+    raise core.ShardingTypeError(
+        f'pad only supports UnreducedKind.sum, got {op_k} on operand={operand}')
+  op_r, pv_r = core.getr(operand), core.getr(padding_value)
+  if op_r != pv_r:
+    raise core.ShardingTypeError(
+        'pad operand and padding_value must be reduced along the same mesh'
+        f' axes. Got operand={operand} and padding_value={padding_value}')
+  kind = UnreducedKind.sum if op_u else None
+  return op_u, op_r, kind
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -7635,12 +9273,17 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     def t_op():
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
                               np.zeros_like(interior))
-      unpadded = pad(t, np.array(0., t.dtype), unpad_config)
+      unpadded = pad(t, _zero(t), unpad_config)
       return slicing.slice(unpadded, list(np.zeros_like(lo)), unpadded.shape,
                            list(np.add(interior, 1)))
 
-    t_operand = t_op() if ad.is_undefined_primal(operand) else None
-    t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
+    t_operand = t_padv = None
+    if ad.is_undefined_primal(operand) or ad.is_undefined_primal(padding_value):
+      unpadded_op = t_op()
+      if ad.is_undefined_primal(operand):
+        t_operand = unpadded_op
+      if ad.is_undefined_primal(padding_value):
+        t_padv = sub(total(t), total(unpadded_op))
   return [t_operand, t_padv]
 
 def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
@@ -7676,7 +9319,16 @@ def _pad_lower(ctx, x, padding_value, *, padding_config):
   out = mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-mlir.register_lowering(pad_p, _pad_lower)
+def _pad_collective_rule(in_avals, out_avals, *, padding_config):
+  in_aval, _ = in_avals
+  if any(s is not None and cfg != (0, 0, 0)
+         for s, cfg in zip(in_aval.sharding.spec.partitions, padding_config)):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    pad_p, _pad_lower, shard_map_collective_rule=_pad_collective_rule)
+lax_utils.register_unreduced_lojax(pad_p)
 
 
 # The squeeze primitive exists for the benefit of masking and other
@@ -7703,8 +9355,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
       spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _squeeze_ur_rule(operand, *, dimensions):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 def _compute_squeeze_shape(shape, dimensions):
@@ -7733,11 +9384,15 @@ def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   bdim_out = canonicalize_axis(0, len(result_shape))
   return squeeze(operand, dimensions=dimensions), bdim_out
 
+def _squeeze_layout_rule(out_aval, operand, *, dimensions):
+  return _reshape_layout_rule(out_aval, operand, new_sizes=out_aval.shape,
+                              dimensions=None, sharding=None)
+
 squeeze_p = standard_primitive(
     _squeeze_shape_rule, _squeeze_dtype_rule, 'squeeze',
     sharding_rule=_squeeze_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'squeeze'),
-    ur_rule=_squeeze_ur_rule)
+    ur_rule=_squeeze_ur_rule, layout_rule=_squeeze_layout_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
@@ -7745,9 +9400,11 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
   out = mlir.reshape(ctx, operand, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(squeeze_p, _squeeze_lower)
+mlir.register_lowering(
+    squeeze_p, _squeeze_lower, shard_map_collective_rule=_unop_collective_rule)
+lax_utils.register_unreduced_lojax(squeeze_p)
 
 
 def shape_as_value(shape: core.Shape):
@@ -7779,38 +9436,42 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
 class ReshapeExplicitError(Exception):
   pass
 
-def _split_on_one_axis(op_shape, new_sizes):
+def _split_on_one_axis(op_shape, new_sizes, allow_multi=False):
   op_shape = [s for s in op_shape if s != 1]
   new_sizes = [s for s in new_sizes if s != 1]
 
   if len(new_sizes) <= len(op_shape):
-    return False, []
+    return False, [], []
 
   i, j, count = 0, 0, 0
-  out = []
+  out, out_indices = [], []
 
   while j < len(new_sizes):
     if op_shape[i] == new_sizes[j]:
       out.append(op_shape[i])
+      out_indices.append(j)
     else:
       count += 1
-      if count > 1:
+      if not allow_multi and count > 1:
         raise ReshapeExplicitError()
       temp = [new_sizes[j]]
+      temp_indices = [j]
       while math.prod(temp) != op_shape[i]:
         if math.prod(temp) > op_shape[i]:
-          return False, []
+          return False, [], []
         j += 1
         temp.append(new_sizes[j])
+        temp_indices.append(j)
       out.append(temp)
+      out_indices.append(temp_indices)
     i += 1
     j += 1
-  assert len(op_shape) == len(out)
-  return True, out
+  assert len(op_shape) == len(out) == len(out_indices)
+  return True, out, out_indices
 
 
-def _merge_on_one_axis(operand, new_sizes):
-  return _split_on_one_axis(new_sizes, operand.shape)
+def _merge_on_one_axis(operand, new_sizes, allow_multi=False):
+  return _split_on_one_axis(new_sizes, operand.shape, allow_multi=allow_multi)
 
 
 def raise_reshape_error(operand, new_sizes) -> Never:
@@ -7821,17 +9482,26 @@ def raise_reshape_error(operand, new_sizes) -> Never:
 
 
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
+  return _reshape_sharding_rule_opt(
+      operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding,
+      allow_multi=False)
+
+
+def _reshape_sharding_rule_opt(operand, *, new_sizes, dimensions, sharding,
+                               allow_multi):
   if sharding is not None:
     return sharding
   if all(s is None for s in operand.sharding.spec.partitions):
-    return operand.sharding
+    return operand.sharding.update(spec=operand.sharding.spec.update(
+        partitions=(None,) * len(new_sizes)))
   non_1s_op_shape = [s for s in operand.shape if s != 1]
   non_1s_new_shape = [s for s in new_sizes if s != 1]
   if non_1s_op_shape == non_1s_new_shape:
     return _split_merge_singleton_dim_sharding_rule(operand, new_sizes)
 
   try:
-    is_split, out_split = _split_on_one_axis(operand.shape, new_sizes)
+    is_split, out_split, _ = _split_on_one_axis(
+        operand.shape, new_sizes, allow_multi=allow_multi)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_split:
@@ -7839,7 +9509,8 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
                                         dimensions)
 
   try:
-    is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
+    is_merge, operand_merge, _ = _merge_on_one_axis(
+        operand, new_sizes, allow_multi=allow_multi)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_merge:
@@ -7849,8 +9520,9 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
 
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
-  filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
-                   if sh != 1]
+  filtered_spec = [
+      sp for sh, sp in zip(operand.shape, operand.sharding.spec.partitions)
+      if sh != 1]
   fs = iter(filtered_spec)
   new_spec = [None if n == 1 else next(fs) for n in new_sizes]
   assert next(fs, None) is None
@@ -7921,14 +9593,15 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
   op_spec_iter = iter(op_spec)
   for ns, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
-      tup_sp = tuple(next(op_spec_iter) for _ in op_merge)
+      tup_sp = [next(op_spec_iter) for _ in op_merge]
       if all(s is None for s in tup_sp):
         new_spec.append(None)
       elif dimensions is None:
         tup_sp = strip_trailing_nones(flatten_spec(tup_sp))
         if None in tup_sp:
           raise_reshape_error(operand, orig_new_sizes)
-        partitions = split_partitions(mesh, tup_sp, [ns], operand, orig_new_sizes)
+        partitions = split_partitions(
+            mesh, tup_sp, [ns], operand, orig_new_sizes)
         new_spec.extend(partitions)
       else:
         raise_reshape_error(operand, orig_new_sizes)
@@ -7940,7 +9613,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
   out_spec = []
   for i, n in enumerate(orig_new_sizes):
     if n == 1:
-      if op_shape[i] == 1:
+      if i < len(op_shape) and op_shape[i] == 1:
         out_spec.append(op_partitions[i])
       else:
         out_spec.append(None)
@@ -7952,15 +9625,19 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
 
 
 def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):
-  op_unreduced = getu(operand)
-  kind = UnreducedKind.sum if op_unreduced else None
+  op_unreduced, kind = getu(operand, None)
   if op_unreduced:
-    if (sharding is not None and
-        operand.sharding.spec.unreduced != sharding.spec.unreduced):  # Explicit mode
-      raise ValueError(
-          'out_sharding passed to reshape must be unreduced over the same mesh'
-          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
-          f' type: {operand.str_short(True)}')
+    if sharding is not None:  # Explicit mode
+      if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+        raise ValueError(
+            'out_sharding passed to reshape must be unreduced over the same mesh'
+            f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+            f' type: {operand.str_short(True)}')
+      if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+        raise ValueError(
+            'out_sharding passed to reshape must have the same unreduced_kind'
+            f' as operand. Got out_sharding: {sharding.spec} and operand'
+            f' type: {operand.str_short(True)}')
     return op_unreduced, kind
   if sharding is not None and sharding.spec.unreduced:
     raise ValueError('out_sharding passed to `reshape` cannot contain '
@@ -7989,6 +9666,107 @@ def _reshape_ur_rule(operand, *, new_sizes, dimensions, sharding):
       operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
   return out_unreduced, out_reduced, kind
 
+def raise_reshape_layout_error(operand, new_sizes, msg=None) -> Never:
+  if msg is None:
+    msg = 'is not possible without a physical copy.'
+  raise ValueError(
+      f'reshape from {operand.shape} with layout {operand.layout} to'
+      f' {new_sizes} {msg}')
+
+
+def _restore_singleton_dims_layout(operand, simple_out_m2m, new_sizes):
+  # Re-insert singleton (size-1) dimensions of `new_sizes` at the most major
+  # positions, and map the non-1 indices in `simple_out_m2m` back to their
+  # positions in `new_sizes`.
+  # Example: new_sizes=(4, 1, 8, 1, 16), simple_out_m2m=[1, 0, 2]
+  #   -> singleton_dims = [1, 3], non_singleton_dims = [0, 2, 4]
+  #   -> singleton dims [1, 3] go first, followed by [2, 0, 4] -> (1, 3, 2, 0, 4)
+  singleton_dims = [i for i, s in enumerate(new_sizes) if s == 1]
+  non_singleton_dims = [i for i, s in enumerate(new_sizes) if s != 1]
+  out_m2m = (*singleton_dims, *(non_singleton_dims[d] for d in simple_out_m2m))
+  return operand.layout.update(major_to_minor=out_m2m)
+
+
+def _split_an_axis_layout_rule(operand, out_indices, phys_op_dims, new_sizes,
+                               num_tiles):
+  # `out_indices` has the dst dim index (int) or split dst dim indices (list)
+  # for each input dim. E.g. for (4, 12, 8, 16) -> (4, 2, 2, 3, 8, 16):
+  #   out_indices = [0, [1, 2, 3], 4, 5]
+  #   phys_op_dims = [1, 0, 2, 3] -> phys_dst_dims = [1, 2, 3, 0, 4, 5]
+  phys_dst_dims = []
+  for d in phys_op_dims:
+    out_d = out_indices[d]
+    if isinstance(out_d, list):
+      if num_tiles is not None and d in phys_op_dims[-num_tiles:]:
+        raise_reshape_layout_error(operand, new_sizes,
+                                   'cannot split the 2 minor-most dimensions.')
+      phys_dst_dims.extend(out_d)
+    else:
+      phys_dst_dims.append(out_d)
+  return _restore_singleton_dims_layout(operand, phys_dst_dims, new_sizes)
+
+
+def _merge_an_axis_layout_rule(operand, dst_dims, phys_op_dims, new_sizes,
+                               num_tiles):
+  # 1. `phys_op_dims` is the physical input dim order, e.g. [1, 2, 3, 0, 4, 5].
+  #    `dst_dims` (from `_merge_on_one_axis`) is the logical dst dims in terms
+  #    of input dims, e.g. [0, [1, 2, 3], 4, 5].
+  merged_dims = next(x for x in dst_dims if isinstance(x, list))
+  if any(num_tiles is not None and d in phys_op_dims[-num_tiles:]
+         for d in merged_dims):
+    raise_reshape_layout_error(operand, new_sizes,
+                               'cannot merge the 2 minor-most dimensions.')
+  pos = phys_op_dims.index(merged_dims[0])
+  if phys_op_dims[pos:pos+len(merged_dims)] != merged_dims:
+    raise_reshape_layout_error(operand, new_sizes)
+  # 2. Merge `merged_dims` in `phys_op_dims` -> `phys_dst_dims = [[1, 2, 3], 0, 4, 5]`.
+  phys_dst_dims = (
+      phys_op_dims[:pos] + [merged_dims] + phys_op_dims[pos+len(merged_dims):]
+  )
+  # 3. Look up each element of `phys_dst_dims` in `dst_dims` -> [1, 0, 2, 3].
+  out_m2m = [dst_dims.index(x) for x in phys_dst_dims]
+  return _restore_singleton_dims_layout(operand, out_m2m, new_sizes)
+
+
+def _reshape_layout_rule(out_aval, operand, *, new_sizes, dimensions, sharding):
+  op_shape, new_sizes = operand.shape, out_aval.shape
+  if dimensions is not None:
+    raise_reshape_layout_error(operand, new_sizes)
+  op_m2m = operand.layout.major_to_minor
+  num_tiles = (None if not operand.layout.tiling else
+               len(operand.layout.tiling[0]))
+  if (num_tiles is not None and
+      any(op_shape[d] == 1 for d in op_m2m[-num_tiles:])):
+    raise_reshape_layout_error(
+        operand, new_sizes,
+        f'cannot reshape when any of the {num_tiles} minor-most dimensions'
+        ' has size 1.')
+
+  non_1_dims = [d for d, s in enumerate(op_shape) if s != 1]
+  phys_op_dims = [non_1_dims.index(m) for m in op_m2m if op_shape[m] != 1]
+  non_1s_op_shape = [s for s in op_shape if s != 1]
+  non_1s_new_shape = [s for s in new_sizes if s != 1]
+  if non_1s_op_shape == non_1s_new_shape:
+    return _restore_singleton_dims_layout(operand, phys_op_dims, new_sizes)
+
+  try:
+    is_split, _, out_indices = _split_on_one_axis(op_shape, new_sizes)
+  except ReshapeExplicitError:
+    raise_reshape_layout_error(operand, new_sizes)
+  if is_split:
+    return _split_an_axis_layout_rule(operand, out_indices, phys_op_dims,
+                                      new_sizes, num_tiles)
+
+  try:
+    is_merge, _, dst_dims = _merge_on_one_axis(operand, new_sizes)
+  except ReshapeExplicitError:
+    raise_reshape_layout_error(operand, new_sizes)
+  if is_merge:
+    return _merge_an_axis_layout_rule(operand, dst_dims, phys_op_dims,
+                                      new_sizes, num_tiles)
+  raise_reshape_layout_error(operand, new_sizes)
+
+
 def _reshape_typecheck_rule(_, operand, new_sizes, dimensions,
                             sharding):
   out_aval, effects = reshape_p.abstract_eval(
@@ -8003,14 +9781,18 @@ def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
 def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
   if dimensions is None:
-    return [reshape(ct, operand.aval.shape, out_sharding=operand.aval.sharding)]
+    out = reshape(ct, operand.aval.shape, out_sharding=operand.aval.sharding)
   else:
     new_sizes = tuple(operand.aval.shape[d] for d in dimensions)
     new_partitions = tuple(operand.aval.sharding.spec[d] for d in dimensions)
     ct_s = operand.aval.sharding.update(
         spec=operand.aval.sharding.spec.update(partitions=new_partitions))
     out = reshape(ct, new_sizes, out_sharding=ct_s)
-    return [transpose(out, np.argsort(dimensions))]
+    out = transpose(out, np.argsort(dimensions))
+  # TODO(yashkatariya): Maybe add out_layout to reshape.
+  if core.typeof(out).layout != operand.aval.layout:
+    out = pjit.relayout(out, operand.aval.layout)
+  return [out]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
                         dimensions, sharding):
@@ -8032,12 +9814,71 @@ def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
   return out, 0
 
 
+def _roundtrip_reshape_sharding(src_aval, dst_aval):
+  try:
+    mid_dst = _reshape_sharding_rule_opt(
+        src_aval, new_sizes=dst_aval.shape, dimensions=None, sharding=None,
+        allow_multi=True)
+    mid_src = _reshape_sharding_rule_opt(
+        dst_aval.update(sharding=mid_dst), new_sizes=src_aval.shape,
+        dimensions=None, sharding=None, allow_multi=True)
+  except core.ShardingTypeError:
+    return None
+  return mid_src, mid_dst
+
+
+def _reshard_cost(steps):
+  num_collectives = sum(not isinstance(s, pjit.ReshardSlice) for s in steps)
+  num_ag = sum(isinstance(s, pjit.ReshardAG) for s in steps)
+  return (num_collectives, num_ag, len(steps))
+
+
+def _reshape_collective_rule(in_avals, out_avals, *, new_sizes, dimensions,
+                             sharding):
+  if dimensions is not None:
+    raise NotImplementedError
+
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  in_spec = in_aval.sharding.spec.partitions
+  out_spec = out_aval.sharding.spec.partitions
+  mesh = get_abstract_mesh()
+
+  pairs = []
+  if (fwd := _roundtrip_reshape_sharding(in_aval, out_aval)) is not None:
+    pairs.append(fwd)
+  if (bwd := _roundtrip_reshape_sharding(out_aval, in_aval)) is not None:
+    mid_out, mid_in = bwd
+    pairs.append((mid_in, mid_out))
+
+  if not pairs:
+    raise NotImplementedError
+
+  candidates = []
+  for mid_in, mid_out in pairs:
+    in_steps = pjit._plan_reshard(in_spec, mid_in.spec, mesh)
+    out_steps = pjit._plan_reshard(mid_out.spec, out_spec, mesh)
+    candidates.append((mid_out, in_steps, out_steps))
+
+  mid_out, in_steps, out_steps = _min(
+      candidates, key=lambda c: _reshard_cost(c[1] + c[2]))
+
+  return mlir.PartitioningRule(
+      in_collective=(None if not in_steps else
+                     lambda x: (pjit._apply_reshard_steps(x, in_steps, mesh),)),
+      out_collective=(None if not out_steps else
+                      lambda y: pjit._apply_reshard_steps(y, out_steps, mesh)),
+      per_shard_params={
+          'new_sizes': mid_out.shard_shape(out_aval.shape),
+          'sharding': None,
+      })
+
+
 def _reshape_lower(ctx, x, new_sizes, dimensions, sharding):
   aval_out, = ctx.avals_out
   if dimensions is not None:
     x = hlo.transpose(x, mlir.dense_int_array(dimensions))
   out = mlir.reshape(ctx, x, aval_out)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _reshape_staging_rule(
     trace, source_info, x, new_sizes, dimensions, sharding):
@@ -8049,12 +9890,15 @@ reshape_p = standard_primitive(
     _reshape_shape_rule, _reshape_dtype_rule, 'reshape',
     sharding_rule=_reshape_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reshape'),
-    ur_rule=_reshape_ur_rule)
+    ur_rule=_reshape_ur_rule, layout_rule=_reshape_layout_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
-mlir.register_lowering(reshape_p, _reshape_lower)
+mlir.register_lowering(
+    reshape_p, _reshape_lower,
+    shard_map_collective_rule=_reshape_collective_rule)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
+lax_utils.register_unreduced_lojax(reshape_p, 'sharding')
 
 
 def _rev_shape_rule(operand, *, dimensions):
@@ -8089,7 +9933,25 @@ def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
   out = hlo.reverse(x, mlir.dense_int_array(dimensions))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
-mlir.register_lowering(rev_p, _rev_lower)
+
+def _rev_collective_rule(in_avals, out_avals, *, dimensions):
+  from jax._src.lax import parallel
+  in_aval, = in_avals
+  mesh = get_abstract_mesh()
+  rev_axes = set(flatten_spec_no_none(in_aval.sharding.spec.partitions[d]
+                                      for d in dimensions))
+  rev_axes = core.order_wrt_mesh(mesh, rev_axes)
+
+  n = math.prod(mesh.shape[a] for a in rev_axes)
+  if n == 1:
+    return mlir.PartitioningRule()
+
+  perm = tuple((i, n - 1 - i) for i in range(n))
+  def in_collective(x):
+    return [parallel.ppermute(x, rev_axes, perm)]
+  return mlir.PartitioningRule(in_collective=in_collective)
+mlir.register_lowering(rev_p, _rev_lower,
+                       shard_map_collective_rule=_rev_collective_rule)
 
 
 def _transpose_shape_rule(operand, *, permutation):
@@ -8104,13 +9966,16 @@ def _transpose_shape_rule(operand, *, permutation):
 
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
-  new_spec = [o_spec.partitions[old_idx] for old_idx in permutation]
+  new_spec = [o_spec.partitions[idx] for idx in permutation]
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
 def _transpose_ur_rule(operand, *, permutation):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
+
+def _transpose_layout_rule(out_aval, operand, *, permutation):
+  out_m2m = tuple(permutation.index(d) for d in operand.layout.major_to_minor)
+  return operand.layout.update(major_to_minor=out_m2m)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -8126,17 +9991,21 @@ def _transpose_lower(ctx, x, *, permutation):
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   out = hlo.transpose(x, mlir.dense_int_array(permutation))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
     _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'transpose'),
-    ur_rule=_transpose_ur_rule)
+    ur_rule=_transpose_ur_rule,
+    layout_rule=_transpose_layout_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-mlir.register_lowering(transpose_p, _transpose_lower)
+mlir.register_lowering(
+    transpose_p, _transpose_lower,
+    shard_map_collective_rule=_unop_collective_rule)
+lax_utils.register_unreduced_lojax(transpose_p)
 
 
 def _select_shape_rule(which, *cases):
@@ -8173,14 +10042,21 @@ def _select_sharding_rule(which, *cases):
   return first_s
 
 def _select_ur_rule(which, *cases):
-  non_empty_cs = [c for c in cases if not c.sharding.mesh.empty]
-  if not non_empty_cs:
-    return frozenset(), frozenset(), None
-  # which and all cases have the same sharding check is already done in select
-  # sharding rule.
-  out_unreduced = core.getu(non_empty_cs[0])
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, core.getr(non_empty_cs[0]), kind
+  if core.getu(which, None)[0]:
+    raise core.ShardingTypeError(
+        f'select `which` cannot have unreduced axes. Got which={which}')
+  out_unreduced, kind = core.getu(cases[0], None)
+  if any(core.getu(c, None) != (out_unreduced, kind) for c in cases[1:]):
+    raise core.ShardingTypeError(
+        'All select cases should be unreduced along the same mesh axes and'
+        ' have the same unreduced_kind. Got unreduced specs:'
+        f' {[core.getu(c, None) for c in cases]}')
+  out_reduced = core.getr(cases[0])
+  if any(core.getr(c) != out_reduced for c in cases[1:]):
+    raise core.ShardingTypeError(
+        'All select cases should be reduced along the same mesh axes. Got'
+        f' reduced specs: {[core.getr(c) for c in cases]}')
+  return out_unreduced, out_reduced, kind
 
 def _select_dtype_rule(which, *cases):
   check_same_dtypes("select", *cases)
@@ -8200,6 +10076,8 @@ def _select_transpose_rule(ct, which, *cases):
   if type(ct) is ad_util.Zero:
     return [None] + [ad_util.Zero(c.aval) if ad.is_undefined_primal(c) else None
                      for c in cases]
+  elif len(cases) == 1:
+    return (None, ct if ad.is_undefined_primal(cases[0]) else None)
   else:
     zeros = full_like(ct, 0)
     if dtypes.dtype(which) == np.dtype(np.bool_):
@@ -8207,6 +10085,7 @@ def _select_transpose_rule(ct, which, *cases):
       ct1 = select(which, ct, zeros) if ad.is_undefined_primal(cases[1]) else None
       return (None, ct0, ct1)
     else:
+      which = clamp(_const(which, 0), which, _const(which, len(cases) - 1))
       return [None] + [
           select(eq(which, _const(which, i)), ct, zeros)
           if ad.is_undefined_primal(case) else None for i, case in enumerate(cases)
@@ -8302,13 +10181,13 @@ def _select_hlo_lowering(ctx, which, *cases):
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     op = _select_hlo_lowering_opaque(ctx, which, *cases)
-    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+    return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
 
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
     op = hlo.select(which, cases[1], cases[0])
-    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+    return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
 
   if dtypes.issubdtype(which_aval.dtype, np.signedinteger):
     compare_type = 'SIGNED'
@@ -8328,17 +10207,36 @@ def _select_hlo_lowering(ctx, which, *cases):
                       _select(offset + mid, cases[mid:]))
 
   op = _select(0, cases)
-  return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
+
+def _select_layout_rule(out_aval, which, *cases):
+  first_layout = cases[0].layout
+  for c in cases[1:]:
+    if c.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `select_n` must be the same. Got'
+          f' one case with layout: {first_layout} and another case with'
+          f' layout: {c.layout}')
+  if which.ndim and which.layout != first_layout:
+    raise ValueError(
+        'layout of all inputs passed to `select_n` must be the same. Got'
+        f' `which` with layout: {which.layout} and case with layout:'
+        f' {first_layout}')
+  return first_layout
 
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
     weak_type_rule=_select_weak_type_rule, sharding_rule=_select_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_n'),
-    ur_rule=_select_ur_rule)
+    ur_rule=_select_ur_rule,
+    layout_rule=_select_layout_rule)
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
-mlir.register_lowering(select_n_p, _select_hlo_lowering)
+mlir.register_lowering(
+    select_n_p, _select_hlo_lowering,
+    shard_map_collective_rule=_naryop_collective_rule)
+lax_utils.register_unreduced_lojax(select_n_p)
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
@@ -8445,9 +10343,13 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            _reduce_vma_rule, None))
+            _reduce_vma_rule, None, None))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
+
+def _reduce_to_lojax(*args, jaxpr, **params):
+  return reduce_p.bind(*args, jaxpr=pe.lower_jaxpr2(jaxpr), **params)
+reduce_p.to_lojax = _reduce_to_lojax
 
 def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
                   computation, jaxpr: core.Jaxpr, dimensions):
@@ -8486,7 +10388,7 @@ def _reduce_number_dtype_rule(name, operand, *_, **__):
                     "of number.".format(name, dtype_to_string(operand.dtype)))
   return operand.dtype
 
-def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
+def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding, reduction_order=None):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
@@ -8504,16 +10406,36 @@ def _reduce_op_shape_rule(operand, *, axes, **_):
   axes = frozenset(axes)
   return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
 
-def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding):
+def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding, reduction_order=None):
+  axes = frozenset(axes)
+  natural_parts = tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
+                        if i not in axes)
+  reduced_axes_list = flatten_spec_no_none(
+      s for i, s in enumerate(operand.sharding.spec.partitions) if i in axes
+  )
+  _check_ordered_reduction_sharding(
+      'reduce', reduction_order, reduced_axes_list, out_sharding=out_sharding
+  )
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
+    if (forbidden_axes := config.no_collectives.value):
+      reduced_axes = set(reduced_axes_list)
+      for r in forbidden_axes:
+        if r in reduced_axes and r not in out_sharding.spec.unreduced:
+          raise core.ForbiddenCollectiveError(
+              f"Collective across axis '{r}' is forbidden by `no_collectives`,"
+              f" but reduction over axis '{r}' does not mark it unreduced in"
+              " the output."
+          )
+      lax_utils._check_no_collectives_dim_change(
+          'reduce', natural_parts, out_sharding.spec.partitions)
     return out_sharding
-  axes = frozenset(axes)
-  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
-                      if i not in axes))
-  return operand.sharding.update(spec=new_spec)
+  return operand.sharding.update(spec=P(*natural_parts))
 
-def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
+def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name,
+                              reduction_order=None):
+  in_u, _ = getu(operand, out_kind)
+  _check_ordered_reduction_sharding(name, reduction_order, (), in_u)
   if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode
     if out_sharding.spec.unreduced_kind is not out_kind:
       raise core.ShardingTypeError(
@@ -8531,8 +10453,7 @@ def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
           f' unreduced_spec={out_sharding.spec.unreduced}')
     out_u = out_sharding.spec.unreduced
   else:
-    # TODO(yashkatariya): For max/min, do getu(operand, out_kind) and add tests
-    out_u = getu(operand)
+    out_u = in_u
   return out_u, out_kind if out_u else None
 
 def _reduce_op_reduced_rule(operand, out_sharding, name):
@@ -8541,9 +10462,10 @@ def _reduce_op_reduced_rule(operand, out_sharding, name):
         f'out_sharding passed to {name} cannot be reduced. Got {out_sharding=}')
   return getr(operand)
 
-def _reduce_sum_ur_rule(operand, *, axes, out_sharding):
+def _reduce_sum_ur_rule(operand, *, axes, out_sharding, reduction_order=None):
   out_unreduced, kind = _reduce_op_unreduced_rule(
-      operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum')
+      operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum',
+      reduction_order)
   out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_sum')
   return out_unreduced, out_reduced, kind
 
@@ -8556,13 +10478,79 @@ def _reduce_sum_dtype_rule(operand, *, axes, **_):
                      "allowed when jax_allow_f16_reductions=False.")
   return dt
 
+def _reduce_sum_batcher(
+    axis_data, batched_args, batch_dims, *, axes, **params):
+  order = params.get('reduction_order')
+  bdim, = batch_dims
+  if bdim is not None and not reduction_order_lib.is_leaf_order(order):
+    out_bdim = bdim - sum(a < bdim for a in axes)
+    old_out_ndim = batched_args[0].ndim - 1 - len(axes)
+    shifted = _reduction_order.shift_order_for_vmap(
+        order, out_bdim, old_out_ndim, bool(axes and axes[0] < bdim))
+    params = params | {'reduction_order': shifted}
+  return batching.reducer_batcher(
+      reduce_sum_p, axis_data, batched_args, batch_dims, axes=axes, **params)
+
+
+def _reduce_op_to_lojax(prim, hi_operand, *, axes, out_sharding, **params):
+  order = params.get('reduction_order')
+  if not reduction_order_lib.is_leaf_order(order):
+    return _reduction_order.reduce_op(
+        prim, hi_operand, axes, out_sharding, order)
+  from jax._src import shard_map  # pyrefly: ignore[missing-import]
+
+  in_aval = core.typeof(hi_operand)
+  out_aval, _ = prim.abstract_eval(
+      in_aval, axes=axes, out_sharding=out_sharding, **params)
+  lo_in, = in_aval.lower_val(hi_operand)
+  out_u_set = out_aval.sharding.spec.unreduced
+  if not out_u_set:
+    assert in_aval.mat.unreduced
+    return out_aval.raise_val(
+        prim.bind(lo_in, axes=axes, out_sharding=out_sharding, **params))
+
+  mesh = out_aval.sharding.mesh
+  in_u = core.order_wrt_mesh(mesh, in_aval.sharding.spec.unreduced)
+  out_u = core.order_wrt_mesh(mesh, out_u_set)
+
+  dropped_u_dims = tuple(i for i, a in enumerate(in_u) if a not in out_u_set)
+  num_kept_u_ndim = len(in_u) - len(dropped_u_dims)
+  new_u_pos = tuple(i for i, a in enumerate(out_u) if a not in in_u)
+  lo_axes = (*dropped_u_dims, *(len(in_u) + d for d in axes))
+  out_specs = P(*out_u, *(None,) * out_aval.ndim)
+
+  def _local_reduce(v):
+    lo_s = (NamedSharding(get_abstract_mesh(),
+                          P(*(None,) * num_kept_u_ndim, *out_sharding.spec.partitions))
+            if out_sharding is not None else None)
+    v = prim.bind(v, axes=lo_axes, out_sharding=lo_s, **params)
+    return expand_dims(v, new_u_pos) if new_u_pos else v
+
+  lo_out = shard_map.shard_map(_local_reduce, mesh=mesh, out_specs=out_specs,
+                               axis_names=out_u_set)(lo_in)
+  return out_aval.raise_val(lo_out)
+
+
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, _reduce_sum_dtype_rule,
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   ur_rule=_reduce_sum_ur_rule)
+
+_unreduced_is_high = lax_utils.unreduced_is_high('out_sharding')
+
+def _reduce_op_is_high(*avals, reduction_order=None, **params):
+  return (_unreduced_is_high(*avals, **params)
+          or not reduction_order_lib.is_leaf_order(reduction_order))
+
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p)
+ad.defjvp(
+    reduce_sum_p,
+    lambda g, _, **kw: reduce_sum_p.bind(g, **_tangent_ro_kw(kw)),
+)
+batching.fancy_primitive_batchers[reduce_sum_p] = _reduce_sum_batcher
+reduce_sum_p.is_high = _reduce_op_is_high  # type: ignore
+reduce_sum_p.to_lojax = partial(_reduce_op_to_lojax, reduce_sum_p)  # type: ignore
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -8583,7 +10571,7 @@ reduce_prod_p = standard_primitive(
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
 
-def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding):
+def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding, reduction_order=None):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
   # locations in a single pass (rather than comparing equality) and use a
   # gather, and/or even push along the chosen elements of g (b/112040122)
@@ -8593,9 +10581,10 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding):
   counts = reduce_sum(location_indicators, axes)
   return div(reduce_sum(mul(g, location_indicators), axes), counts)
 
-def _reduce_max_ur_rule(operand, *, axes, out_sharding):
+def _reduce_max_ur_rule(operand, *, axes, out_sharding, reduction_order=None):
   out_unreduced, kind = _reduce_op_unreduced_rule(
-      operand, axes, out_sharding, UnreducedKind.max, 'reduce_max')
+      operand, axes, out_sharding, UnreducedKind.max, 'reduce_max',
+      reduction_order)
   out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_max')
   return out_unreduced, out_reduced, kind
 
@@ -8606,6 +10595,10 @@ reduce_max_p = standard_primitive(
     ur_rule=_reduce_max_ur_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
+reduce_max_p.is_high = _reduce_op_is_high  # type: ignore
+reduce_max_p.to_lojax = partial(_reduce_op_to_lojax, reduce_max_p)  # type: ignore
+_wrap_reduction_order_abstract_eval(reduce_sum_p)
+_wrap_reduction_order_abstract_eval(reduce_max_p)
 
 
 def _reduce_min_ur_rule(operand, *, axes, out_sharding):
@@ -8621,6 +10614,8 @@ reduce_min_p = standard_primitive(
     ur_rule=_reduce_min_ur_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
+reduce_min_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+reduce_min_p.to_lojax = partial(_reduce_op_to_lojax, reduce_min_p)  # type: ignore
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
@@ -8694,6 +10689,45 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
+def _argminmax_collective_rule(
+    value_comparator, get_identity, reduce_fn,
+    in_avals, out_avals, *, axes, index_dtype,
+):
+  from jax._src.lax import parallel
+  del out_avals
+  in_aval, = in_avals
+  axis, = axes
+  part = in_aval.sharding.spec.partitions[axis]
+
+  if part is None:
+    return mlir.PartitioningRule()
+
+  shard_size = in_aval.sharding.shard_shape(in_aval.shape)[axis]
+  local_val = None
+
+  def in_collective(x_shard):
+    nonlocal local_val
+    local_val = reduce_fn(x_shard, (axis,))
+    return (x_shard,)
+
+  def out_collective(local_idx):
+    offset = parallel.axis_index(part).astype(index_dtype) * shard_size
+    global_idx = local_idx + offset
+    vals, idxs = parallel.all_gather(
+        (local_val, global_idx), part, axis=0, tiled=False
+    )
+    _, out_idx = reduce(
+        [vals, idxs],
+        [get_identity(in_aval.dtype), np.array(0, index_dtype)],
+        _ArgMinMaxReducer(value_comparator),
+        (0,),
+    )
+    return out_idx
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective, out_collective=out_collective
+  )
+
 mlir.register_lowering(
     argmin_p,
     mlir.lower_fun(
@@ -8701,6 +10735,9 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
+    shard_map_collective_rule=partial(
+        _argminmax_collective_rule, lt, _get_min_identity, reduce_min
+    ),
 )
 
 mlir.register_lowering(
@@ -8710,6 +10747,9 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
+    shard_map_collective_rule=partial(
+        _argminmax_collective_rule, gt, _get_max_identity, reduce_max
+    ),
 )
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -8748,7 +10788,23 @@ reduce_xor_p = standard_primitive(
 batching.defreducer(reduce_xor_p)
 
 
+def _linear_reduce(op, unit_factory, x, *, axes):
+  if not axes:
+    return x
+  from jax._src.lax import control_flow
+  kept = tuple(i for i in range(x.ndim) if i not in axes)
+  kept_shape = tuple(x.shape[i] for i in kept)
+  if (k := math.prod(x.shape[a] for a in axes)) == 0:
+    return full(kept_shape, unit_factory(x.dtype), x.dtype)
+  sl = partial(slicing.dynamic_index_in_dim, keepdims=False, allow_negative_indices=False)
+  at = _bitexact_view(x, lambda z: reshape(transpose(z, (*axes, *kept)), (k, *kept_shape)), sl)
+  return control_flow.fori_loop(1, k, lambda i, acc: op(acc, at(i)), at(0))
+
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
+  if _is_ordered(reduction_order := kwargs.get('reduction_order')):
+    s = reducer is hlo.AddOp
+    return _lower_ordered(ctx, reduction_order, partial(_linear_reduce, add if s else max, unit_factory, axes=axes),
+                          dict(axes=axes, op='sum' if s else 'max'), x)
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
   out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
@@ -8761,20 +10817,119 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
     hlo.return_([reducer(*reducer_region.arguments)])
   return [mlir.lower_with_sharding_in_types(ctx, op.result, aval_out)]
 
-mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,
-                                             _get_sum_identity))
-mlir.register_lowering(reduce_prod_p, partial(_unary_reduce_lower, hlo.MulOp,
-                                              _get_prod_identity))
-mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, hlo.OrOp,
-                                            _get_bitwise_or_identity))
-mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, hlo.AndOp,
-                                             _get_bitwise_and_identity))
-mlir.register_lowering(reduce_xor_p, partial(_unary_reduce_lower, hlo.XorOp,
-                                             _get_bitwise_or_identity))
-mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, mlir.min_hlo,
-                                             _get_min_identity))
-mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_hlo,
-                                             _get_max_identity))
+def _reduce_collective_rule(
+    all_reduce_fn, scatter_fn, in_avals, out_avals, axes,
+    per_shard_params=None):
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  in_parts = in_aval.sharding.spec.partitions
+  out_parts = out_aval.sharding.spec.partitions
+  kept_parts = tuple(s for i, s in enumerate(in_parts) if i not in axes)
+  reduced_axes = flatten_spec_no_none(in_parts[i] for i in axes)
+
+  to_tuple = lambda s: () if s is None else s if isinstance(s, tuple) else (s,)
+
+  scatters = []
+  scattered_axes = set()
+  for dim, (kept_s, out_s) in enumerate(safe_zip(kept_parts, out_parts)):
+    if out_s == kept_s:
+      continue
+    # A reduce-scatter adds reduced axes to the end of `kept_s`, e.g.
+    # `[2@x, 8@y] -> [8@(y, x)]`. Anything else (like `[8@(x, y)]`, `[8@x]`,
+    # or `[8@(y, z)]`) requires an additional reshard we don't handle here yet.
+    # TODO(rdyro): Support general `out_sharding` reshards on kept dims.
+    kept_t, out_t = to_tuple(kept_s), to_tuple(out_s)
+    scatter_axes = out_t[len(kept_t):]
+    if (scatter_fn is None or out_t[:len(kept_t)] != kept_t or
+        not set(scatter_axes).issubset(set(reduced_axes))):
+      raise NotImplementedError
+    scatters.append((dim, scatter_axes))
+    scattered_axes.update(scatter_axes)
+
+  all_reduce_axes = core.order_wrt_mesh(
+      get_abstract_mesh(), set(reduced_axes) - scattered_axes)
+  if not all_reduce_axes and not scatters:
+    return mlir.PartitioningRule(per_shard_params=per_shard_params)
+
+  def out_collective(y):
+    for dim, scatter_axes in scatters:
+      y = scatter_fn(y, scatter_axes, scatter_dimension=dim, tiled=True)
+    if all_reduce_axes:
+      y = all_reduce_fn(y, all_reduce_axes)
+    return y
+  return mlir.PartitioningRule(
+      out_collective=out_collective, per_shard_params=per_shard_params)
+
+def _reduce_sum_collective_rule(in_avals, out_avals, *, axes, out_sharding, reduction_order=None):
+  from jax._src.lax import parallel
+  return _reduce_collective_rule(
+      parallel.psum, parallel.psum_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
+
+def _reduce_prod_collective_rule(in_avals, out_avals, *, axes):
+  in_aval, = in_avals
+  if flatten_spec_no_none(in_aval.sharding.spec.partitions[i] for i in axes):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+def _reduce_or_collective_rule(in_avals, out_avals, *, axes):
+  from jax._src.lax import parallel
+  # Integer reduce_or is bitwise, so pmax only applies to bool.
+  in_aval, = in_avals
+  if in_aval.dtype != np.bool_:
+    raise NotImplementedError
+  return _reduce_collective_rule(
+      parallel.pmax, None, in_avals, out_avals, axes)
+
+def _reduce_and_collective_rule(in_avals, out_avals, *, axes):
+  from jax._src.lax import parallel
+  # Integer reduce_and is bitwise, so pmin only applies to bool.
+  in_aval, = in_avals
+  if in_aval.dtype != np.bool_:
+    raise NotImplementedError
+  return _reduce_collective_rule(
+      parallel.pmin, None, in_avals, out_avals, axes)
+
+def _reduce_xor_collective_rule(in_avals, out_avals, *, axes):
+  from jax._src.lax import parallel
+  return _reduce_collective_rule(
+      parallel._pxor, None, in_avals, out_avals, axes)
+
+def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
+  from jax._src.lax import parallel
+  return _reduce_collective_rule(
+      parallel.pmin, parallel.pmin_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
+
+def _reduce_max_collective_rule(in_avals, out_avals, *, axes, out_sharding, reduction_order=None):
+  from jax._src.lax import parallel
+  return _reduce_collective_rule(
+      parallel.pmax, parallel.pmax_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
+
+mlir.register_lowering(
+    reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp, _get_sum_identity),
+    shard_map_collective_rule=_reduce_sum_collective_rule)
+mlir.register_lowering(
+    reduce_prod_p, partial(_unary_reduce_lower, hlo.MulOp, _get_prod_identity),
+    shard_map_collective_rule=_reduce_prod_collective_rule)
+mlir.register_lowering(
+    reduce_or_p,
+    partial(_unary_reduce_lower, hlo.OrOp, _get_bitwise_or_identity),
+    shard_map_collective_rule=_reduce_or_collective_rule)
+mlir.register_lowering(
+    reduce_and_p,
+    partial(_unary_reduce_lower, hlo.AndOp, _get_bitwise_and_identity),
+    shard_map_collective_rule=_reduce_and_collective_rule)
+mlir.register_lowering(
+    reduce_xor_p,
+    partial(_unary_reduce_lower, hlo.XorOp, _get_bitwise_or_identity),
+    shard_map_collective_rule=_reduce_xor_collective_rule)
+mlir.register_lowering(
+    reduce_min_p, partial(_unary_reduce_lower, mlir.min_hlo, _get_min_identity),
+    shard_map_collective_rule=_reduce_min_collective_rule)
+mlir.register_lowering(
+    reduce_max_p, partial(_unary_reduce_lower, mlir.max_hlo, _get_max_identity),
+    shard_map_collective_rule=_reduce_max_collective_rule)
 
 
 def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
@@ -8793,9 +10948,13 @@ def _reduce_precision_memory_space_rule(operand, *, exponent_bits, mantissa_bits
   return operand.memory_space
 
 def _reduce_precision_ur_rule(operand, *, exponent_bits, mantissa_bits):
-  out_unreduced = core.getu(operand)
+  out_unreduced, _ = core.getu(operand)
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
+
+def _reduce_precision_layout_rule(out_aval, operand, *, exponent_bits,
+                                  mantissa_bits):
+  return operand.layout
 
 reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
@@ -8803,7 +10962,8 @@ reduce_precision_p = standard_primitive(
     name='reduce_precision', sharding_rule=_reduce_precision_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_precision'),
     ur_rule=_reduce_precision_ur_rule,
-    memory_space_rule=_reduce_precision_memory_space_rule)
+    memory_space_rule=_reduce_precision_memory_space_rule,
+    layout_rule=_reduce_precision_layout_rule)
 ad.deflinear(reduce_precision_p, lambda t, **kwargs: [reduce_precision_p.bind(t, **kwargs)])
 batching.defvectorized(reduce_precision_p)
 
@@ -8811,9 +10971,12 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
   out = hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
                              mlir.i32_attr(mantissa_bits))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
+mlir.register_lowering(
+    reduce_precision_p, _reduce_precision_lower,
+    shard_map_collective_rule=_unop_collective_rule)
+lax_utils.register_unreduced_lojax(reduce_precision_p)
 
 
 _UINT_DTYPES = {
@@ -8829,14 +10992,12 @@ _INT_DTYPES = {
 }
 
 
-def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
-  avals = tuple(avals)
-  if any(arg.shape != avals[0].shape for arg in avals[1:]):
-    shapes = " ".join(str(a.shape) for a in avals)
-    raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
+def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
   non_empty_s = [
       a.sharding for a in avals
       if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
+  if not non_empty_s:
+    return [core.get_cur_mesh_sharding()] * len(avals)
   for s in non_empty_s:
     if s.spec[dimension] is not None:
       raise core.ShardingTypeError(
@@ -8846,7 +11007,27 @@ def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
       shardings = " ".join(str(s) for s in non_empty_s)
       raise core.ShardingTypeError(
           f'Arguments to sort must have equal shardings, got: {shardings}')
-  return avals
+  return [non_empty_s[0]] * len(avals)
+
+def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
+  avals = tuple(avals)
+  if any(arg.shape != avals[0].shape for arg in avals[1:]):
+    shapes = " ".join(str(a.shape) for a in avals)
+    raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
+  # All operands vary over the same axes, so an operand reduced over an axis
+  # means no key varies over it and every device sorts it the same way.
+  core.standard_vma_rule('sort', *avals)
+  if any(a.mat.unreduced for a in avals):
+    raise core.ShardingTypeError(
+        f'sort cannot accept unreduced inputs. Got {[a.str_short() for a in avals]}')
+  out_shardings = lax_utils.call_sharding_rule(
+      sort_p, _sort_sharding_rule, None, len(avals), *avals,
+      dimension=dimension, is_stable=is_stable, num_keys=num_keys)
+  out_avals = [a.update(sharding=s) for a, s in zip(avals, out_shardings)]
+  out_layouts = lax_utils.call_layout_rule(
+      sort_p, None, avals, out_avals, dimension=dimension,
+      is_stable=is_stable, num_keys=num_keys)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 
 def _canonicalize_float_for_sort(x):
@@ -8914,8 +11095,9 @@ def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   index_dtype = lax_utils.int_dtype_for_shape(shape, signed=False)
   sorted_primals_and_idx = sort_p.bind(
       *primals,
-      broadcasted_iota(index_dtype, shape, dimension,
-                       out_sharding=core.typeof(primals[0]).sharding),
+      core.pvary(broadcasted_iota(index_dtype, shape, dimension,
+                                  out_sharding=core.typeof(primals[0]).sharding),
+                 tuple(core.typeof(primals[0]).mat.varying)),
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
   batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
                                dimension))
@@ -8990,12 +11172,16 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   return [mlir.lower_with_sharding_in_types(ctx, op, aval)
           for op, aval in zip(sort.results, ctx.avals_out)]
 
-mlir.register_lowering(sort_p, _sort_lower)
+def _sort_collective_rule(in_avals, out_avals, *, dimension, **params):
+  if out_avals[0].sharding.spec.partitions[dimension] is not None:
+    raise NotImplementedError
+  return _naryop_collective_rule(in_avals, out_avals)
+
+mlir.register_lowering(
+    sort_p, _sort_lower, shard_map_collective_rule=_sort_collective_rule)
 
 
-def _top_k_abstract_eval(operand, *, k, axis, is_stable):
-  if dtypes.issubdtype(operand.dtype, np.complexfloating):
-    raise ValueError("top_k is not compatible with complex inputs.")
+def _top_k_shape_rule(operand, *, k, axis, is_stable):
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   if len(operand.shape) == 0:
@@ -9019,12 +11205,31 @@ def _top_k_abstract_eval(operand, *, k, axis, is_stable):
           f' dimensions larger than the maximum int32 ({int32_max}). Got'
           f' {operand.shape=}')
   shape[axis] = k
-  if operand.sharding.spec[axis] is not None:
+  return (tuple(shape), tuple(shape))
+
+def _top_k_dtype_rule(operand, *, k, axis, is_stable):
+  if dtypes.issubdtype(operand.dtype, np.complexfloating):
+    raise ValueError("top_k is not compatible with complex inputs.")
+  return (operand.dtype, np.dtype(np.int32))
+
+def _top_k_weak_type_rule(operand, *, k, axis, is_stable):
+  return (operand.weak_type, False)
+
+def _top_k_sharding_rule(operand, *, k, axis, is_stable):
+  parts = util.tuple_update(operand.sharding.spec.partitions, axis, None)
+  out_s = operand.sharding.update(
+      spec=operand.sharding.spec.update(partitions=parts))
+  return (out_s, out_s)
+
+def _top_k_vma_rule(operand, *, k, axis, is_stable):
+  return [core.standard_vma_rule('top_k', operand)] * 2
+
+def _top_k_ur_rule(operand, *, k, axis, is_stable):
+  if getu(operand, kind=None)[0]:
     raise core.ShardingTypeError(
-        'The input should be unsharded over the axis along which to compute the'
-        f' top_k values. Got input type={operand} and axis={axis}')
-  return (operand.update(shape=shape),
-          operand.update(shape=shape, dtype=np.dtype(np.int32)))
+        'top_k cannot accept unreduced inputs. Got'
+        f' {operand.str_short(mesh_axis_types=True)}')
+  return [frozenset()] * 2, [getr(operand), frozenset()], [None] * 2
 
 def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   operand, = primals
@@ -9033,7 +11238,7 @@ def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   if type(tangent) is ad_util.Zero:
     tangent_out = ad_util.p2tz(primals_out[0])
   else:
-    _, k_idxs = primals_out
+    out_val, k_idxs = primals_out
     idx_shape = k_idxs.shape
     rank = len(idx_shape)
     gather_index_shape = idx_shape + (1,)
@@ -9045,7 +11250,10 @@ def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
         operand_batching_dims=tuple(i for i in range(rank) if i != axis),
         start_indices_batching_dims=tuple(i for i in range(rank) if i != axis),
         start_index_map=(axis,))
-    tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
+    out_s = typeof(out_val).sharding
+    tangent_out = slicing.gather(
+        tangent, gather_indices, dnums, slice_sizes,
+        out_sharding=out_s if out_s.mesh.explicit_axes else None)
   return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
@@ -9059,7 +11267,10 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
-top_k_p.def_abstract_eval(_top_k_abstract_eval)
+top_k_p.def_abstract_eval(
+    partial(standard_multi_result_abstract_eval, top_k_p, _top_k_shape_rule,
+            _top_k_dtype_rule, _top_k_weak_type_rule, _top_k_sharding_rule,
+            _top_k_vma_rule, _top_k_ur_rule, None))
 
 def _top_k_lower(ctx, operand, k, axis, is_stable):
   # Move axis to last dimension:
@@ -9101,7 +11312,45 @@ def _top_k_lower(ctx, operand, k, axis, is_stable):
     results = [hlo.transpose(result, mlir.dense_int_array(perm))
                for result in results]
   return results
-mlir.register_lowering(top_k_p, _top_k_lower)
+
+def _top_k_collective_rule(in_avals, out_avals, *, k, axis, is_stable):
+  from jax._src.lax import parallel
+  del out_avals
+  in_aval, = in_avals
+  part = in_aval.sharding.spec.partitions[axis]
+  if part is None or k == 0:
+    return mlir.PartitioningRule()
+
+  shard_size = in_aval.sharding.shard_shape(in_aval.shape)[axis]
+  batch_dims = tuple(i for i in range(in_aval.ndim) if i != axis)
+  dnums = slicing.GatherDimensionNumbers(
+      offset_dims=(),
+      collapsed_slice_dims=(axis,),
+      operand_batching_dims=batch_dims,
+      start_indices_batching_dims=batch_dims,
+      start_index_map=(axis,),
+  )
+  slice_sizes = (1,) * in_aval.ndim
+
+  def out_collective(out):
+    local_vals, local_idxs = out
+    offset = parallel.axis_index(part).astype(np.int32) * shard_size
+    vals, idxs = parallel.all_gather(
+        (local_vals, local_idxs + offset), part, axis=axis, tiled=True
+    )
+    top_vals, pick = top_k(vals, k, axis=axis, is_stable=is_stable)
+    top_idxs = slicing.gather(
+        idxs, expand_dims(pick, (in_aval.ndim,)), dnums, slice_sizes
+    )
+    return [top_vals, top_idxs]
+
+  return mlir.PartitioningRule(
+      out_collective=out_collective,
+      per_shard_params={'k': _min(k, shard_size)},
+  )
+
+mlir.register_lowering(
+    top_k_p, _top_k_lower, shard_map_collective_rule=_top_k_collective_rule)
 
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
@@ -9136,7 +11385,9 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
   return [hlo.create_token()]
-mlir.register_lowering(create_token_p, _create_token_lowering)
+mlir.register_lowering(
+    create_token_p, _create_token_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def after_all(*operands):
@@ -9320,7 +11571,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            _rng_bit_generator_vma_rule, None))
+            _rng_bit_generator_vma_rule, None, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
@@ -9344,15 +11595,18 @@ copy_p.def_abstract_eval(lambda x: x)
 def _copy_lowering(ctx, x):
   out_aval, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
-mlir.register_lowering(copy_p, _copy_lowering)
+mlir.register_lowering(
+    copy_p, _copy_lowering, shard_map_collective_rule=lambda *_, **__: None)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
+copy_p.is_high = lambda x: x.is_high  # type: ignore
 
-# The dce_sink_p primitive marks a value as "used" from the perspective of DCE
-# so the computation producing it won't be eliminated.
-def dce_sink(val, *, prevent_mlir_dce: bool = False):
-  sink = partial(dce_sink_p.bind, prevent_mlir_dce=prevent_mlir_dce)
-  tree_util.tree_map(sink, val)
+def _copy_to_lojax(hi_x):
+  aval = core.typeof(hi_x)
+  lo_x, = aval.lower_val(hi_x)
+  return aval.raise_val(copy_p.bind(lo_x))
+copy_p.to_lojax = _copy_to_lojax  # type: ignore
+
 
 class NoDCEEffect(effects.Effect):
   # we don't inherit these from `object` due to serialization.py
@@ -9363,14 +11617,25 @@ effects.control_flow_allowed_effects.add_type(NoDCEEffect)
 effects.lowerable_effects.add_type(NoDCEEffect)
 effects.custom_derivatives_allowed_effects.add_type(NoDCEEffect)
 
+# The dce_sink_p primitive marks a value as "used" from the perspective of DCE
+# so the computation producing it won't be eliminated.
+def dce_sink(val, *, prevent_mlir_dce: bool = False):
+  mesh = get_abstract_mesh()
+  def sink(x):
+    if mesh.are_all_axes_explicit:
+      from jax._src.shard_map import shard_map
+      shard_map(lambda x: dce_sink_p.bind(x, prevent_mlir_dce=prevent_mlir_dce),
+                out_specs=[])(x)
+    else:
+      dce_sink_p.bind(x, prevent_mlir_dce=prevent_mlir_dce)
+  tree_util.tree_map(sink, val)
+
 dce_sink_p = core.Primitive('dce_sink')
 dce_sink_p.def_impl(lambda _, **__: [])
 dce_sink_p.multiple_results = True
 dce_sink_p.def_effectful_abstract_eval(lambda _, **__: ([], {no_dce_effect}))
 ad.deflinear(dce_sink_p, lambda _, **__: [])
 def _dce_sink_batcher(batched_args, batch_dims, **params):
-  # dce_sink has no outputs as indicated in the abstract eval above.
-  # Re-bind it on the batched value to keep the no-DCE effect, and return no outputs.
   (x,) = batched_args
   dce_sink_p.bind(x, **params)
   return [], []
@@ -9412,6 +11677,9 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
           out_sharding=out_sharding))
 
 
+def _iota_layout_rule(out_aval, *, dtype, shape, dimension, sharding):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _iota_abstract_eval(dtype, shape, dimension, sharding):
   # TODO(mattjj) Generalize shape_like checking to permit dynamic shapes
   _check_shapelike("iota", "shape", shape)
@@ -9425,7 +11693,11 @@ def _iota_abstract_eval(dtype, shape, dimension, sharding):
                      f"{dimension=} for {shape=}")
   if sharding is None:
     sharding = core.get_cur_mesh_sharding(spec=core.P(*[None] * len(shape)))
-  return ShapedArray(shape, dtype, sharding=sharding)
+  out_aval = ShapedArray(shape, dtype, sharding=sharding)
+  out_layout = lax_utils.call_layout_rule(
+      iota_p, _iota_layout_rule, (), (out_aval,),
+      dtype=dtype, shape=shape, dimension=dimension, sharding=sharding)
+  return out_aval.update(layout=out_layout)
 
 iota_p = Primitive('iota')
 iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))
@@ -9449,8 +11721,26 @@ def _iota_lower(ctx, dtype, shape, dimension, sharding):
   del dtype
   aval_out, = ctx.avals_out
   out = mlir.iota(ctx, aval_out, dimension=dimension)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
-mlir.register_lowering(iota_p, _iota_lower)
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
+
+def _iota_collective_rule(in_avals, out_avals, *, dimension, **_):
+  from jax._src.lax import parallel
+  del in_avals
+  out_aval, = out_avals
+  shard_shape = out_aval.sharding.shard_shape(out_aval.shape)
+  out_collective = None
+  if (part := out_aval.sharding.spec.partitions[dimension]) is not None:
+    def out_collective(x_shard):
+      idx = parallel.axis_index(part).astype(dtypes.default_int_dtype())
+      offset = idx * shard_shape[dimension]
+      return x_shard + offset.astype(out_aval.dtype)
+  return mlir.PartitioningRule(
+      out_collective=out_collective,
+      per_shard_params={'shape': shard_shape, 'sharding': None},
+  )
+
+mlir.register_lowering(
+    iota_p, _iota_lower, shard_map_collective_rule=_iota_collective_rule)
 
 ### util
 
@@ -9647,10 +11937,9 @@ def _const(example, val):
 _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
-  x_aval = core.typeof(x)
-  out = full_like(x, shape=(), fill_value=0,
-                  sharding=x_aval.sharding.update(spec=P()))
-  return out
+  s = core.typeof(x).sharding
+  return full_like(x, shape=(), fill_value=0,
+                   sharding=s.update(spec=s.spec.update(partitions=())))
 
 _ones: Callable = partial(full_like, fill_value=1)
 
@@ -9661,10 +11950,12 @@ def _one(x):
   return out
 
 def _one_vjp(x):
-  x_aval = core.typeof(x)
-  ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
-  ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
-  return full_like(x, shape=(), fill_value=1, sharding=ct_s)
+  ct_aval = core.typeof(x).to_ct_aval()
+  ct_s = ct_aval.sharding
+  out = full((), _convert_element_type(1, ct_aval.dtype, ct_aval.weak_type),
+             sharding=ct_s.update(spec=ct_s.spec.update(partitions=())))
+  out = core.pvary(out, tuple(ct_aval.mat.varying))
+  return _insert_reduced_unreduced(out, ct_aval.mat)
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
@@ -9741,9 +12032,14 @@ def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
       f"but got {precision}.")
 
 
-def _balanced_eq(x, z, y):
-  return div(select(_eq_meet(x, z), _ones(z), _zeros(z)),
-             select(_eq_meet(y, z), _twos(z), _ones(z)))
+def _balanced_cmp(x, y):
+  # 1.0 if x > y, 0.5 if x == y, 0.0 if x < y or NaN
+  gt_mask = gt(x, y)
+  eq_mask = eq(x, y)
+  ones = full_like(gt_mask, 1, dtype=x.dtype)
+  zeros = full_like(gt_mask, 0, dtype=x.dtype)
+  half = full_like(gt_mask, 0.5, dtype=x.dtype)
+  return select(gt_mask, ones, select(eq_mask, half, zeros))
 
 
 def _eq_meet(a, b):
@@ -9776,7 +12072,7 @@ def empty(shape, dtype, *, out_sharding=None):
     >>> lax.empty(3, jnp.float32)  # doctest: +SKIP
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
 
-  .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
+  .. _explicit sharding: https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
   return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
@@ -9784,15 +12080,21 @@ def empty(shape, dtype, *, out_sharding=None):
 empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
+def _empty_layout_rule(out_aval, *, shape, dtype, out_sharding):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _empty_abstract_eval(*, shape, dtype, out_sharding):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding)
+  out_aval = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  out_layout = lax_utils.call_layout_rule(
+      empty_p, _empty_layout_rule, (), (out_aval,),
+      shape=shape, dtype=dtype, out_sharding=out_sharding)
+  return out_aval.update(layout=out_layout)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
 def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
     return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   custom_call_op = hlo.CustomCallOp(
       [mlir.ir.RankedTensorType.get(
@@ -9803,18 +12105,32 @@ def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   )
   assert len(custom_call_op.results) == 1
   res = custom_call_op.results[0]
-  return [mlir.lower_with_sharding_in_types(ctx, res, phys_aval)]
+  return [mlir.lower_with_explicit_types(ctx, res, aval_out)]
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
 def _empty_lower(ctx, *, shape, dtype, out_sharding):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
-  return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
-mlir.register_lowering(empty_p, _empty_lower)
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
+
+
+def _empty_collective_rule(in_avals, out_avals, **params):
+  del in_avals, params
+  (out_aval,) = out_avals
+  return mlir.PartitioningRule(
+      per_shard_params={
+          'shape': out_aval.sharding.shard_shape(out_aval.shape),
+          'out_sharding': None,
+      }
+  )
+
+
+mlir.register_lowering(
+    empty_p, _empty_lower, shard_map_collective_rule=_empty_collective_rule
+)
 
 # TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
 # AllocateBuffer issues are fixed
@@ -9823,15 +12139,25 @@ def empty2(dtype, *, memory_space):
 empty2_p = core.Primitive('empty2')
 dispatch.simple_impl(empty2_p)
 
+def _empty2_layout_rule(out_aval, *, dtype, memory_space):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _empty2_abstract_eval(*, dtype, memory_space):
-  return core.ShapedArray((), dtype, memory_space=memory_space)
+  out_aval = core.ShapedArray((), dtype, memory_space=memory_space)
+  out_layout = lax_utils.call_layout_rule(
+      empty2_p, _empty2_layout_rule, (), (out_aval,),
+      dtype=dtype, memory_space=memory_space)
+  return out_aval.update(layout=out_layout)
 empty2_p.def_abstract_eval(_empty2_abstract_eval)
 
 def _empty2_lower(ctx, *, dtype, memory_space):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return [mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))]
-mlir.register_lowering(empty2_p, _empty2_lower)
+  aval_out, = ctx.avals_out
+  phys_aval = core.physical_aval(aval_out)
+  out = mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
+mlir.register_lowering(
+    empty2_p, _empty2_lower, shard_map_collective_rule=_unop_collective_rule
+)
 
 
 tie_p = core.Primitive('tie')
@@ -9888,7 +12214,6 @@ def optimization_barrier(operand, /):
   flat_args, treedef = tree_util.tree_flatten(operand)
   is_ref = [isinstance(core.typeof(x), AbstractRef) for x in flat_args]
   vals, refs = util.partition_list(is_ref, flat_args)
-  vals = core.auto_insert_reshard(*vals)
   out = optimization_barrier_p.bind(*util.merge_lists(is_ref, vals, refs))
   return tree_util.tree_unflatten(treedef, util.merge_lists(is_ref, out, refs))
 
@@ -9901,7 +12226,6 @@ optimization_barrier_p.def_impl(
 def _optimization_barrier_abstract_eval(*args):
   is_ref = [isinstance(a, AbstractRef) for a in args]
   vals = [a for a, r in zip(args, is_ref) if not r]
-  core.standard_vma_rule('optimization_barrier', *vals)
   effects = {WriteEffect(i) for i, r in enumerate(is_ref) if r}
   return vals, effects
 optimization_barrier_p.def_effectful_abstract_eval(
@@ -9917,31 +12241,62 @@ def _optimization_barrier_lowering_rule(ctx, *args):
          if isinstance(aval, core.ShapedArray) else op
          for op, aval in zip(barrier_op.results, ctx.avals_out)]
   return treedef.unflatten(out)
-mlir.register_lowering(optimization_barrier_p,
-                       _optimization_barrier_lowering_rule)
+
+def _optimization_barrier_collective_rule(in_avals, out_avals):
+  if not all(isinstance(a, core.ShapedArray) for a in in_avals):
+    return None
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    optimization_barrier_p,
+    _optimization_barrier_lowering_rule,
+    shard_map_collective_rule=_optimization_barrier_collective_rule,
+)
 
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):
   return optimization_barrier_p.bind(*batched_args, **params), batch_dims
 batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
 
 def _opt_barrier_jvp(primals, tangents):
-  primals_out = optimization_barrier(primals)
+  is_ref = [isinstance(core.typeof(x), AbstractRef) for x in primals]
+  primals_out = optimization_barrier_p.bind(*primals)
   nzs = [not isinstance(t, ad.Zero) for t in tangents]
   nz_ts = [t for t, nz in zip(tangents, nzs) if nz]
   if not nz_ts:
-    return primals_out, tangents
-  out = iter(optimization_barrier(nz_ts))
-  tangents_out = [next(out) if nz else t for t, nz in zip(tangents, nzs)]
+    return primals_out, [t for t, r in zip(tangents, is_ref) if not r]
+  out = iter(optimization_barrier_p.bind(*nz_ts))
+  tangents_out = [next(out) if nz else t
+                  for t, nz, r in zip(tangents, nzs, is_ref) if not r]
   return primals_out, tangents_out
 ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
 
-def _opt_barrier_transpose(cts, *primals):
+def _opt_barrier_fancy_transpose(cts, *accums):
   nzs = [not isinstance(ct, ad.Zero) for ct in cts]
   nz_cts = [ct for ct, nz in zip(cts, nzs) if nz]
-  if not nz_cts: return cts
-  out = iter(optimization_barrier(nz_cts))
-  return [next(out) if nz else ct for ct, nz in zip(cts, nzs)]
-ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose
+  ct_refs = [x.ref for x in accums if isinstance(x, ad.RefAccum)]
+  if not nz_cts and not ct_refs:
+    return
+  out = iter(optimization_barrier_p.bind(*nz_cts, *ct_refs))
+  cts_out = (next(out) if nz else ct for ct, nz in zip(cts, nzs))
+  for x in accums:
+    if not isinstance(x, ad.RefAccum):
+      x.accum(next(cts_out))
+  assert next(cts_out, None) is None
+ad.fancy_transposes[optimization_barrier_p] = _opt_barrier_fancy_transpose
+
+optimization_barrier_p.is_high = lambda *avals: any(a.is_high for a in avals)  # type: ignore
+
+def _optimization_barrier_to_lojax(*hi_args):
+  in_avals = [core.typeof(x) for x in hi_args]
+  out_avals, _ = optimization_barrier_p.abstract_eval(*in_avals)
+  lo_args = [lo_x for x, a in zip(hi_args, in_avals)
+             for lo_x in a.lower_val(x)]
+  lo_outs = iter(optimization_barrier_p.bind(*lo_args))
+  hi_outs = [a.raise_val(*itertools.islice(lo_outs, len(a.lo_ty())))
+             for a in out_avals]
+  assert next(lo_outs, None) is None
+  return hi_outs
+optimization_barrier_p.to_lojax = _optimization_barrier_to_lojax  # type: ignore
 
 
 def _array_reduce_precision_handler(t, x):

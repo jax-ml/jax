@@ -34,7 +34,6 @@ pytype_library(
         "__init__.py",
         "serialization.py",
     ],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -48,7 +47,6 @@ pytype_library(
 pytype_library(
     name = "pytree_serialization",
     srcs = ["pytree_serialization.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
@@ -63,7 +61,6 @@ pytype_library(
 pytype_library(
     name = "pytree_serialization_utils",
     srcs = ["pytree_serialization_utils.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
     ] + py_deps([
@@ -87,7 +84,6 @@ jax_multiplatform_test(
 pytype_library(
     name = "tensorstore_impl",
     srcs = ["tensorstore_impl.py"],
-    type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = ["//jax"] + py_deps([
         "numpy",

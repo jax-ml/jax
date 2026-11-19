@@ -14,13 +14,10 @@
 
 """Helpers for evaluating functions under certain constraints."""
 import dataclasses
-from typing import Any
 
 from jax import lax
 from jax._src import core
-from jax._src import source_info_util
 from jax._src import tree_util
-from jax._src import util
 from jax._src.pallas.fuser import fuser_utils
 
 
@@ -30,10 +27,27 @@ class CustomEvaluateSettings:
 
 
 def evaluate(f, *, allow_transpose: bool = True):
+  """Re-binds `f`'s traced jaxpr equation-by-equation under fuser constraints.
+
+  Used inside fused kernels to evaluate `f` primitive-by-primitive so that
+  fuser evaluation rules apply while rejecting unsupported higher-order
+  primitives (`scan`, `while_loop`, `cond`) and optionally `transpose`.
+
+  Args:
+    f: The function to trace and evaluate.
+    allow_transpose: Whether `lax.transpose_p` primitives are allowed in `f`.
+
+  Returns:
+    A wrapped function taking `*args` and `**kwargs` that traces `f` and
+    evaluates its jaxpr equation by equation, raising `NotImplementedError` for
+    `scan`, `while_loop`, and `cond` primitives and, if `allow_transpose` is
+    `False`, `ValueError` for transposes.
+  """
+
   def wrapped(*args, **kwargs):
     jaxpr, consts, _, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)
     settings = CustomEvaluateSettings(allow_transpose=allow_transpose)
-    flat_args = tree_util.tree_leaves(args)
+    flat_args = tree_util.tree_leaves((args, kwargs))
     out_flat = _custom_evaluate_jaxpr(settings, jaxpr, consts, *flat_args)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
@@ -47,36 +61,9 @@ disallowed_primitives = {lax.scan_p, lax.while_p, lax.cond_p}
 def _custom_evaluate_jaxpr(
     settings: CustomEvaluateSettings, jaxpr: core.Jaxpr, consts, *args
 ):
-  def read(v: core.Atom) -> Any:
-    return v.val if isinstance(v, core.Literal) else env[v]
-
-  def write(v: core.Var, val: Any) -> None:
-    env[v] = val
-
-  env: dict[core.Var, Any] = {}
-  util.safe_map(write, jaxpr.constvars, consts)
-  util.safe_map(write, jaxpr.invars, args)
-  lu = core.last_used(jaxpr)
-  for eqn in jaxpr.eqns:
-    bind_params = eqn.primitive.get_bind_params(eqn.params)
-
-    if eqn.primitive in disallowed_primitives:
-      raise NotImplementedError(f'Primitive {eqn.primitive} not supported.')
-    if not settings.allow_transpose and eqn.primitive is lax.transpose_p:
-      raise ValueError('Transpose not allowed.')
-    name_stack = (
-        source_info_util.current_name_stack() + eqn.source_info.name_stack
-    )
-    traceback = eqn.source_info.traceback
-    with source_info_util.user_context(
-        traceback, name_stack=name_stack
-    ), eqn.ctx.manager:
-      ans = eqn.primitive.bind(
-          *util.safe_map(read, eqn.invars), **bind_params
-      )
-    if eqn.primitive.multiple_results:
-      util.safe_map(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
-    core.clean_up_dead_vars(eqn, env, lu)
-  return util.safe_map(read, jaxpr.outvars)
+  all_prims = fuser_utils.jaxpr_all_prims(jaxpr)
+  if disallowed := all_prims & disallowed_primitives:
+    raise NotImplementedError(f'Primitives {disallowed} not supported.')
+  if not settings.allow_transpose and lax.transpose_p in all_prims:
+    raise ValueError('Transpose not allowed.')
+  return core.eval_jaxpr(jaxpr, consts, *args)

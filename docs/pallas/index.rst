@@ -53,7 +53,7 @@ but provide distinct, hardware-specific APIs.
    :hidden:
    :caption: Guides
 
-   quickstart
+   refs
    grid_blockspec
    pipelining
 

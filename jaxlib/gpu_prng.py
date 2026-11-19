@@ -18,14 +18,16 @@ from .plugin_support import import_from_plugin
 
 _cuda_prng = import_from_plugin("cuda", "_prng")
 _hip_prng = import_from_plugin("rocm", "_prng")
+_oneapi_prng = import_from_plugin("oneapi", "_prng")
 
 
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   registrations: dict[str, list[tuple[str, Any, int]]] = {
       "CUDA": [],
       "ROCM": [],
+      "ONEAPI": [],
   }
-  for platform, module in [("CUDA", _cuda_prng), ("ROCM", _hip_prng)]:
+  for platform, module in [("CUDA", _cuda_prng), ("ROCM", _hip_prng), ("ONEAPI", _oneapi_prng)]:
     if module:
       registrations[platform].extend(
           (name, value, int(name.endswith("_ffi")))

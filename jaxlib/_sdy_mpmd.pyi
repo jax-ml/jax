@@ -16,8 +16,12 @@
 
 from collections.abc import Callable, Mapping, Sequence
 import enum
+import types
+from typing import overload
+
 import jax.jaxlib._jax
 import mlir.ir
+
 import jaxlib._hlo
 
 class PartitioningPhase(enum.Flag):
@@ -164,6 +168,8 @@ def get_compile_options(
     arg1: Mapping[str, Sequence[tuple[str, str | bool | int | float]]],
     /,
 ) -> dict: ...
+
+@overload
 def compile_mpmd(
     backend: object,
     ifrt_mlir_module: mlir.ir.Module,
@@ -175,6 +181,21 @@ def compile_mpmd(
         Mapping[str, str | bool | int | float] | None
     ) = ...,
     loaded_executable_bindings: Mapping[str, object] | None = ...,
+    host_callbacks: Sequence[types.CapsuleType] = ...,
+) -> MpmdLoadedExecutable: ...
+@overload
+def compile_mpmd(
+    backend: object,
+    ifrt_mlir_module: mlir.ir.Module,
+    devices: Sequence,
+    out_avals: Sequence[object],
+    out_shardings: Sequence[object] | None,
+    xla_compile_options: Mapping[str, object] | None = ...,
+    ifrt_ir_compile_options: (
+        Mapping[str, str | bool | int | float] | None
+    ) = ...,
+    loaded_executable_bindings: Mapping[str, object] | None = ...,
+    host_callbacks: Sequence[Callable] = ...,
 ) -> MpmdLoadedExecutable: ...
 
 class IfrtIrProgramMemoryStats:

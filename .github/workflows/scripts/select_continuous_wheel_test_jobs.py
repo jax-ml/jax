@@ -133,6 +133,15 @@ JOB_SPECS = (
         ),
     ),
     # LINT.ThenChange(.github/workflows/wheel_tests_continuous.yml:run_bazel_test_rocm)
+    # LINT.IfChange(run_bazel_test_rocm_pypi)
+    JobSpec(
+        job_id='run_bazel_test_rocm_pypi',
+        platform='rocm',
+        suite='bazel',
+        # jaxlib/plugin/pjrt come from PyPI; jax is built from source.
+        requires_builds=(),
+    ),
+    # LINT.ThenChange(.github/workflows/wheel_tests_continuous.yml:run_bazel_test_rocm_pypi)
 )
 
 VALID_XLA_TRACKS = frozenset(('pinned', 'head', 'commit'))
@@ -147,6 +156,7 @@ ROCM_JOB_IDS = frozenset((
     'build_rocm_artifacts',
     'run_pytest_rocm',
     'run_bazel_test_rocm',
+    'run_bazel_test_rocm_pypi',
 ))
 HALT_FOR_CONNECTION_JOB_IDS = tuple(
     job_id for job_id in ALL_JOB_IDS if job_id not in ROCM_JOB_IDS

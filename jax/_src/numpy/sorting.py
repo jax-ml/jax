@@ -13,19 +13,37 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+import math
+import operator
 
 import numpy as np
 
 from jax._src import core
 from jax._src import api
 from jax._src import dtypes
+from jax._src.lax import control_flow
 from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 export = set_module('jax.numpy')
+
+def _order_reversing_invert(x: Array) -> Array:
+  """Map an array to one whose sort order is reversed."""
+  if dtypes.isdtype(x.dtype, ("bool", "integral")):
+    # For boolean and integer types, bitwise_not is order-reversing over the full domain
+    return lax.bitwise_not(x)
+  else:
+    # For inexact types, negation is order-reversing except in a few cases:
+    # - NaN, which lax.sort places at the end regardless of sign
+    # - signed/unsigned zero, which are always left in stable order regardless of sign.
+    # In places where this is important, these must be handled specially below.
+    return lax.neg(x)
+
+
 
 @export
 @api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
@@ -54,6 +72,12 @@ def sort(
   Returns:
     Sorted array of shape ``a.shape`` (if ``axis`` is an integer) or of shape
     ``(a.size,)`` (if ``axis`` is None).
+
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
 
   Examples:
     Simple 1-dimensional sort
@@ -118,6 +142,12 @@ def argsort(
   Returns:
     Array of indices that sort an array. Returned array will be of shape ``a.shape``
     (if ``axis`` is an integer) or of shape ``(a.size,)`` (if ``axis`` is None).
+
+  Note:
+    For descending sorts, ``NaN`` values are sorted to the beginning of the
+    array (whereas for ascending sorts they are sorted to the end). While this
+    differs from NumPy's behavior (which sorts NaNs to the end for both
+    orders), it conforms to the Python Array API specification.
 
   Examples:
     Simple 1-dimensional sort
@@ -237,11 +267,8 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   kth = canonicalize_axis(kth, arr.shape[axis])
 
   arr = arr.swapaxes(axis, -1)
-  if dtypes.isdtype(arr.dtype, "unsigned integer"):
-    # Here, we apply a trick to handle correctly 0 values for unsigned integers
-    bottom = -lax.top_k(-(arr + 1), kth + 1)[0] - 1
-  else:
-    bottom = -lax.top_k(-arr, kth + 1)[0]
+  bottom = _order_reversing_invert(
+      lax.top_k(_order_reversing_invert(arr), kth + 1)[0])
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
   return out.swapaxes(-1, axis)
@@ -308,11 +335,7 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   kth = canonicalize_axis(kth, arr.shape[axis])
 
   arr = arr.swapaxes(axis, -1)
-  if dtypes.isdtype(arr.dtype, "unsigned integer"):
-    # Here, we apply a trick to handle correctly 0 values for unsigned integers
-    bottom_ind = lax.top_k(-(arr + 1), kth + 1)[1]
-  else:
-    bottom_ind = lax.top_k(-arr, kth + 1)[1]
+  bottom_ind = lax.top_k(_order_reversing_invert(arr), kth + 1)[1]
 
   # To avoid issues with duplicate values, we compute the top indices via a proxy
   set_to_zero = lambda a, i: a.at[i].set(0)
@@ -363,8 +386,9 @@ def sort_complex(a: ArrayLike) -> Array:
 
 
 @export
-@api.jit(static_argnames=('axis',))
-def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
+@api.jit(static_argnames=('axis', 'batch_size'))
+def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1, *,
+            batch_size: int = 16) -> Array:
   """Sort a sequence of keys in lexicographic order.
 
   JAX implementation of :func:`numpy.lexsort`.
@@ -373,6 +397,12 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
     keys: a sequence of arrays to sort; all arrays must have the same shape.
       The last key in the sequence is used as the primary key.
     axis: the axis along which to sort (default: -1).
+    batch_size: JAX-specific; the maximum number of keys compared in a single
+      sort (default: 16). With more keys than this, the keys are sorted in
+      batches of ``batch_size``, from the least to the most significant batch,
+      which keeps compile time from growing with the number of keys. Batching
+      requires all keys to have the same dtype; otherwise all keys are sorted
+      at once.
 
   Returns:
     An array of integers of shape ``keys[0].shape`` giving the indices of the
@@ -425,22 +455,101 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
     Array([[0, 1, 0, 1],
            [1, 0, 1, 0]], dtype=int32)
   """
-  key_arrays = util.ensure_arraylike_tuple("lexsort", tuple(keys))
-  if len(key_arrays) == 0:
+  batch_size = core.concrete_or_error(operator.index, batch_size,
+                                      "batch_size argument of jnp.lexsort()")
+  if batch_size < 1:
+    raise ValueError(f"lexsort: batch_size must be positive, got {batch_size}")
+  if isinstance(keys, (np.ndarray, Array)):
+    return _lexsort_array(util.ensure_arraylike("lexsort", keys), axis, batch_size)
+  return _lexsort_tuple(util.ensure_arraylike_tuple("lexsort", tuple(keys)),
+                        axis, batch_size)
+
+
+def _lexsort_array(keys: Array, axis: int, batch_size: int) -> Array:
+  """lexsort for keys stacked along the leading axis of a single array."""
+  if keys.ndim == 0 or keys.shape[0] == 0:
     raise TypeError("need sequence of keys with len > 0 in lexsort")
-  if len({np.shape(key) for key in key_arrays}) > 1:
-    raise ValueError("all keys need to be the same shape")
-  if np.ndim(key_arrays[0]) == 0:
+  if keys.ndim == 1:
     return lax.full((), 0, dtypes.default_int_dtype())
-  axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
-  idx_dtype = lax_utils.int_dtype_for_dim(key_arrays[0].shape[axis],
-                                          signed=True)
+  num_keys, *shape = keys.shape
+  axis = canonicalize_axis(axis, len(shape))
+  idx_dtype = _lexsort_index_dtype(shape[axis])
+  if num_keys <= batch_size or keys.size == 0:
+    iota = lax.broadcasted_iota(idx_dtype, shape, axis)
+    return lax.sort((*lax.unstack(keys)[::-1], iota), dimension=axis,
+                    num_keys=num_keys)[-1]
+  # Move the sort axis last and flatten the others: (num_keys, rows, n).
+  perm_axes = (*(d for d in range(len(shape)) if d != axis), axis)
+  rows, n = math.prod(shape) // shape[axis], shape[axis]
+  keys = lax.reshape(keys, (num_keys, rows, n),
+                     dimensions=(0, *(d + 1 for d in perm_axes)))
+  # Sort by full batches of keys in a loop, so that the program size does not
+  # grow with the number of keys, then by the remaining (most significant)
+  # keys.
+  num_batches, remainder = divmod(num_keys, batch_size)
+  def body(i, perm):
+    batch = lax_slicing.dynamic_slice_in_dim(keys, i * batch_size, batch_size)
+    return _lexsort_rows_step(lax.unstack(batch), perm)
+  perm = lax.broadcasted_iota(idx_dtype, (rows, n), 1)
+  perm = control_flow.fori_loop(0, num_batches, body, perm)
+  if remainder:
+    batch = lax_slicing.slice_in_dim(keys, num_keys - remainder, num_keys)
+    perm = _lexsort_rows_step(lax.unstack(batch), perm)
+  return _lexsort_unflatten(perm, shape, perm_axes)
+
+
+def _lexsort_tuple(keys: tuple[Array, ...], axis: int, batch_size: int) -> Array:
+  """lexsort for a sequence of separate key arrays, which may differ in dtype."""
+  if len(keys) == 0:
+    raise TypeError("need sequence of keys with len > 0 in lexsort")
+  if len({np.shape(key) for key in keys}) > 1:
+    raise ValueError("all keys need to be the same shape")
+  if np.ndim(keys[0]) == 0:
+    return lax.full((), 0, dtypes.default_int_dtype())
+  shape = np.shape(keys[0])
+  axis = canonicalize_axis(axis, len(shape))
+  idx_dtype = _lexsort_index_dtype(shape[axis])
+  if len(keys) <= batch_size or math.prod(shape) == 0:
+    iota = lax.broadcasted_iota(idx_dtype, shape, axis)
+    return lax.sort((*keys[::-1], iota), dimension=axis, num_keys=len(keys))[-1]
+  if len({key.dtype for key in keys}) == 1:
+    return _lexsort_array(lax.concatenate([lax.expand_dims(k, (0,)) for k in keys], 0),
+                          axis, batch_size)
+  # Keys of different dtypes can't be stacked, so sort by the batches in an
+  # unrolled loop, from the least significant batch (keys[:batch_size]) up.
+  perm_axes = (*(d for d in range(len(shape)) if d != axis), axis)
+  rows, n = math.prod(shape) // shape[axis], shape[axis]
+  keys = tuple(lax.reshape(k, (rows, n), dimensions=perm_axes) for k in keys)
+  perm = lax.broadcasted_iota(idx_dtype, (rows, n), 1)
+  for start in range(0, len(keys), batch_size):
+    perm = _lexsort_rows_step(keys[start:start + batch_size], perm)
+  return _lexsort_unflatten(perm, shape, perm_axes)
+
+
+def _lexsort_rows_step(batch: Sequence[Array], perm: Array) -> Array:
+  # One stable sort of the (rows, n) permutation `perm` by a batch of keys of
+  # shape (rows, n), given in lexsort order (the last key is the most
+  # significant). Applied to successive batches from the least significant
+  # one up, this gives the same permutation as a single stable sort keyed on
+  # all of them.
+  take = api.vmap(lambda key, p: key[p])
+  operands = [take(key, perm) for key in batch[::-1]]
+  return lax.sort((*operands, perm), dimension=1, num_keys=len(batch))[-1]
+
+
+def _lexsort_unflatten(perm: Array, shape: Sequence[int],
+                       perm_axes: tuple[int, ...]) -> Array:
+  perm = lax.reshape(perm, tuple(shape[d] for d in perm_axes))
+  return lax.transpose(perm, np.argsort(perm_axes))
+
+
+def _lexsort_index_dtype(size: int) -> np.dtype:
+  idx_dtype = lax_utils.int_dtype_for_dim(size, signed=True)
   # We'd give the correct output values with int32, but use the default dtype to
   # match NumPy type semantics if x64 mode is enabled for now.
   if idx_dtype == np.dtype(np.int32):
     idx_dtype = dtypes.default_int_dtype()
-  iota = lax.broadcasted_iota(idx_dtype, np.shape(key_arrays[0]), axis)
-  return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
+  return idx_dtype
 
 
 @export
@@ -510,15 +619,5 @@ def top_k(
   axis = canonicalize_axis(axis, arr.ndim)
   if mode == "largest":
     return lax.top_k(arr, k, axis=axis)
-  elif dtypes.isdtype(arr.dtype, "bool"):
-    inv = lax.bitwise_not(arr)
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return lax.bitwise_not(vals), indices
-  elif dtypes.isdtype(arr.dtype, "unsigned integer"):
-    inv = -(arr + 1)
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return -(vals + 1), indices
-  else:
-    inv = -arr
-    vals, indices = lax.top_k(inv, k, axis=axis)
-    return -vals, indices
+  vals, indices = lax.top_k(_order_reversing_invert(arr), k, axis=axis)
+  return _order_reversing_invert(vals), indices

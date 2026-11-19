@@ -21,14 +21,13 @@ import base64
 import logging
 from types import ModuleType
 from concurrent.futures import Future
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src.export.serialization import (flatbuffers, _serialize_pytreedef,
                                            _deserialize_pytreedef,
                                            ser_flatbuf)
 from jax.export import register_pytree_node_serialization
 
-T = TypeVar("T")
 PickleModule = ModuleType
 logger = logging.getLogger(__name__)
 

@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from jax import P
 from jax._src import test_util as jtu
 from jax._src import config
+from jax._src import hijax
 from jax._src.named_sharding import NamedSharding
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
@@ -476,6 +477,59 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     unjitted_result = f(x, y)
     self.assertArraysEqual(jitted_result, unjitted_result)
     self.assertEqual(jitted_result.sharding, NamedSharding(mesh, P('x')))
+
+  def test_custom_partitioner_with_hiprim(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    class Square(hijax.HiPrim):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    f = custom_partitioning(square)
+
+    def partition(mesh, arg_shapes, result_shape):
+      x_shard = arg_shapes[0].sharding
+      return (
+          mesh,
+          square,
+          NamedSharding(x_shard.mesh, P('x', None)),
+          (NamedSharding(x_shard.mesh, P('x', None)),),
+      )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      x_shard = arg_shapes[0].sharding
+      return NamedSharding(x_shard.mesh, P('x', None))
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        sharding_rule='i j -> i j',
+    )
+
+    x = np.arange(16, dtype=np.int32).reshape(4, 4)
+    expected = x ** 2
+    self.assertArraysEqual(f(x), expected)
+
+    with jax.set_mesh(jtu.create_mesh((4,), ('x',))):
+      x_sharded = jax.device_put(x, P('x', None))
+      jit_f = jax.jit(f, in_shardings=P('x', None), out_shardings=P('x', None))
+      self.assertArraysEqual(jit_f(x_sharded), expected)
+
+    with jax.set_mesh(jtu.create_mesh((1,), ('x',))):
+      x_single = jax.device_put(x, P('x', None))
+      jit_f_single = jax.jit(
+          f, in_shardings=P('x', None), out_shardings=P('x', None)
+      )
+      self.assertArraysEqual(jit_f_single(x_single), expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

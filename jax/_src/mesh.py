@@ -23,7 +23,7 @@ import enum
 import functools
 import math
 import threading
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -31,8 +31,9 @@ import numpy as np
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
-                           immutable)
+                           immutable, set_module)
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -168,7 +169,7 @@ class BaseMesh:
                for t in self.axis_types)
 
   @functools.cached_property
-  def _are_all_axes_explicit_or_manual(self) -> bool:
+  def are_all_axes_explicit_or_manual(self) -> bool:
     if not self.axis_types:
       return False
     return all(t == AxisType.Explicit or t == AxisType.Manual
@@ -212,6 +213,35 @@ class BaseMesh:
   def _name_to_type(self):
     return dict(safe_zip(self.axis_names, self.axis_types))
 
+  @functools.cached_property
+  def axes(self) -> tuple[MeshAxis, ...]:
+    return tuple(MeshAxis(n) for n in self.axis_names)
+
+  @contextlib.contextmanager
+  def jax_partitioning(self, val: bool = True):
+    if not self.are_all_axes_explicit_or_manual:
+      raise ValueError('`jax_partitioning` requires all mesh `axis_types` to'
+                       f' be `Explicit` or `Manual`, got {self!r}.')
+    with jax_config.jax_partitioning(val):
+      yield
+
+
+class _HashableDeviceArray:
+  __slots__ = ('array', 'device_list', '_hash')
+
+  def __init__(self, array: np.ndarray, device_list: xc.DeviceList):
+    self.array = array
+    self.device_list = device_list
+    self._hash = hash((array.shape, device_list))
+
+  def __hash__(self) -> int:
+    return self._hash
+
+  def __eq__(self, other: Any) -> bool:
+    return (isinstance(other, _HashableDeviceArray)
+            and self.array.shape == other.array.shape
+            and self.device_list == other.device_list)
+
 
 @immutable
 class Mesh(BaseMesh, contextlib.ContextDecorator):
@@ -243,24 +273,26 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     >>> out = jax.jit(lambda x: x * 2)(arr)
     >>> assert out.sharding == NamedSharding(mesh, P('x', 'y'))
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/parallel.html
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/201/sharding.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
   size: int
+  _cached_device_list: xc.DeviceList
 
   @staticmethod
   @weak_value_interner
-  def _create(flat_devices_tuple, device_shape, axis_names, axis_types, size):
-    devices = np.array(flat_devices_tuple).reshape(device_shape)
+  def _create(hashable_devices, axis_names, axis_types, size):
+    devices = hashable_devices.array
     devices.flags.writeable = False
     obj = object.__new__(Mesh)
     object.__setattr__(obj, 'devices', devices)
     object.__setattr__(obj, 'axis_names', axis_names)
     object.__setattr__(obj, 'axis_types', axis_types)
     object.__setattr__(obj, 'size', size)
+    object.__setattr__(obj, '_cached_device_list', hashable_devices.device_list)
     return obj
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
@@ -285,8 +317,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
                                        AxisType.Auto)
     empty = not axis_names and devices_flat[0] is None
     size = 0 if empty else math.prod(devices.shape)
-    return cls._create(devices_flat, devices.shape, axis_names,
-                       axis_types, size)
+    hashable_devices = _HashableDeviceArray(devices, xc.DeviceList(devices_flat))
+    return cls._create(hashable_devices, axis_names, axis_types, size)
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -373,9 +405,9 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def _flat_devices_tuple(self):
     return tuple(self.devices.flat)
 
-  @functools.cached_property
+  @property
   def _internal_device_list(self):
-    return xc.DeviceList(self._flat_devices_tuple)
+    return self._cached_device_list
 
   @functools.cached_property
   def _flat_devices_set(self):
@@ -408,21 +440,9 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def abstract_mesh(self):
     if len(self.axis_names) == 0:
       return empty_abstract_mesh
-    d = self.devices.flat[0]
-    if d is None:
-      abstract_device = None
-    else:
-      if d.platform == 'tpu':
-        num_cores = getattr(d, 'num_cores', None)
-      elif d.platform == 'gpu':
-        num_cores = getattr(d, 'core_count', None)
-      else:
-        num_cores = None
-      abstract_device = AbstractDevice(
-          device_kind=d.device_kind, num_cores=num_cores, platform=d.platform)
     return AbstractMesh(
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
-        abstract_device=abstract_device)
+        abstract_device=abstract_device_from(self.devices.flat[0]))
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -450,6 +470,19 @@ class AbstractDevice:
             f"platform={self.platform}")
 
 
+def abstract_device_from(d) -> AbstractDevice | None:
+  if d is None:
+    return None
+  if d.platform == 'tpu':
+    num_cores = getattr(d, 'num_cores', None)
+  elif d.platform == 'gpu':
+    num_cores = getattr(d, 'core_count', None)
+  else:
+    num_cores = None
+  return AbstractDevice(device_kind=d.device_kind, num_cores=num_cores,
+                        platform=d.platform)
+
+
 @immutable
 class AbstractMesh(BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
@@ -469,7 +502,7 @@ class AbstractMesh(BaseMesh):
     axis_types: and optional tuple of :class:`jax.sharding.AxisType` entries corresponding to
       the ``axis_names``. See `Explicit Sharding`_ for more information.
 
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   axis_sizes: Any
   abstract_device: Any
@@ -580,6 +613,27 @@ def _raise_value_error(name):
 empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
+if TYPE_CHECKING or jaxlib_extension_version >= 509:
+  abstract_mesh_context_manager = config_ext.Config[Any](
+      'abstract_mesh_context_manager',
+      empty_abstract_mesh,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+      include_in_jaxpr_eqn_ctx=True,
+  )
+else:
+  abstract_mesh_context_manager = config_ext.Config[Any](
+      'abstract_mesh_context_manager',
+      empty_abstract_mesh,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+  )
+  jax_config._jaxpr_eqn_ctx_configs.append(abstract_mesh_context_manager)
+
+device_context = config_ext.Config[Any](
+    'device_context', empty_concrete_mesh, include_in_jit_key=True
+)
+
 class use_abstract_mesh:
   """Sets a abstract mesh in a thread-local context.
 
@@ -616,24 +670,40 @@ class use_abstract_mesh:
     self.mesh = mesh
 
   def __enter__(self):
-    self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
+    self.prev = abstract_mesh_context_manager.swap_local(self.mesh)
     if (self.prev is not config_ext.unset and
         not self.prev.empty and not self.mesh.empty and
         self.prev.size != self.mesh.size):
-      jax_config.abstract_mesh_context_manager.set_local(self.prev)
+      abstract_mesh_context_manager.set_local(self.prev)
       raise ValueError(
           "use_abstract_mesh cannot change the size of the mesh. Got new mesh:"
           f" {self.mesh} with size={self.mesh.size} and prev mesh:"
           f" {self.prev} with size={self.prev.size}")
 
   def __exit__(self, exc_type, exc_value, traceback):
-    jax_config.abstract_mesh_context_manager.set_local(self.prev)
+    abstract_mesh_context_manager.set_local(self.prev)
 
 
 def get_abstract_mesh() -> AbstractMesh:
-  val = jax_config.abstract_mesh_context_manager.value
-  return empty_abstract_mesh if val is None else val
+  return abstract_mesh_context_manager.value
 
 def get_concrete_mesh() -> Mesh:
-  val = jax_config.device_context.value
-  return empty_concrete_mesh if val is None else val
+  return device_context.value
+
+
+@set_module('jax.avals')
+@dataclasses.dataclass(frozen=True, slots=True)
+class MeshAxis:
+  name: MeshAxisName
+  def __rmatmul__(self, size: Any) -> ShardedMeshAxis:
+    return ShardedMeshAxis(size, (self.name,))
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ShardedMeshAxis:
+  size: Any
+  names: tuple[MeshAxisName, ...]
+  def __matmul__(self, other: Any) -> ShardedMeshAxis:
+    if not isinstance(other, MeshAxis):
+      return NotImplemented
+    return ShardedMeshAxis(self.size, (*self.names, other.name))

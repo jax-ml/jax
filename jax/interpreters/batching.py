@@ -17,6 +17,8 @@
 
 from jax._src.interpreters.batching import (
   axis_primitive_batchers as axis_primitive_batchers,
+  batch_jaxpr_axes as batch_jaxpr_axes,
+  batch_subtrace as batch_subtrace,
   bdim_at_front as bdim_at_front,
   broadcast as broadcast,
   defbroadcasting as defbroadcasting,
@@ -26,4 +28,5 @@ from jax._src.interpreters.batching import (
   primitive_batchers as primitive_batchers,
   register_vmappable as register_vmappable,
   unregister_vmappable as unregister_vmappable,
+  zero_if_mapped as zero_if_mapped,
 )

@@ -19,15 +19,16 @@
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 
-# Define the mapping of Python versions to their lock files and configurations
+# Define the mapping of Python versions to their lock files
 PYTHON_VERSIONS = {
-    "3.12": {"ft": False, "dest": "build/requirements_lock_3_12.txt"},
-    "3.13": {"ft": False, "dest": "build/requirements_lock_3_13.txt"},
-    "3.14": {"ft": False, "dest": "build/requirements_lock_3_14.txt"},
-    "3.14-ft": {"ft": True, "dest": "build/requirements_lock_3_14_ft.txt"},
+    "3.12": "build/requirements_lock_3_12.txt",
+    "3.13": "build/requirements_lock_3_13.txt",
+    "3.14": "build/requirements_lock_3_14.txt",
+    "3.15": "build/requirements_lock_3_15.txt",
 }
 
 COMMON_SRCS = [
@@ -43,16 +44,10 @@ def update_requirements(
         print(f"Error: Unsupported Python version {py_ver}")
         sys.exit(1)
 
-    config = PYTHON_VERSIONS[py_ver]
-    dest = config["dest"]
-    is_ft = config["ft"]
+    dest = PYTHON_VERSIONS[py_ver]
 
     # 1. Determine input files
     srcs = list(COMMON_SRCS)
-    if is_ft:
-        srcs.append("build/freethreading-requirements.txt")
-    else:
-        srcs.append("build/nonfreethreading-requirements.txt")
 
     # Verify inputs exist
     for src in srcs:
@@ -67,9 +62,8 @@ def update_requirements(
     cmd.extend(srcs)
     cmd.extend(["-o", dest])
 
-    # Target Python version for resolution (e.g., "3.13-ft" -> "3.13")
-    uv_py_ver = py_ver.split("-")[0]
-    cmd.extend(["--python-version", uv_py_ver])
+    # Target Python version for resolution
+    cmd.extend(["--python-version", py_ver])
 
     # 3. Apply flag logic matching BUILD.bazel
     if nightly:
@@ -130,6 +124,11 @@ def main():
         action="store_true",
         help="Print the command that would be run without executing it.",
     )
+    parser.add_argument(
+        "--python_version",
+        type=str,
+        help="Specific Python version to update (e.g. 3.15, 3.15-ft). If not specified, updates all.",
+    )
     parser.set_defaults(upgrade=True)
 
     args = parser.parse_args()
@@ -149,7 +148,13 @@ def main():
         )
         sys.exit(1)
 
-    versions_to_update = list(PYTHON_VERSIONS.keys())
+    if args.python_version:
+        if args.python_version not in PYTHON_VERSIONS:
+            print(f"Error: Unsupported Python version {args.python_version}")
+            sys.exit(1)
+        versions_to_update = [args.python_version]
+    else:
+        versions_to_update = list(PYTHON_VERSIONS.keys())
 
     for ver in versions_to_update:
         print(f"\n--- Updating Python {ver} ---")
@@ -160,6 +165,18 @@ def main():
             upgrade_package=args.upgrade_package,
             dry_run=args.dry_run,
         )
+
+    if not args.dry_run:
+        if os.path.exists("build/requirements_lock_3_14.txt"):
+            shutil.copyfile(
+                "build/requirements_lock_3_14.txt",
+                "build/requirements_lock_3_14_ft.txt",
+            )
+        if os.path.exists("build/requirements_lock_3_15.txt"):
+            shutil.copyfile(
+                "build/requirements_lock_3_15.txt",
+                "build/requirements_lock_3_15_ft.txt",
+            )
 
 if __name__ == "__main__":
     main()

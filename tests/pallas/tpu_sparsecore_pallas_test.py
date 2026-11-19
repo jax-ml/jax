@@ -28,10 +28,10 @@ import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
-from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -53,6 +53,9 @@ class PallasSCMeshTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_scalar_subcore_mesh(self):
     sc_info = plsc.get_sparse_core_info()
@@ -93,6 +96,9 @@ class PallasSCTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   @property
   def sc_info(self):
@@ -141,9 +147,11 @@ class PallasSCTest(jtu.JaxTestCase):
           args_hbm = args
           scratch_args = ()
 
+        pipeline_grid = (1,) if grid is None else grid
+
         @functools.partial(
             pltpu.emit_pipeline,
-            grid=(1,) if grid is None else grid,
+            grid=pipeline_grid,
             in_specs=[pl.BlockSpec()] * (
                 len(args_hbm) - len(jax.tree.leaves(out_shape))
             )
@@ -152,9 +160,13 @@ class PallasSCTest(jtu.JaxTestCase):
             out_specs=jax.tree.map(lambda _: pl.BlockSpec(), out_shape)
             if out_specs is None
             else out_specs,
+            _explicit_indices=True,
         )
-        def pipeline(*args):
-          fn(*args, *scratch_args, **kwargs)
+        def pipeline(step, *args):
+          with pallas_core.grid_env(
+              list(map(pallas_core.GridAxis, step.index, pipeline_grid))
+          ):
+            fn(*args, *scratch_args, **kwargs)
 
         pipeline(*args_hbm)
 
@@ -169,7 +181,21 @@ class PallasSCTest(jtu.JaxTestCase):
 
     return decorator
 
+  def _is_supported_on_tpu_version(self, kernel_kwargs):
+    if jtu.is_device_tpu(8, "i"):
+      mesh = kernel_kwargs.get("mesh", None)
+      if isinstance(mesh, plsc.ScalarSubcoreMesh):
+        return False
+      scratch_types = kernel_kwargs.get("scratch_types", None)
+      for scratch_type in jax.tree.leaves(scratch_types):
+        if scratch_type.memory_space == pltpu.VMEM_SHARED:
+          return False
+    return True
+
   def kernel(self, compiler_params=pltpu.CompilerParams(), **kwargs):
+    if not self._is_supported_on_tpu_version(kwargs):
+      self.skipTest(f"Test is not supported on TPU v{jtu.get_tpu_version()}.")
+
     return functools.partial(
         pl.kernel,
         compiler_params=compiler_params.replace(
@@ -222,6 +248,21 @@ class NamedLocationsTest(PallasSCTest):
 
     self.assertIn("%o_hbm_ref", get_output())
 
+  @parameterized.parameters(jnp.int4, jnp.uint4)
+  def test_subbyte_kernel_compilation(self, dtype):
+    mesh = plsc.VectorSubcoreMesh(
+        num_cores=self.sc_info.num_cores,
+        num_subcores=self.sc_info.num_subcores,
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+    )
+    kernel = pl.kernel(
+        lambda x_ref, o_ref: None,
+        out_type=jax.ShapeDtypeStruct((8, 128), dtype),
+        mesh=mesh,
+    )
+    jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), dtype)).compile()
+
 
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
@@ -238,16 +279,16 @@ class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535267274): Fix logger.")
     x = jnp.arange(self.num_lanes, dtype=dtype)
     debug_int = 1234552
     debug_float = 12344.625
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
+      pl.debug_print("Sliced memref", x_hbm_ref.at[:self.num_lanes // 2])
       x = x_hbm_ref[...] + 100
       pl.debug_print("Vector value", x)
       masks = x < 103
@@ -256,16 +297,13 @@ class DebugPrintTest(PallasSCTest):
       pl.debug_print("Single float", debug_float)
       pl.debug_print("No values")
 
-    compiled_kernel = jax.jit(
-        kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
-    )
+    compiled_kernel = jax.jit(kernel)
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn("Memref", get_output())
     self.assertIn(", ".join(map(str, range(self.num_lanes))), get_output())
+    self.assertIn("Sliced memref", get_output())
+    self.assertIn(", ".join(map(str, range(self.num_lanes // 2))), get_output())
     self.assertIn("Vector value", get_output())
     self.assertIn(
         ", ".join(map(str, range(100, 100 + self.num_lanes))), get_output()
@@ -292,7 +330,6 @@ class DebugPrintTest(PallasSCTest):
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="x", num_cores=self.sc_info.num_cores
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
       @functools.partial(
@@ -315,7 +352,6 @@ class DebugPrintTest(PallasSCTest):
     compiled_kernel = jax.jit(
         kernel,
         compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
             # TODO(slebedev): This should not be necessary.
             "xla_sc_force_aligned_buffers": "false",
         },
@@ -341,6 +377,8 @@ class DebugPrintTest(PallasSCTest):
     self.assertIn("No values", get_output())
 
   def test_mpmd_print(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core",
         subcore_axis_name="subcore",
@@ -355,7 +393,7 @@ class DebugPrintTest(PallasSCTest):
 
     def vector_subcore_fn(x_hbm_ref, out_hbm_ref):
       del x_hbm_ref, out_hbm_ref
-      pl.debug_print("From TEC")
+      pl.debug_print("From SCV")
 
     def scalar_subcore_fn(x_hbm_ref, out_hbm_ref):
       del x_hbm_ref, out_hbm_ref
@@ -367,30 +405,22 @@ class DebugPrintTest(PallasSCTest):
           out_types=jax.ShapeDtypeStruct.like(x),
       )(x)
 
-    compiled_kernel = jax.jit(
-        kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
-    )
+    compiled_kernel = jax.jit(kernel)
 
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
 
-    self.assertIn("From TEC", get_output())
+    self.assertIn("From SCV", get_output())
     self.assertIn("From SCS", get_output())
 
   @parameterized.parameters(1, 2, 4)
   def test_subcore_parallel_logging(self, num_subcores):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535267274): Fix logger.")
     nl = self.num_lanes
     x = jnp.arange(num_subcores * nl, dtype=jnp.int32).reshape(-1, nl)
 
-    @functools.partial(
-        jax.jit,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
-    )
+    @jax.jit
     @self.vector_subcore_kernel(
         out_shape=x,
         mesh=plsc.VectorSubcoreMesh(
@@ -427,6 +457,18 @@ class VectorSubcoreTest(PallasSCTest):
       o_ref[...] = op(x, 1)
 
     np.testing.assert_array_equal(kernel(x), op(x, 1))
+
+  def test_float_ne_nan(self):
+    x = jnp.resize(jnp.array([jnp.nan, 1.0, jnp.nan, 2.0]), self.num_lanes)
+    y = jnp.resize(jnp.array([jnp.nan, jnp.nan, 1.0, 2.0]), self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.where(x_ref[...] != y_ref[...], 1, 0)
+
+    np.testing.assert_array_equal(kernel(x, y), jnp.where(x != y, 1, 0))
 
   def test_add_one_block_specs(self):
     num_steps = 4
@@ -595,6 +637,8 @@ class VectorSubcoreTest(PallasSCTest):
       shape_type=["vector", "2vector", "matrix", "2matrix", "3d"]
   )
   def test_scatter_major(self, shape_type):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     nl = self.num_lanes
     shape = {
         "vector": (nl,),
@@ -621,6 +665,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_scatter_1d_array(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
 
@@ -635,6 +681,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_addupdate_scatter_core_memory_space(self):
+
     # Regression test ensuring that we can addupdate_scatter into a VMEM ref
     # associated to a vector subcore memory space.
     mesh = plsc.VectorSubcoreMesh(core_axis_name="core",
@@ -643,10 +690,11 @@ class VectorSubcoreTest(PallasSCTest):
     info = plsc.get_sparse_core_info()
     shape = (info.num_lanes,)
     dtype = jnp.int32
-    @pl.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype),
-               mesh=mesh,
-               scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
-               compiler_params=pltpu.CompilerParams(needs_layout_passes=False))
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, dtype),
+        mesh=mesh,
+        scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
+    )
     def kernel(output_ref, scratch):
       scratch[...] = jnp.zeros_like(scratch)
       plsc.addupdate_scatter(
@@ -657,6 +705,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), jnp.ones(shape, dtype))
 
   def test_scatter_1d_array_from_transformed_src(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(2 * self.num_lanes).reshape(2, -1)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
 
@@ -672,6 +722,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d(self, kind):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -689,6 +741,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_gather_1d_with_filter(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -710,6 +764,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(kind=["ref", "array"])
   def test_gather_1d_to_transformed_dst(self, kind):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(jax.random.key(42), x)
 
@@ -729,6 +785,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
 
     x = jnp.arange(1024)
     indices = jax.random.permutation(jax.random.key(42), x)
@@ -746,6 +804,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
 
   def test_gather_1d_with_indexing(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling("Small 1d gather does not work on TC tiling.")
     x = jnp.arange(4 * 4 * self.num_lanes).reshape(4, 4, self.num_lanes)
     indices = jax.random.permutation(
@@ -780,15 +840,19 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 8:][indices])
 
-  def test_gather_2d_with_col_slice(self):
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_gather_2d_with_col_slice(self, n_indices):
     if not self.USE_TC_TILING:
       self.skipTest("Test only works under TC tiling.")
-    nl = self.num_lanes
-    x = jnp.arange(nl * 4096, dtype=jnp.int32).reshape(nl, 4096)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(nl))
+
+    n_indices = self.num_lanes if n_indices is None else n_indices
+    x = jnp.arange(n_indices * 4096, dtype=jnp.int32).reshape(n_indices, 4096)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=(nl, 1024), dtype=jnp.int32),
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 1024), dtype=jnp.int32
+        ),
         in_specs=(
             pl.BlockSpec(memory_space=pltpu.HBM),
             pl.BlockSpec(memory_space=pltpu.VMEM),
@@ -799,7 +863,35 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices, 128:1152])
 
+  @parameterized.parameters(None, 20, 12, 7, 25)
+  def test_scatter_2d_with_col_slice(self, n_indices):
+    if not self.USE_TC_TILING:
+      self.skipTest("Test only works under TC tiling.")
+    n_indices = self.num_lanes if n_indices is None else n_indices
+    x = jnp.arange(n_indices * 1024, dtype=jnp.int32).reshape(n_indices, 1024)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(n_indices))
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(n_indices, 4096), dtype=jnp.int32
+        ),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_ref, indices_ref, o_hbm_ref):
+      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref, pl.ds(128, 1024)])
+
+    np.testing.assert_array_equal(
+        kernel(x, indices)[:, 128:1152],
+        jnp.empty_like(x).at[indices].set(x),
+    )
+
   def test_gather_1d_with_indexed_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     x = jnp.arange(16)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
 
@@ -818,6 +910,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_gather_1d_with_dynamically_sized_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling()
     x = jnp.arange(16)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
@@ -843,6 +937,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("HBM4B is not supported on TPU v8i.")
     self.skip_if_tc_tiling()
 
     x = jnp.arange(16)
@@ -972,10 +1068,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 
@@ -989,7 +1082,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), x.dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices0_ref, indices1_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1009,7 +1101,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
@@ -1029,7 +1120,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -1045,10 +1135,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(
           x_ref, [indices_ref[...]], mask=x_ref[...]
@@ -1065,7 +1152,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...])
@@ -1083,7 +1169,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
@@ -1102,10 +1187,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...], mask=x_ref[...])
 
@@ -1121,7 +1203,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
@@ -1137,15 +1218,13 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
+
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jnp.ones_like(o_ref)
@@ -1157,29 +1236,51 @@ class VectorSubcoreTest(PallasSCTest):
         jnp.ones_like(x).at[indices[mask]].add(x[mask]),
     )
 
-  @parameterized.parameters(*MASK_FNS)
-  def test_load_expanded(self, mask_fn):
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_load_expanded(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.load_expanded(x_ref.at[...], mask=mask_fn(x_ref[...]))
 
     x = jnp.arange(self.num_lanes)
     mask = mask_fn(x)
-    expected = jnp.zeros_like(x).at[mask].set(x[: mask.sum()])
-    np.testing.assert_array_equal(kernel(x)[mask], expected[mask])
+    np.testing.assert_array_equal(kernel(x)[mask], x[: mask.sum()])
 
   @parameterized.parameters(*MASK_FNS)
-  def test_store_compressed(self, mask_fn):
+  def test_load_expanded_2d(self, mask_fn):
+    shape = (2, self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plsc.load_expanded(x_ref.at[...], mask=mask_fn(x_ref[...]))
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    mask = mask_fn(x)
+    out = kernel(x)
+    # Every row is expanded independently of the others.
+    for row in range(shape[0]):
+      np.testing.assert_array_equal(
+          out[row][mask[row]], x[row, : mask[row].sum()]
+      )
+
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_store_compressed(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       x = x_ref[...]
@@ -1188,6 +1289,27 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes)
     mask = mask_fn(x)
     np.testing.assert_array_equal(kernel(x)[: mask.sum()], x[mask])
+
+  @parameterized.parameters(*MASK_FNS)
+  def test_store_compressed_2d(self, mask_fn):
+    shape = (2, self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      x = x_ref[...]
+      plsc.store_compressed(o_ref.at[...], x, mask=mask_fn(x))
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    mask = mask_fn(x)
+    out = kernel(x)
+    # Every row is compacted independently of the others.
+    for row in range(shape[0]):
+      np.testing.assert_array_equal(
+          out[row, : mask[row].sum()], x[row][mask[row]]
+      )
 
   def test_addupdate(self):
     @self.vector_subcore_kernel(
@@ -1205,13 +1327,15 @@ class VectorSubcoreTest(PallasSCTest):
         jnp.full(self.num_lanes, jnp.arange(self.num_lanes).sum()),
     )
 
-  @parameterized.parameters(*MASK_FNS)
-  def test_addupdate_compressed(self, mask_fn):
+  @parameterized.product(mask_fn=MASK_FNS, needs_layout_passes=[False, True])
+  def test_addupdate_compressed(self, mask_fn, needs_layout_passes):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref)
@@ -1230,11 +1354,19 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   @parameterized.product(
-      dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
+      dtype=[jnp.int32],
+      new_dtype=[jnp.int8, jnp.int16, jnp.float32],
+      needs_layout_passes=[False, True],
   )
-  def test_bitcast(self, dtype, new_dtype):
+  def test_plsc_bitcast(self, dtype, new_dtype, needs_layout_passes):
     self.skip_if_tc_tiling(
         "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
+    )
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message="plsc.bitcast is deprecated",
+        )
     )
     new_shape = (
         self.num_lanes * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
@@ -1242,18 +1374,104 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = plsc.bitcast(x_ref[...], o_ref.dtype)
+      o_ref[...] = pltpu.bitcast(x_ref[...], o_ref.dtype, dim=-1)
 
     x = jnp.arange(self.num_lanes, dtype=dtype)
     np.testing.assert_array_equal(kernel(x), x.view(new_dtype))
 
+  BITCAST_DTYPES = [
+      jnp.float32,
+      jnp.bfloat16,
+      jnp.int32,
+      jnp.int16,
+      jnp.int8,
+  ]
+
+  @parameterized.product(
+      from_dtype=BITCAST_DTYPES,
+      to_dtype=BITCAST_DTYPES,
+  )
+  def test_pltpu_bitcast(self, from_dtype, to_dtype):
+    # This is similar to test_bitcast in tpu_ops_test.py
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+
+    def body(x_ref, y_ref):
+      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+
+    m, n = (1, 64)
+    in_packing = 32 // jax.dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // jax.dtypes.itemsize_bits(to_dtype)
+    in_shape = (m * in_packing, n)
+    out_shape = (m * out_packing, n)
+    inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
+    out = self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+    )(body)(inp)
+    out_interpret = pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+        interpret=True,
+    )(inp)
+    # Do not use np.testing.assert_array_equal as it does not handle bfloat16
+    # nans correctly (per the function documentation, nan == nan should be true)
+    self.assertAllClose(out, out_interpret)
+
+  @parameterized.product(
+      from_dtype=BITCAST_DTYPES,
+      to_dtype=BITCAST_DTYPES,
+      leading_shape=[(), (2,)],
+  )
+  def test_pltpu_bitcast_minormost(self, from_dtype, to_dtype, leading_shape):
+    self.skip_if_tc_tiling(
+        "Fails due to incorrectly inferred tiling in tpu.memref_squeeze"
+    )
+    if from_dtype == to_dtype:
+      self.skipTest("No bitcast needed")
+
+    def body(x_ref, y_ref):
+      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype, dim=-1)
+
+    in_packing = 32 // jax.dtypes.itemsize_bits(from_dtype)
+    out_packing = 32 // jax.dtypes.itemsize_bits(to_dtype)
+    in_shape = (*leading_shape, self.num_lanes * in_packing)
+    out_shape = (*leading_shape, self.num_lanes * out_packing)
+    # Number of 16-bit bfloat16 elements needed to fill the input buffer.
+    num_bf16 = (
+        math.prod(in_shape)
+        * jnp.dtype(from_dtype).itemsize
+        // jnp.dtype(jnp.bfloat16).itemsize
+    )
+    # Initialize the buffer with positive bfloat16 values (1.0, 2.0, ...) to
+    # ensure non-zero exponent bits across all bitcast types. This guarantees
+    # no subnormal floats are generated, preventing TPU hardware flush-to-zero
+    # (FTZ) mismatches when comparing raw bits.
+    # TODO: b/565826801 - simplify.
+    inp = (
+        np.arange(1, num_bf16 + 1, dtype=jnp.bfloat16)
+        .view(from_dtype)
+        .reshape(in_shape)
+    )
+    out = self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),
+    )(body)(inp)
+    expected = inp.view(to_dtype)
+    if to_dtype == jnp.bfloat16:
+      # Compare raw bit representations for bfloat16 to avoid NaN mismatch
+      # issues, because ml_dtypes.bfloat16 is a custom dtype where
+      # assert_array_equal does not evaluate NaN == NaN as True.
+      out = out.view(np.uint16)
+      expected = expected.view(np.uint16)
+    np.testing.assert_array_equal(out, expected)
+
   def test_lax_bitcast(self):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.uint32),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...].view(o_ref.dtype)
@@ -1287,9 +1505,14 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(
       pack_format=[*plsc.PackFormat],
-      dtype=[jnp.float32, jnp.int32],
+      dtypes=[
+          (jnp.float32, None),
+          (jnp.int32, None),
+          (jnp.uint32, jnp.uint16),
+      ],
   )
-  def test_pack_unpack(self, pack_format, dtype):
+  def test_pack_unpack(self, pack_format, dtypes):
+    dtype, packed_dtype = dtypes
     shape = (self.num_lanes,)
 
     @self.vector_subcore_kernel(
@@ -1297,17 +1520,65 @@ class VectorSubcoreTest(PallasSCTest):
         compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
-      ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
-      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=pack_format)
+      ab = plsc.pack(
+          a_ref[...],
+          b_ref[...],
+          format=pack_format,
+          preferred_element_type=packed_dtype,
+      )
+      oa_ref[...], ob_ref[...] = plsc.unpack(
+          ab,
+          format=pack_format,
+          preferred_element_type=dtype if packed_dtype is not None else None,
+      )
 
     a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     b = -a
     out_a, out_b = kernel(a, b)
+    if packed_dtype is not None:
+      a = a.astype(packed_dtype).astype(dtype)
+      b = b.astype(packed_dtype).astype(dtype)
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
 
+  def test_pack_unsupported_with_layout_passes(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((2 * self.num_lanes,), jnp.bfloat16),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(a_ref, b_ref, o_ref):
+      o_ref[...] = plsc.pack(
+          a_ref[...], b_ref[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    a = jnp.arange(self.num_lanes, dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.pack is not supported with needs_layout_passes=True",
+    ):
+      kernel(a, a)
+
+  def test_unpack_unsupported_with_layout_passes(self):
+    @self.vector_subcore_kernel(
+        out_shape=(jax.ShapeDtypeStruct((self.num_lanes,), jnp.float32),) * 2,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(ab_ref, oa_ref, ob_ref):
+      oa_ref[...], ob_ref[...] = plsc.unpack(
+          ab_ref[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    ab = jnp.arange(2 * self.num_lanes, dtype=jnp.bfloat16)
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.unpack is not supported with needs_layout_passes=True",
+    ):
+      kernel(ab)
+
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scan_count(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     shape = [self.num_lanes]
 
     @self.vector_subcore_kernel(
@@ -1315,7 +1586,6 @@ class VectorSubcoreTest(PallasSCTest):
             jax.ShapeDtypeStruct(shape, jnp.int32),
             jax.ShapeDtypeStruct(shape, jnp.int32),
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, counts_ref, mask_ref):
       counts_ref[...], mask = plsc.scan_count(x_ref[...])
@@ -1358,20 +1628,14 @@ class VectorSubcoreTest(PallasSCTest):
   def test_population_count_invalid_reduce(self):
     x = jnp.arange(self.num_lanes)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel_zero(x_ref, o_ref):
       o_ref[...] = plsc.all_reduce_population_count(x_ref[...] < 50, reduce=0)
 
     with self.assertRaisesRegex(ValueError, "reduce must be >=1"):
       kernel_zero(x)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel_indivisible(x_ref, o_ref):
       o_ref[...] = plsc.all_reduce_population_count(x_ref[...] < 50, reduce=3)
 
@@ -1384,10 +1648,7 @@ class VectorSubcoreTest(PallasSCTest):
     key = jax.random.key(42)
     x = jax.random.randint(key, [self.num_lanes], 0, 100)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.arange(self.num_lanes) + x_ref[...]
 
@@ -1396,10 +1657,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_write_to_transformed_ref(self):
     x = jnp.arange(2 * self.num_lanes)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       plsc.store_compressed(
           o_ref.at[pl.ds(5, self.num_lanes)],
@@ -1411,12 +1669,15 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x)[5 : 5 + self.num_lanes], x[2 : 2 + self.num_lanes]
     )
 
-  def test_load_transformed_ref(self):
+  @parameterized.product(needs_layout_passes=[False, True])
+  def test_load_transformed_ref(self, needs_layout_passes):
     x = jnp.arange(2 * self.num_lanes)
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[pl.ds(5, self.num_lanes)] = plsc.load_expanded(
@@ -1641,6 +1902,39 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_scratch_tc_vmem(self):
+
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+
+    @pl.kernel(
+        mesh=scv_mesh,
+        out_type=x,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype) @ tc_mesh],
+    )
+    def kernel(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    # TC VMEM scratch on SparseCore is only supported on TPU v8i.
+    if jtu.is_device_tpu(8, "i"):
+      out = jax.jit(kernel)(x)
+      np.testing.assert_array_equal(out, x)
+    else:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError,
+          r"(RESOURCE_EXHAUSTED|exceeds the legitimate user allocatable"
+          r" offset|Ran out of memory|exceed memory|Targeting VMEM on MegaCore"
+          r" targets is ambiguous)",
+      ):
+        jax.jit(kernel)(x)
+
   def test_pl_kernel_in_shmap_explicit_mesh(self):
     num_subcores = self.sc_info.num_subcores
     mesh = jax.make_mesh((jax.device_count(), 1), ('x', 'y'))
@@ -1673,7 +1967,6 @@ class VectorSubcoreTest(PallasSCTest):
                 num_subcores=num_subcores,
             ),
             compiler_params=pltpu.CompilerParams(
-                #needs_layout_passes=False,
                 use_tc_tiling_on_sc=self.USE_TC_TILING
             ),
         )(arr)
@@ -1749,6 +2042,92 @@ class VectorSubcoreTest(PallasSCTest):
     actual = kernel(x_pad)[..., :x.shape[-1]]
     np.testing.assert_array_equal(actual, x + 1)
 
+  @parameterized.named_parameters(
+      ("vmem_shared_and_hbm_no_wait_between", "vmem_shared", False),
+      ("vmem_shared_and_hbm_wait_between", "vmem_shared", True),
+      ("hbm_and_hbm_no_wait_between", "hbm", False),
+  )
+  def test_concurrent_push_streams(self, first_dst, wait_between):
+    # Regression test for b/575914970: each vector subcore starts two push
+    # streams out of its tile memory back to back, the first one to
+    # ``first_dst`` (VMEM_SHARED or HBM) and the second one to HBM, each with
+    # its own DMA semaphore, and only then waits for both.
+    num_subcores = self.sc_info.num_subcores
+    rows_a = 64  # Rows of ``num_lanes`` words in the first stream.
+    words_b = 32  # Words in the second stream.
+    lanes = self.num_lanes
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=num_subcores,
+    )
+
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct((num_subcores * rows_a, lanes), jnp.uint32),
+            jax.ShapeDtypeStruct((num_subcores * words_b,), jnp.uint32),
+        ),
+        mesh=mesh,
+        scratch_types=[
+            pltpu.VMEM((rows_a, lanes), jnp.uint32),
+            pltpu.VMEM((words_b,), jnp.uint32),
+            pltpu.VMEM_SHARED((num_subcores * rows_a, lanes), jnp.uint32),
+            pltpu.SemaphoreType.DMA((2,)),
+        ],
+        compiler_params=pltpu.CompilerParams(has_side_effects=True),
+    )
+    def kernel(xa, xb, pa, pb, out_a, out_b, bank_a, bank_b, spm, sem):
+      u = lax.axis_index("subcore")
+      rows = pl.ds(pl.multiple_of(u * rows_a, 8), rows_a)
+      words = pl.ds(pl.multiple_of(u * words_b, 8), words_b)
+      dst_a = spm.at[rows] if first_dst == "vmem_shared" else out_a.at[rows]
+      dst_b = out_b.at[words]
+      # Write a fill word over both destinations.
+      pltpu.sync_copy(pa, bank_a)
+      pltpu.sync_copy(bank_a, dst_a)
+      pltpu.sync_copy(pb, bank_b)
+      pltpu.sync_copy(bank_b, dst_b)
+      # Load the data into tile memory.
+      pltpu.sync_copy(xa.at[rows], bank_a)
+      pltpu.sync_copy(xb.at[words], bank_b)
+      copy_a = pltpu.make_async_copy(bank_a, dst_a, sem.at[0])
+      copy_b = pltpu.make_async_copy(bank_b, dst_b, sem.at[1])
+
+      @pl.loop(0, 1)
+      def _(_):
+        if wait_between:
+          copy_a.start()
+          copy_a.wait()
+          copy_b.start()
+          copy_b.wait()
+        else:
+          # Back to back, no wait between.
+          copy_a.start()
+          copy_b.start()
+          copy_a.wait()
+          copy_b.wait()
+
+      if first_dst == "vmem_shared":
+        plsc.subcore_barrier()
+        # VMEM_SHARED back to HBM for the check.
+        pltpu.sync_copy(dst_a, out_a.at[rows])
+
+    fill = np.uint32(0xDEADBEEF)
+    pa = jnp.full((rows_a, lanes), fill, jnp.uint32)
+    pb = jnp.full((words_b,), fill, jnp.uint32)
+    for c in range(3):
+      rng = np.random.default_rng(100 + c)
+      xa = rng.integers(
+          1, 1 << 31, size=(num_subcores * rows_a, lanes), dtype=np.uint64
+      ).astype(np.uint32)
+      xb = rng.integers(
+          1, 1 << 31, size=(num_subcores * words_b,), dtype=np.uint64
+      ).astype(np.uint32)
+      a, b = kernel(xa, xb, pa, pb)
+      np.testing.assert_array_equal(a, xa)
+      np.testing.assert_array_equal(b, xb)
+
   def test_smem_vmem_store_literals(self):
     num_subcores = self.sc_info.num_subcores
 
@@ -1792,43 +2171,62 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    def stateful(refs):
-      def body(x_ref, o_ref):
-        def with_scratch(scratch_ref):
-          pltpu.sync_copy(x_ref, scratch_ref)
-          scratch_ref[...] = scratch_ref[...] + 1
-          effectful_op(scratch_ref[...])
-          pltpu.sync_copy(scratch_ref, o_ref)
-        pl.run_scoped(with_scratch, pltpu.VMEM(x.shape, x.dtype))
-      pl.core_map(
-          mesh, compiler_params=pltpu.CompilerParams(needs_layout_passes=False)
-      )(lambda: body(*refs))
 
-    _, out = jax.jit(state_discharge.run_state(stateful))(
-        (x, jnp.empty_like(x)))
+    @pl.kernel(
+        mesh=mesh,
+        out_type=x,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+    )
+    def body(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      scratch_ref[...] = scratch_ref[...] + 1
+      effectful_op(scratch_ref[...])
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    out = jax.jit(body)(x)
     np.testing.assert_array_equal(out, x + 1)
 
   def test_parallel_loop_effects(self):
     chunk_size = self.num_lanes
 
     @self.kernel(
-        out_type=(),
-        mesh=plsc.VectorSubcoreMesh(
-            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
-        ),
-        scratch_types=(pltpu.VMEM((chunk_size,), jnp.uint32),) * 3,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+        out_type=jax.ShapeDtypeStruct((chunk_size,), jnp.uint32),
+        scratch_types=(pltpu.SMEM((chunk_size,), jnp.uint32),),
     )
-    def _kernel(a_ref, b_ref, c_ref):
-      @pl.loop(0, 4)
-      def outer(i):
-        const = jnp.array(0, jnp.uint32)
+    def kernel(o_ref, scratch_vmem):
+      @plsc.parallel_loop(0, chunk_size)
+      def body(i):
+        scratch_vmem[i] = i.astype(jnp.uint32)
 
+      pltpu.sync_copy(scratch_vmem, o_ref)
+
+    out = kernel()
+    np.testing.assert_array_equal(out, jnp.arange(chunk_size, dtype=jnp.uint32))
+
+  def test_parallel_loop_effects_closed_over_ref(self):
+    chunk_size = self.num_lanes
+
+    @jax.jit
+    def f():
+      o_ref = jax.empty_ref(jax.core.ShapedArray((chunk_size,), jnp.uint32))
+
+      @self.kernel(
+          mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+          scratch_types=(pltpu.SMEM((chunk_size,), jnp.uint32),),
+      )
+      def kernel(scratch_vmem):
         @plsc.parallel_loop(0, chunk_size)
-        def body(_):
-          x = a_ref[...] >> i.astype(jnp.uint32)
-          plsc.store_compressed(c_ref.at[...], b_ref[...], mask=x > const)
+        def body(i):
+          scratch_vmem[i] = i.astype(jnp.uint32)
 
-    _kernel()
+        pltpu.sync_copy(scratch_vmem, o_ref)
+
+      kernel()
+      return jax.freeze(o_ref)
+
+    out = f()
+    np.testing.assert_array_equal(out, jnp.arange(chunk_size, dtype=jnp.uint32))
 
   @parameterized.parameters(
       ((8, 80), (4, 160), jnp.float32),
@@ -1850,6 +2248,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @self.vector_subcore_kernel(
@@ -1864,6 +2264,8 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.product(dtype=[jnp.uint32, jnp.int32, jnp.float32],
                          op=[jnp.sum, jnp.max, jnp.min])
   def test_reductions(self, dtype, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -1879,6 +2281,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.bool], op=[jnp.all, jnp.any])
   def test_binary_reductions(self, dtype, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.ones(self.sc_info.num_lanes, dtype=dtype)
     @self.vector_subcore_kernel(
         out_shape=x.astype(jnp.int32),
@@ -1906,6 +2310,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cumsum(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @self.vector_subcore_kernel(
@@ -1919,6 +2325,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cummax(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
     x = np.arange(self.sc_info.num_lanes, dtype=dtype)
     np.random.shuffle(x)
 
@@ -1937,8 +2345,10 @@ class VectorSubcoreTest(PallasSCTest):
     expected = np.where(has_valid_value_so_far, expected, x)
     np.testing.assert_array_equal(kernel(x), expected)
 
-  @parameterized.parameters(lax.sqrt, lax.rsqrt, lax.tanh, lax.log)
+  @parameterized.parameters(lax.sqrt, lax.rsqrt, lax.tanh, lax.log, lax.round)
   def test_unary_math_ops(self, op):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("math ops not supported on TPU v8i.")
     x = jnp.arange(1, 1 + self.num_lanes, dtype=jnp.float32)   # positive domain
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -1962,7 +2372,6 @@ class VectorSubcoreTest(PallasSCTest):
         grid=(nsubcores,),
         in_specs=[pl.BlockSpec([chunk_size * nchunks], lambda i: (i,))],
         out_specs=pl.BlockSpec([chunk_size * nchunks], lambda i: (i,)),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, o_ref):
       @pl.when(pl.program_id(0) < nsubcores)
@@ -2048,6 +2457,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_barrier(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/535737855): Enable when fixed.")
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
@@ -2073,11 +2484,14 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
     np.testing.assert_array_equal(kernel(), expected)
 
-  @parameterized.parameters(jnp.int32, jnp.float32)
-  def test_gather_add(self, dtype):
-    self.skip_if_tc_tiling()
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.float32], trailing_shape=[(), (128,), (256,)]
+  )
+  def test_gather_add(self, dtype, trailing_shape):
+    if not trailing_shape and jtu.is_device_tpu(8, "i"):
+      self.skipTest("Sub-32-byte HBM gather is not supported on TPU v8i")
 
-    shape = (self.sc_info.num_subcores, 64, 32)
+    shape = (self.sc_info.num_subcores, 64, *trailing_shape)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     @self.kernel(
@@ -2087,7 +2501,7 @@ class VectorSubcoreTest(PallasSCTest):
         ),
         scratch_types=dict(
             indices_vmem=pltpu.VMEM([self.num_lanes], jnp.int32),
-            scratch_ref=pltpu.VMEM([self.num_lanes, 32], dtype),
+            scratch_ref=pltpu.VMEM([self.num_lanes, *trailing_shape], dtype),
         ),
     )
     def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref):
@@ -2105,9 +2519,12 @@ class VectorSubcoreTest(PallasSCTest):
     indices = jnp.arange(self.num_lanes) * (64 // self.num_lanes)
     np.testing.assert_array_equal(kernel(x, indices), x[:, :self.num_lanes] + x[:, indices])
 
-  @parameterized.parameters(jnp.int32, jnp.float32)
-  def test_scatter_add(self, dtype):
-    shape = (self.sc_info.num_subcores, 32)
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.float32], trailing_shape=[(), (256,)]
+  )
+  def test_scatter_add(self, dtype, trailing_shape):
+
+    shape = (self.sc_info.num_subcores, 32, *trailing_shape)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
 
     mesh = plsc.VectorSubcoreMesh(
@@ -2154,6 +2571,22 @@ class VectorSubcoreTest(PallasSCTest):
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
+  def test_scatter_add_hbm(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(src_ref, idx_ref, out_hbm_ref):
+      pltpu.sync_copy(src_ref, out_hbm_ref.at[idx_ref], add=True)
+
+    x = jnp.ones((8, 128), dtype=jnp.int32)
+    indices = jnp.arange(8, dtype=jnp.int32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Scatter .* is only supported when the destination is in VMEM_SHARED",
+    ):
+      jax.jit(kernel).lower(x, indices)
+
   def test_shared_scratch(self):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
@@ -2179,6 +2612,244 @@ class VectorSubcoreTest(PallasSCTest):
         pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
 
     np.testing.assert_array_equal(kernel(x)[0], x[0])
+
+  @parameterized.parameters(128, 256)
+  def test_tiled_dma_hbm_vector_subcore_vmem(self, n_pad):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest(
+          "DMAs to vector subcore VMEM on the same chip are not supported on "
+          "v8i."
+      )
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    m = 8
+    shape = (mesh.num_subcores * m, n_pad)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+
+    @self.kernel(
+        out_type=x,
+        mesh=mesh,
+        scratch_types=(
+            pltpu.VMEM(x.shape, jnp.int32),
+            pltpu.SemaphoreType.DMA(()),
+            pltpu.SemaphoreType.DMA(()),
+        ),
+    )
+    def kernel(x_ref, o_ref, scratch_vmem, send_sem, recv_sem):
+      subcore_id = lax.axis_index("subcore")
+      core_id = lax.axis_index("core")
+      is_primary = jnp.logical_and(subcore_id == 0, core_id == 0)
+      sl = pl.ds(subcore_id * m, m)
+
+      @pl.when(is_primary)
+      def _go_primary():
+        # Copy slice 0 locally
+        pltpu.sync_copy(x_ref.at[sl, :], scratch_vmem.at[sl, :])
+
+        # Wait for the non-primary cores to push their slice.
+        @pl.loop(1, mesh.num_subcores)
+        def _(s):
+          dma = pltpu.make_async_remote_copy(
+              x_ref.at[pl.ds(s * m, m), :],
+              scratch_vmem.at[pl.ds(s * m, m), :],
+              send_sem,
+              recv_sem,
+              device_id={"core": 0, "subcore": 0},
+          )
+          dma.wait_recv()
+
+        # Copy the completed VMEM buffer back to HBM output.
+        pltpu.sync_copy(scratch_vmem, o_ref)
+
+      @pl.when(~is_primary)
+      def _go_non_primary():
+        pltpu.async_remote_copy(
+            x_ref.at[sl, :],
+            scratch_vmem.at[sl, :],
+            send_sem,
+            recv_sem,
+            device_id={"core": 0, "subcore": 0},
+        ).wait_send()
+
+    actual = kernel(x)
+    np.testing.assert_array_equal(actual, x)
+
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.bfloat16],
+      leading_dims=[(8,), (4, 4)],
+  )
+  def test_shared_scratch_slice_to_vmem(self, dtype, leading_dims):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    num_subcores = self.sc_info.num_subcores
+    bytes_per_word = 4
+    stripe_size = self.sc_info.dma_granule_size_bytes // bytes_per_word
+    if not self.USE_TC_TILING:
+      packing = bytes_per_word // jnp.dtype(dtype).itemsize
+      stripe_size *= packing
+    shared_shape = (*leading_dims, num_subcores * stripe_size)
+
+    x = jnp.arange(math.prod(shared_shape), dtype=dtype).reshape(*shared_shape)
+
+    @self.kernel(
+        out_type=x,
+        mesh=mesh,
+        scratch_types=(pltpu.VMEM_SHARED(shared_shape, dtype),),
+    )
+    def kernel(x_ref, o_ref, shared_scratch_ref):
+      subcore_id = lax.axis_index("subcore")
+
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref, shared_scratch_ref)
+
+      plsc.subcore_barrier()
+      vmem_slice_ref = plsc.slice_subcore_vmem_from_shared(shared_scratch_ref)
+      vmem_slice_ref[...] = vmem_slice_ref[...] + 10
+      plsc.subcore_barrier()
+
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(shared_scratch_ref, o_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 10)
+
+  @parameterized.parameters(jnp.int32, jnp.bfloat16)
+  def test_shared_scratch_reduce_scatter_3d(self, dtype):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    n1, n2 = 2, 4
+    num_subcores = self.sc_info.num_subcores
+    bytes_per_word = 4
+    stripe_size = self.sc_info.dma_granule_size_bytes // bytes_per_word
+    if not self.USE_TC_TILING:
+      packing = bytes_per_word // jnp.dtype(dtype).itemsize
+      stripe_size *= packing
+    shared_shape = (n1, n2, num_subcores * stripe_size)
+    slice_shape = (n1, n2, stripe_size)
+    total_shape = (num_subcores, *shared_shape)
+    out_shape = (num_subcores, *slice_shape)
+
+    x = (jnp.arange(
+        math.prod(total_shape), dtype=dtype) % 7 + 1).reshape(*total_shape)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(out_shape, dtype),
+        mesh=mesh,
+        scratch_types=dict(
+            shared_scratch_ref=pltpu.VMEM_SHARED(shared_shape, dtype),
+            accum_ref=pltpu.VMEM(slice_shape, dtype),
+        ),
+    )
+    def kernel(
+        x_hbm_ref,
+        o_ref,
+        *,
+        shared_scratch_ref,
+        accum_ref,
+    ):
+      subcore_id = lax.axis_index("subcore")
+      vmem_slice_ref = plsc.slice_subcore_vmem_from_shared(shared_scratch_ref)
+
+      accum_ref[...] = jnp.zeros(slice_shape, dtype=dtype)
+
+      for i in range(num_subcores):
+
+        @pl.when(subcore_id == i)
+        def _():
+          pltpu.sync_copy(x_hbm_ref.at[i], shared_scratch_ref)
+
+        plsc.subcore_barrier()
+        accum_ref[...] = accum_ref[...] + vmem_slice_ref[...]
+        plsc.subcore_barrier()
+
+      pltpu.sync_copy(accum_ref, o_ref.at[subcore_id])
+
+    expected = jnp.stack(
+        jnp.split(jnp.sum(x, axis=0), num_subcores, axis=-1), axis=0
+    )
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.parameters(jnp.int32, jnp.bfloat16)
+  def test_shared_scratch_slice_with_reshape(self, dtype):
+    if not self.USE_TC_TILING:
+      self.skipTest("MemRefReshapeOp only supports 2D (TC) tiling.")
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    n1, n2 = 2, 4
+    num_subcores = self.sc_info.num_subcores
+    bytes_per_word = 4
+    stripe_size = self.sc_info.dma_granule_size_bytes // bytes_per_word
+    shared_shape_3d = (n1, n2, num_subcores * stripe_size)
+    shared_shape_2d = (n1 * n2, num_subcores * stripe_size)
+    slice_shape_2d = (n1 * n2, stripe_size)
+    slice_shape_3d = (n1, n2, stripe_size)
+
+    x = jnp.arange(math.prod(shared_shape_3d), dtype=dtype).reshape(
+        *shared_shape_3d
+    )
+
+    @self.kernel(
+        out_type=x,
+        mesh=mesh,
+        scratch_types=(
+            pltpu.VMEM_SHARED(shared_shape_3d, dtype),
+            pltpu.VMEM(slice_shape_3d, dtype),
+        ),
+    )
+    def kernel(x_ref, o_ref, shared_scratch_ref, vmem_scratch_ref):
+      subcore_id = lax.axis_index("subcore")
+      s = pl.ds(subcore_id * stripe_size, stripe_size)
+
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref, shared_scratch_ref)
+
+      plsc.subcore_barrier()
+
+      reshaped_shared = shared_scratch_ref.reshape(*shared_shape_2d)
+      vmem_scratch_ref.reshape(*slice_shape_2d)[...] = (
+          plsc.slice_subcore_vmem_from_shared(reshaped_shared)[...] + 10
+      )
+      pltpu.sync_copy(vmem_scratch_ref, o_ref.at[..., s])
+
+    np.testing.assert_array_equal(kernel(x), x + 10)
+
+  @parameterized.named_parameters(
+      (
+          "indivisible_shape",
+          lambda num_subcores: pltpu.VMEM_SHARED(
+              (8, num_subcores * 8 + 1), jnp.int32
+          ),
+          "must be divisible by the total number of physical subcores",
+      ),
+      (
+          "wrong_memory_space",
+          lambda num_subcores: pltpu.VMEM((8, num_subcores * 8), jnp.int32),
+          "requires a VMEM_SHARED reference",
+      ),
+  )
+  def test_shared_scratch_slice_error(self, scratch_type_fn, expected_error):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    scratch_type = scratch_type_fn(self.sc_info.num_subcores)
+    x = jnp.zeros(scratch_type.shape, dtype=jnp.int32)
+
+    @self.kernel(
+        out_type=x,
+        mesh=mesh,
+        scratch_types=(scratch_type,),
+    )
+    def kernel(x_ref, o_ref, scratch_ref):
+      plsc.slice_subcore_vmem_from_shared(scratch_ref)
+
+    with self.assertRaisesRegex(ValueError, expected_error):
+      kernel(x)
 
   def test_copy_in_shard_map(self):
     num_devices = len(jax.devices())
@@ -2224,6 +2895,8 @@ class VectorSubcoreTest(PallasSCTest):
       ("exp", jnp.exp), ("neg", lambda x: -x), ("abs", jnp.abs)
   )
   def test_unary_ops(self, op):
+    if jtu.is_device_tpu(8, "i") and op == jnp.exp:
+      self.skipTest("exp is not supported on TPU v8i.")
     x = jnp.arange(self.num_lanes, dtype=jnp.float32)
 
     @self.vector_subcore_kernel(out_shape=x)
@@ -2240,10 +2913,7 @@ class VectorSubcoreTest(PallasSCTest):
     indices[[0, -2]] = 2  # Verify non-unique works.
     indices[1] = -2  # Verify negative indices work.
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, out_ref):
       out_ref[...] = x_ref[...][indices_ref[...]]
 
@@ -2273,6 +2943,8 @@ class VectorSubcoreTest(PallasSCTest):
       descending=[False, True],
   )
   def test_sort_key_val(self, keys_dtype, values_dtype, use_mask, descending):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
     keys = (np.arange(vec_dim) - vec_dim // 2).astype(keys_dtype)
     np.random.shuffle(keys)
@@ -2284,7 +2956,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=(keys, values, *maybe_mask_arg),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(*args):
       if use_mask:
@@ -2322,38 +2993,40 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[np.int32, np.float32])
   def test_rev_and_sort_desc(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=dtype)
+    keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)
     np.random.shuffle(keys)
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, keys),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, keys))
     def kernel(x_ref, o1_ref, o2_ref):
       o1_ref[...] = jnp.sort(x_ref[...], descending=True)
       o2_ref[...] = jnp.flip(x_ref[...], axis=-1)
 
     sorted_desc, reversed_keys = kernel(keys)
     np.testing.assert_array_equal(
-        sorted_desc, jnp.arange(vec_dim, dtype=dtype)[::-1])
+        sorted_desc, jnp.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)[::-1]
+    )
     np.testing.assert_array_equal(reversed_keys, keys[::-1])
 
   @parameterized.product(
-      keys_dtype=[np.int32, np.float32],
+      keys_dtype=[np.int32, np.uint32, np.float32],
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=keys_dtype)
+    if np.issubdtype(keys_dtype, np.unsignedinteger):
+      keys = np.arange(vec_dim, dtype=keys_dtype)
+    else:
+      keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=keys_dtype)
     np.random.shuffle(keys)
     values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
     _ = [np.random.shuffle(v) for v in values]
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, *values),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, *values))
     def kernel(*args):
       keys_ref, *values_refs = args[: len(args) // 2]
       keys_out, *all_values_out = jax.lax.sort(
@@ -2515,12 +3188,38 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(jnp.int32, jnp.bfloat16, jnp.int16, jnp.int8)
+  def test_broadcast_scalar_bool_mask(self, dtype):
+    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    if self.USE_TC_TILING:
+      shape = (8 * packing, 128)
+    else:
+      shape = (self.num_lanes,) if packing == 1 else (packing, self.num_lanes)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    flag_true = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
+    flag_false = jnp.ones((self.num_lanes,), dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, flag_ref, o_ref):
+      val = x_ref[...]
+      cond = flag_ref[...][0] == 0
+      mask = jnp.broadcast_to(cond, shape)
+      o_ref[...] = jnp.where(mask, val, jnp.zeros_like(val))
+
+    np.testing.assert_array_equal(kernel(x, flag_true), x)
+    np.testing.assert_array_equal(kernel(x, flag_false), jnp.zeros_like(x))
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
 
 
 class ScalarSubcoreTest(PallasSCTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
 
   def test_copy(self):
     x = jnp.arange(self.num_lanes)
@@ -2679,17 +3378,16 @@ class ScalarSubcoreTest(PallasSCTest):
       sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
 
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
-      x_device = pltpu.with_memory_space_constraint(x, pltpu.HOST)
-      x_ref = jax.new_ref(x_device, memory_space=pltpu.HOST)
+      x_device = pltpu.with_memory_space_constraint(x, pl.HOST)
+      x_ref = jax.new_ref(x_device, memory_space=pl.HOST)
 
-      @pl.core_map(
+      pl.kernel(
+          lambda: pltpu.sync_copy(x_ref, y_ref),
           mesh=sc_mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
-      )
-      def _():
-        pltpu.sync_copy(x_ref, y_ref)
+      )()
 
       return y_ref[...]
 
@@ -2710,19 +3408,19 @@ class ScalarSubcoreTest(PallasSCTest):
     def foo(x):
       sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
 
-      y_ref = pl.empty_ref_like(pl.MemoryRef(jax.core.ShapedArray(x.shape, x.dtype), pl.HOST))
-      x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
-
-      @pl.core_map(
+      @pl.kernel(
           mesh=sc_mesh,
+          out_type=pl.MemoryRef(
+              jax.core.ShapedArray(x.shape, x.dtype), pl.HOST
+          ),
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
       )
-      def _():
+      def kernel(x_ref, y_ref):
         pltpu.sync_copy(x_ref, y_ref)
 
-      return pltpu.with_memory_space_constraint(y_ref[...], pltpu.HOST)
+      return pltpu.with_memory_space_constraint(kernel(x), pl.HOST)
 
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
@@ -2761,8 +3459,10 @@ class PipelineTest(PallasSCTest):
           out_specs=pl.BlockSpec(
               (pl.Squeezed(), self.num_lanes), lambda i: (i, 0)
           ),
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -2770,6 +3470,8 @@ class PipelineTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_gather_with_emit(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("TODO(b/537940379): Enable when fixed.")
     self.skip_if_tc_tiling()
     sc_mesh = sc_core.VectorSubcoreMesh(
         core_axis_name="core",
@@ -2797,7 +3499,8 @@ class PipelineTest(PallasSCTest):
           mesh=sc_mesh,
       )
       def kernel(x_hbm, i_hbm, o_hbm):
-        def body(i_vmem, o_vmem):
+        def body(step, i_vmem, o_vmem):
+          del step  # Unused.
           pltpu.sync_copy(x_hbm.at[i_vmem.at[0]], o_vmem)  # The gather op
 
         pltpu.emit_pipeline(
@@ -2807,6 +3510,7 @@ class PipelineTest(PallasSCTest):
             out_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
             core_axis_name="subcore",
             dimension_semantics=(pltpu.PARALLEL,),
+            _explicit_indices=True,
         )(i_hbm, o_hbm)
 
       return kernel(x, indices)
@@ -2817,6 +3521,9 @@ class PipelineTest(PallasSCTest):
   @parameterized.product(kind=["ref", "array"])
   def test_gather_via_indirect(self, kind):
     self.skip_if_tc_tiling()
+    if plsc.get_sparse_core_info().num_cores < 2:
+      self.skipTest("Test requires at least 2 SparseCores, but got "
+                    f"{plsc.get_sparse_core_info().num_cores}.")
 
     sc_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=2
@@ -2860,8 +3567,10 @@ class PipelineTest(PallasSCTest):
               lambda i: (i, 0, 0),
           ),
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
 
         @pl.loop(0, self.num_lanes)
         def _(j):
@@ -2893,8 +3602,10 @@ class PipelineTest(PallasSCTest):
           in_specs=spec,
           out_specs=spec,
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -2921,8 +3632,10 @@ class PipelineTest(PallasSCTest):
           in_specs=[spec],
           out_specs=[spec],
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         @pl.loop(0, 8)
         def _(i):
           @pl.loop(0, 128, step=self.num_lanes)
@@ -2935,6 +3648,9 @@ class PipelineTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + 1)
 
   def test_manual(self):
+    if plsc.get_sparse_core_info().num_cores < 2:
+      self.skipTest("Test requires at least 2 SparseCores, but got "
+                    f"{plsc.get_sparse_core_info().num_cores}.")
     num_subcores = 16
     sc_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=2
@@ -3048,27 +3764,30 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
       x_ref = jax.new_ref(x)
 
-      run_kernel = pl.core_map(
+      pl.kernel(
+          lambda: pltpu.make_async_copy(x_ref, y_ref, sem_ref).start(),
           mesh=sc_mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
-      )
+      )()
 
-      @run_kernel
-      def _():
-        pltpu.make_async_copy(x_ref, y_ref, sem_ref).start()
-
-      @run_kernel
-      def _():
-        pltpu.make_async_copy(x_ref, y_ref, sem_ref).wait()
+      pl.kernel(
+          lambda: pltpu.make_async_copy(x_ref, y_ref, sem_ref).wait(),
+          mesh=sc_mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )()
 
       return y_ref[...]
 
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
 
-  def test_memory_space_annotations_aliased_input_core_map(self):
+  def test_memory_space_annotations_aliased_input_kernel(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     @jax.jit
     def f(x, y):
       mesh =  plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1)
@@ -3085,17 +3804,19 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       )()
       sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE)
 
-      @pl.core_map(mesh)
+      @pl.kernel(mesh=mesh)
       def dma1():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
+      dma1()
       index_ref[0] += 1  # TODO(b/487587946): unable to put this inside dma1
 
       y1 = jax.freeze(y_ref)
       y_ref = jax.new_ref(y1)
 
-      @pl.core_map(mesh)
+      @pl.kernel(mesh=mesh)
       def dma2():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
+      dma2()
 
       y2 = jax.freeze(y_ref)
       # Transpose tests jnp op on result of core_map, verifying we don't leak
@@ -3107,6 +3828,96 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     y1, y2 = f(x, y)
     np.testing.assert_array_equal(y1, x[0].T)
     np.testing.assert_array_equal(y2, x[1].T)
+
+  @parameterized.product(dtype=[jnp.int32, jnp.bfloat16])
+  def test_remote_dma_to_vector_subcore_vmem(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
+
+    P = jax.P
+    shape = (8, 128)
+    mesh = jax.sharding.Mesh(jax.devices(), axis_names="x")
+
+    num_cores = 1
+    num_subcores = 1
+
+    scs_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=num_cores)
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=num_cores,
+        num_subcores=num_subcores,
+    )
+
+    @jax.shard_map(
+        mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+    )
+    @jax.jit
+    def f(x):
+      # Scalar subcore sends to remote VMEM.
+      def go_scs(
+          x_ref,
+          recv_ref,
+          *,
+          vmem,
+          send_dma_sem,
+          recv_dma_sem,
+      ):
+        del recv_ref
+        my_id = lax.axis_index("x")
+        axis_size = lax.axis_size("x")
+        neighbor = lax.rem(my_id + 1, axis_size)
+        core_id = lax.axis_index("core")
+
+        dma = pltpu.make_async_remote_copy(
+            x_ref,
+            vmem,
+            send_dma_sem,
+            recv_dma_sem,
+            device_id={"x": neighbor, "core": core_id, "subcore": 0},
+        )
+        dma.start()
+        dma.wait_send()
+
+      # Vector subcore copies from local vmem to hbm output.
+      def go_scv(
+          x_ref,
+          recv_ref,
+          *,
+          vmem,
+          send_dma_sem,
+          recv_dma_sem,
+      ):
+        my_id = lax.axis_index("x")
+        core_id = lax.axis_index("core")
+
+        pltpu.make_async_remote_copy(
+            x_ref,
+            vmem,
+            send_dma_sem,
+            recv_dma_sem,
+            device_id={"x": my_id, "core": core_id, "subcore": 0},
+        ).wait_recv()
+        pltpu.sync_copy(vmem, recv_ref)
+
+      result = self.kernel(
+          mesh=[scs_mesh, scv_mesh],
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          scratch_types=dict(
+              vmem=pltpu.VMEM(shape, dtype) @ scv_mesh,
+              send_dma_sem=pltpu.SemaphoreType.DMA(()) @ scs_mesh,
+              recv_dma_sem=pltpu.SemaphoreType.DMA(()) @ scv_mesh,
+          ),
+      )([go_scs, go_scv])(x)
+      return result
+
+    num_devices = jax.device_count()
+    x = jnp.arange(num_devices * math.prod(shape), dtype=dtype).reshape(
+        (-1, shape[-1])
+    )
+    y = jax.block_until_ready(f(x))
+    expected = jnp.concatenate([x[-8:], x[:-8]])
+    np.testing.assert_array_equal(y, expected)
 
 
 class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
@@ -3182,6 +3993,60 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
           "Only interpret mode is supported on CPU",
       ):
         run_mpmd.lower(x).compile()
+
+
+class LoweringCacheTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind="TPU7x", num_cores=1, platform="tpu"
+    )
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        )
+    )
+
+  def test_needs_layout_passes_in_lowering_cache_key(self):
+    num_lanes = plsc.get_sparse_core_info().num_lanes
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+    scratch = (
+        pltpu.VMEM((num_lanes,), jnp.float32),
+        pltpu.VMEM((2 * num_lanes,), jnp.bfloat16),
+    )
+
+    def kernel(a_vmem, o_vmem):
+      o_vmem[...] = plsc.pack(
+          a_vmem[...], a_vmem[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    k_false = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    k_true = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.pack is not supported with needs_layout_passes=True",
+    ):
+      jax.jit(lambda: (k_false(), k_true())).trace().lower(
+          lowering_platforms=("tpu",)
+      )
 
 
 if __name__ == "__main__":

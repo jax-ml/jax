@@ -17,14 +17,18 @@
 #   jupytext:
 #     cell_metadata_filter: -all
 #     formats: ipynb,md:myst,py
+#     notebook_metadata_filter: nosearch
 #     text_representation:
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
 #       jupytext_version: 1.16.4
+#   nosearch: true
 # ---
 
 # # `Ref`: mutable arrays for data plumbing and memory control
+#
+# <!--* freshness: { reviewed: '2026-10-27' } *-->
 #
 # JAX `Array`s are immutable, representing mathematical values. Immutability can
 # make code easier to reason about, and is useful for optimized compilation,
@@ -90,7 +94,7 @@ except Exception as e:
 # ### API
 #
 # If you've ever used
-# [Pallas](https://docs.jax.dev/en/latest/pallas/quickstart.html), then `Ref`
+# [Pallas](https://docs.jax.dev/en/latest/pallas/index.html), then `Ref`
 # should look familiar. A big difference is that you can create new `Ref`s
 # yourself directly using `jax.new_ref`:
 
@@ -152,9 +156,10 @@ x_ref[jnp.array([1, 2, 1]), jnp.array([0, 0, 1])] = vals
 
 # -
 
-# As with `Array`s, indexing mostly follows NumPy behavior, except for
-# out-of-bounds indexing which [behaves in the usual way for JAX
-# `Array`s](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#out-of-bounds-indexing).
+# As with `Array`s, indexing mostly follows NumPy behavior, except that an
+# out-of-bounds index raises an error when its value is known in advance (unlike
+# with `Array`s, where [out-of-bounds reads clamp and writes are
+# dropped](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#out-of-bounds-indexing)).
 #
 # ### Pure and impure functions
 #

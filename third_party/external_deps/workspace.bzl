@@ -17,10 +17,13 @@
 This module provides a repository rule that accepts a list of dependency targets
 and generates a .bzl file containing an EXTERNAL_DEPS variable.
 
-Usage:
-    load("//third_party/external_deps:workspace.bzl", "external_deps_repository")
+Usage in MODULE.bazel:
+    external_deps_repository = use_repo_rule(
+        "//third_party/external_deps:workspace.bzl",
+        "external_deps_repository",
+    )
 
-    external_deps_repository(name = "rocm_external_test_deps", deps = ["@jax_rocm_plugin//:plugin.whl", "@jax_rocm_plugin//:pjrt.whl"])
+    external_deps_repository(name = "rocm_external_test_deps", deps = ["//jaxlib/tools:jax_rocm_pjrt_py_import", "//jaxlib/tools:jax_rocm_plugin_py_import"])
 
     # In your BUILD files, access via:
     # load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")

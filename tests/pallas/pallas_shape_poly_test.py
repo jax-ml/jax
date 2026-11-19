@@ -17,8 +17,6 @@
 import functools
 import math
 import os
-import sys
-import warnings
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -29,10 +27,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import core
-if sys.platform != "win32":
-  from jax.experimental.pallas import triton as plgpu
-else:
-  plgpu = None
 
 try:
   from jax.experimental.pallas import tpu as pltpu
@@ -95,27 +89,15 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
   def setUp(self):
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPU with capability >= sm80")
-    if plgpu is None:
-      self.skipTest("Triton is not available on this platform")
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Shape polymorphism for Pallas is not supported on GPU")
     super().setUp()
-    self.enter_context(warnings.catch_warnings())
-    warnings.filterwarnings(
-        "ignore",
-        category=DeprecationWarning,
-        message="The Pallas Triton backend is deprecated",
-    )
-    # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
-    # Pallas/Mosaic GPU.
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
     # dimensions.
     block_shape = (8, 128)
-    def f(x, *, eager=False, compiler_params=None):  # x: i32[w, h]
+    def f(x, *, eager=False):  # x: i32[w, h]
       def copy_kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...]
       # Use both pl.cdiv and // for specifying the grid
@@ -127,7 +109,6 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
-          compiler_params=compiler_params,
           interpret=eager and jtu.test_device_matches(["cpu"]))(x)
 
     shape1 = (128, 256)
@@ -149,15 +130,45 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       res_exp_2 = exp.call(x2)
       self.assertAllClose(res_exp_2, x2)
 
-    # TODO(necula): support shape polymorphism for GPU
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        "dynamic grid bounds not supported in the Triton backend"):
-      if plgpu is None:
-        self.skipTest("Triton not available")
-      export.export(
-          jax.jit(functools.partial(f, compiler_params=plgpu.CompilerParams())),
-          platforms=["cuda"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
+  def test_multi_platform_export_with_platform_dependent_kernel(self):
+    # A TPU-only Pallas kernel in the `tpu` branch of a `platform_dependent`
+    # must only be lowered for TPU, so that the function can be exported for
+    # both CPU and TPU, with the `default` branch used on CPU.
+    block_shape = (8, 128)
+
+    def copy_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    def tpu_branch(x):
+      return pl.pallas_call(
+          copy_kernel,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec(block_shape, lambda i: (i, 0))],
+          out_specs=pl.BlockSpec(block_shape, lambda i: (i, 0)),
+          grid=(pl.cdiv(x.shape[0], block_shape[0]),),
+      )(x)
+
+    def f(x):
+      return jax.lax.platform_dependent(
+          x, tpu=tpu_branch, default=lambda x: x + 2
+      )
+
+    (w,) = export.symbolic_shape("w")
+    exp = export.export(jax.jit(f), platforms=["cpu", "tpu"])(
+        jax.ShapeDtypeStruct((w, block_shape[1]), jnp.int32)
+    )
+    self.assertIn("tpu_custom_call", exp.mlir_module())
+    cpu_exp = export.export(jax.jit(f), platforms=["cpu"])(
+        jax.ShapeDtypeStruct((w, block_shape[1]), jnp.int32)
+    )
+    self.assertNotIn("tpu_custom_call", cpu_exp.mlir_module())
+
+    if jtu.test_device_matches(["cpu", "tpu"]):
+      x = jnp.arange(4 * math.prod(block_shape), dtype=np.int32).reshape(
+          (4 * block_shape[0], block_shape[1])
+      )
+      expected = x + 1 if jtu.device_under_test() == "tpu" else x + 2
+      self.assertAllClose(exp.call(x), expected)
 
   def test_block_sizes_must_be_static_no_grid(self):
     def f(x, *, eager=False):  # x: f32[w, h]

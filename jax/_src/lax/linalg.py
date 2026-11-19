@@ -108,6 +108,12 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
     shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
     full of NaNs. The behavior on failure may change in the future.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.cholesky must have shape [..., n, n], got shape {x.shape}"
+    )
+
   if symmetrize_input:
     x = symmetrize(x)
   return _tril(cholesky_p.bind(x))
@@ -285,6 +291,11 @@ def eigh(
     If ``subset_by_index`` is ``None`` then ``d`` is equal to ``n``. Otherwise
     ``d`` is equal to ``subset_by_index[1] - subset_by_index[0]``.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.eigh must have shape [..., n, n], got shape {x.shape}"
+    )
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(
@@ -742,7 +753,8 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
 
 # Primitive registration helper functions
 
-_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip"}
+_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip",
+                        "oneapi": "oneapi"}
 
 def register_cpu_gpu_lowering(
     prim, lowering_rule, supported_platforms=("cpu", "cuda", "rocm")
@@ -839,12 +851,12 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
         partial(lax_utils.standard_multi_result_abstract_eval, prim,
                 shape_rule, dtype_rule, lax_utils._standard_weak_type_rule,
-                sharding_rule, vma_rule, None))
+                sharding_rule, vma_rule, None, None))
   else:
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
               lax_utils._standard_weak_type_rule, sharding_rule,
-              partial(core.standard_vma_rule, name), None, None))
+              partial(core.standard_vma_rule, name), None, None, None))
   if supports_batching:
     batching.primitive_batchers[prim] = partial(
         batching.expand_dims_batcher, prim)
@@ -867,6 +879,14 @@ def _cholesky_shape_rule(shape):
 def _cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
+  if dtypes.issubdtype(sigma_dot.dtype, np.complexfloating):
+    r, i = lax.real(sigma_dot), lax.imag(sigma_dot)
+    sigma_dot = lax.complex(
+        _tril(r) + _T(_tril(r, -1)),
+        _tril(i, -1) - _T(_tril(i, -1)),
+    )
+  else:
+    sigma_dot = _tril(sigma_dot) + _T(_tril(sigma_dot, -1))
   L = _tril(cholesky_p.bind(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
@@ -923,7 +943,7 @@ ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
 register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
-                          supported_platforms=("cuda", "rocm"))
+                          supported_platforms=("cuda", "rocm", "oneapi"))
 
 
 # Cholesky update
@@ -983,6 +1003,9 @@ cholesky_update_p = standard_linalg_primitive(
 mlir.register_lowering(
     cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
     platform="cuda")
+mlir.register_lowering(
+    cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "oneapi"),
+    platform="oneapi")
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
@@ -1068,7 +1091,7 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
   vr_shifted_left = lax.pad(vr, lax._zero(vr), pads)
   pads[-1] = (1, -1, 0)
   vr_shifted_right = lax.pad(vr, lax._zero(vr), pads)
-  dims = list(np.delete(np.arange(len(vr.shape), dtype=np.int32), -2))
+  dims = np.delete(np.arange(len(vr.shape), dtype=np.int32), -2).tolist()
   is_real = lax.broadcast_in_dim(is_real, vr.shape, broadcast_dimensions=dims)
   conj_pair_start = lax.broadcast_in_dim(conj_pair_start, vr.shape,
                                          broadcast_dimensions=dims)
@@ -1257,7 +1280,7 @@ eig_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 mlir.register_lowering(eig_p, _eig_cpu_lowering, platform="cpu")
-register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm"))
+register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm", "oneapi"))
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -1292,6 +1315,8 @@ def _eigh_cpu_gpu_lowering(
     raise NotImplementedError("QDWH implementation is only supported on TPU")
   if algorithm == EighImplementation.JACOBI and target_name_prefix == "cpu":
     raise NotImplementedError("Jacobi implementation is not supported on CPU")
+  if algorithm == EighImplementation.JACOBI and target_name_prefix == "oneapi":
+    raise NotImplementedError("Jacobi implementation is not supported on OneAPI")
 
   if target_name_prefix == "cpu":
     dtype = operand_aval.dtype
@@ -1356,7 +1381,8 @@ def _eigh_jvp_rule(
   eye_n = lax._eye(a.dtype, (n, n))
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   with config.numpy_rank_promotion("allow"):
-    Fmat = lax.integer_pow(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis], -1) - eye_n
+    delta_w = w[..., np.newaxis, :] - w[..., np.newaxis]
+    Fmat = lax.integer_pow(delta_w + eye_n, -1) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
@@ -1371,6 +1397,7 @@ eigh_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering)
+register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering, ("oneapi",))
 
 
 # Hessenberg reduction
@@ -1466,7 +1493,8 @@ householder_product_p = standard_linalg_primitive(
     _householder_product_shape_rule, "householder_product")
 mlir.register_lowering(householder_product_p, _householder_product_lowering)
 register_cpu_gpu_lowering(
-    householder_product_p, _householder_product_cpu_gpu_lowering)
+    householder_product_p, _householder_product_cpu_gpu_lowering,
+    supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Orthogonal QR multiply
@@ -1598,7 +1626,8 @@ ormqr_p = standard_linalg_primitive(
     _ormqr_shape_rule, "ormqr")
 mlir.register_lowering(ormqr_p, mlir.lower_fun(
     _ormqr_lowering, multiple_results=False))
-register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
+register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 # LU decomposition
@@ -1794,6 +1823,7 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
 register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering)
+register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering, ("oneapi",))
 
 
 def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
@@ -1943,7 +1973,7 @@ mlir.register_lowering(
     mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 register_cpu_gpu_lowering(
     lu_pivots_to_permutation_p, _lu_pivots_to_permutation_gpu_lowering,
-    ("cuda", "rocm"))
+    ("cuda", "rocm", "oneapi"))
 
 
 # QR decomposition
@@ -2006,7 +2036,8 @@ geqrf_p = linalg_primitive(
     _geqrf_dtype_rule, (_float | _complex,), (2,), _geqrf_shape_rule, "geqrf",
     multiple_results=True)
 mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
-register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering,
+                          supported_platforms=("cpu", "cuda", "rocm", "oneapi"))
 
 
 def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
@@ -2055,7 +2086,8 @@ def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
 geqp3_p = linalg_primitive(
     _geqp3_dtype_rule, (_float | _complex, _int), (2, 1),
     _geqp3_shape_rule, "geqp3", multiple_results=True, require_same=False)
-register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering)
+register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering,
+                          ("cpu", "cuda", "rocm", "oneapi"))
 
 
 def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
@@ -2090,7 +2122,12 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
                        use_magma=use_magma)
   *_, m, n = x.shape
   if pivoting:
-    dx = dx[..., p[0]]
+    # With pivoting, Q R = X P: work with the column-permuted X and dX.
+    permute = lambda a, perm: a[:, perm]
+    for _ in range(x.ndim - 2):
+      permute = api.vmap(permute)
+    x = permute(x, p[0])
+    dx = permute(dx, p[0])
 
   if m < n:
     # Wide matrix case (m < n)
@@ -2190,20 +2227,26 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
 
 def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
   *batch_dims, m, n = a.shape
+  a_s = core.typeof(a).sharding
+  assert a_s.spec.partitions[-2:] == (None, None)
+  vec_s = a_s.update(spec=a_s.spec.update(partitions=a_s.spec.partitions[:-1]))
   if m == 0 or n == 0:
     k = m if full_matrices else core.min_dim(m, n)
     q = lax.broadcast_in_dim(lax._eye(a.dtype, (m, k)),
                              (*batch_dims, m, k),
-                             (len(batch_dims), len(batch_dims) + 1))
-    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
+                             (len(batch_dims), len(batch_dims) + 1),
+                             out_sharding=a_s)
+    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype, sharding=a_s)
     if pivoting:
-      p = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+      p = lax.full(
+          (*batch_dims, n), 0, dtype=np.dtype(np.int32), sharding=vec_s)
       return q, r, p
     return q, r
 
   p = None
   if pivoting:
-    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+    jpvt = lax.full(
+        (*batch_dims, n), 0, dtype=np.dtype(np.int32), sharding=vec_s)
     r, p, taus = geqp3(a, jpvt, use_magma=use_magma)
     p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
   else:
@@ -2340,6 +2383,15 @@ def _svd_jvp_rule(
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
+  if compute_uv and not (
+      subset_by_index is None
+      or subset_by_index == (0, core.min_dim(A.shape[-2], A.shape[-1]))
+  ):
+    raise NotImplementedError(
+        "Singular value decomposition JVP not implemented for "
+        "subset_by_index with compute_uv=True"
+    )
+
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = Ut @ dA @ V
@@ -2429,8 +2481,14 @@ def _resolve_gpu_svd_implementation(
   if algorithm == SvdAlgorithm.QR:
     return _GpuSvdImpl.QR_GESVD
   if algorithm == SvdAlgorithm.JACOBI:
+    if target_name_prefix == "oneapi":
+      raise NotImplementedError(
+          "Jacobi SVD is not supported on OneAPI")
     return _GpuSvdImpl.JACOBI
   if algorithm == SvdAlgorithm.POLAR:
+    if target_name_prefix == "oneapi":
+      raise NotImplementedError(
+          "Polar SVD is not supported on OneAPI")
     return _GpuSvdImpl.POLAR
   if algorithm == SvdAlgorithm.DIVIDE_AND_CONQUER:
     if target_name_prefix != "hip":
@@ -2450,6 +2508,9 @@ def _resolve_gpu_svd_implementation(
     except core.InconclusiveDimensionOperation:
       pass
     return _GpuSvdImpl.GESVD
+
+  if target_name_prefix == "oneapi":
+    return _GpuSvdImpl.QR_GESVD
 
   raise AssertionError(
       f"Unexpected GPU target_name_prefix for SVD: {target_name_prefix!r}")
@@ -2619,6 +2680,7 @@ svd_p = linalg_primitive(
     multiple_results=True)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering)
+register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering, ("oneapi",))
 
 
 # Symmetric product
@@ -2655,6 +2717,9 @@ symmetric_product_p = standard_linalg_primitive(
 mlir.register_lowering(
     symmetric_product_p,
     partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
+mlir.register_lowering(
+    symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, "oneapi"), platform="oneapi")
 mlir.register_lowering(
     symmetric_product_p,
     mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
@@ -2884,7 +2949,9 @@ def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
 tridiagonal_p = linalg_primitive(
     _tridiagonal_dtype_rule, (_float | _complex,), (2,),
     _tridiagonal_shape_rule, "tridiagonal", multiple_results=True)
-register_cpu_gpu_lowering(tridiagonal_p, _tridiagonal_cpu_gpu_lowering)
+register_cpu_gpu_lowering(
+    tridiagonal_p, _tridiagonal_cpu_gpu_lowering,
+    ("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Tridiagonal solve
@@ -2910,7 +2977,8 @@ def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix,
     return rule(ctx, dl, d, du, b)
 
   # The cusolver implementation requires m >= 3.
-  if m <= 2:
+  # OneAPI uses the JAX decomposition for non-perturbed solves.
+  if m <= 2 or target_name_prefix == "oneapi":
     return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(
         ctx, dl, d, du, b, perturb_singular=perturb_singular)
   target_name = f"{target_name_prefix}sparse_gtsv2_ffi"
@@ -3042,6 +3110,10 @@ mlir.register_lowering(
     tridiagonal_solve_p,
     partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
+mlir.register_lowering(
+    tridiagonal_solve_p,
+  partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='oneapi'),
+    platform='oneapi')
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
 
@@ -3102,12 +3174,12 @@ def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 def _tril(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), m, lax.full_like(m, 0))
+  return lax.select(lax.broadcast_like(mask, m), m, lax.full_like(m, 0))
 
 def _triu(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k - 1)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), lax.full_like(m, 0), m)
+  return lax.select(lax.broadcast_like(mask, m), lax.full_like(m, 0), m)
 
 def _construct_diagonal(s: Array) -> Array:
   """Construct a (batched) diagonal matrix"""
@@ -3218,10 +3290,11 @@ def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
     num_batch_dims = max_num_dims - num_non_batch_dims
     frontend_attrs = mlir.ir_attribute({"num_batch_dims": str(num_batch_dims)})
     if batch_partitionable_:
-      extra_attributes = {"mhlo.frontend_attributes": frontend_attrs}
-      if config.use_shardy_partitioner.value:
-        extra_attributes["sdy.sharding_rule"] = _build_sdy_sharding_rule(
-            ctx.module_context, num_batch_dims, avals_in_, avals_out_)
+      extra_attributes = {
+          "mhlo.frontend_attributes": frontend_attrs,
+          "sdy.sharding_rule": _build_sdy_sharding_rule(
+              ctx.module_context, num_batch_dims, avals_in_, avals_out_),
+      }
     else:
       extra_attributes = None
     rule = ffi.ffi_lowering(target_name, operand_layouts=operand_layouts,

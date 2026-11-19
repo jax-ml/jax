@@ -225,10 +225,10 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
       # Python also has its own buffers, make sure everything is flushed.
       fp.flush()
       os.fsync(fp.fileno())
-      f.seek(0)
-      captured = f.read()
       os.dup2(original_fd, fp.fileno())
       os.close(original_fd)
+      f.seek(0)
+      captured = f.read()
 
 
 capture_stdout = partial(_capture_output, sys.stdout)
@@ -434,6 +434,10 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   return pjrt_c_api_versions >= (major_version, minor_version)
 
 def stablehlo_version_at_least(required_version: str) -> bool:
+  if (getattr(xla_bridge.get_backend(), "runtime_type", "") or "").startswith(
+      "proxy/"
+  ):
+    return False
   plugin_version = xla_bridge.backend_stablehlo_version()
   if plugin_version is None:
     return True
@@ -471,6 +475,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return device_kind.endswith("v5")
   elif expected_version == "v7x":
     return "TPU7x" in device_kind
+  elif expected_version == "v8i":
+    return "TPU8i" in device_kind
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str) -> str | None:
@@ -515,6 +521,12 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
 
+def is_sm107f() -> bool:
+  return (
+      is_cuda_compute_capability_at_least("10.7")
+      and not is_cuda_compute_capability_at_least("11.0")
+  )
+
 def is_cuda_version_at_least(major: int, minor: int) -> bool:
   assert 0 <= major
   assert 0 <= minor < 100
@@ -552,6 +564,11 @@ class CudaArchSpecificTest:
     if not any(map(is_cuda_compute_capability_equal, ("10.0", "10.1", "11.0"))):
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-instructions-mma-ws
       self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")
+
+  def skip_unless_sm107f(self):
+    self.skip_unless_tcgen05()
+    if not is_sm107f():
+      self.skipTest("Only works on GPU with capability sm_107f.")
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -775,14 +792,19 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   if _dtypes.issubdtype(dtype, np.unsignedinteger):
-    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape)))).astype(dtype)
+    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape))), dtype=np.uint64).astype(dtype)
+  elif _dtypes.issubdtype(dtype, np.integer):
+    r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype=np.int64).astype(dtype)
   else:
     r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape))).astype(dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
+  vals = post(vals)
+  if _dtypes.issubdtype(dtype, np.integer) and _dtypes.issubdtype(np.asarray(vals).dtype, np.floating):
+    vals = np.asarray(vals, dtype=np.int64)
+  return _cast_to_shape(np.asarray(vals, dtype), shape, dtype)
 
 
 def rand_fullrange(rng, standardize_nans=False):
@@ -1586,6 +1608,7 @@ class _LazyDtypes:
       _dtypes.float8_e4m3,
       _dtypes.float8_e8m0fnu,
       _dtypes.float4_e2m1fn,
+      _dtypes.float8_e5m3fnu,
     ]
     return self.supported(float_dtypes)
 
@@ -1663,7 +1686,7 @@ def numpy_version():
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],
-    testcase_name: Callable[[dict[str, Any]], str] | None = None,
+    testcase_name: Callable[[dict[str, Any]], Any] | None = None,
     one_containing: str | None = None,
 ):
   """Decorator for named parameterized tests, with filtering support.
@@ -2041,64 +2064,17 @@ class numpy_with_mpmath:
   def negative(self, x):
     return -x
 
-  def sqrt(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in sqrt(+-inf+-infj) evaluation (see mpmath/mpmath#776).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag):
-        return ctx.make_mpc((ctx.inf._mpf_, x.imag._mpf_))
-    return ctx.sqrt(x)
-
   def expm1(self, x):
     return x.context.expm1(x)
-
-  def log1p(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in log(+-inf+-infj) evaluation (see mpmath/mpmath#774).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.real) and ctx.isinf(x.imag):
-        pi = ctx.pi
-        if x.real > 0 and x.imag > 0:
-          return ctx.make_mpc((x.real._mpf_, (pi / 4)._mpf_))
-        if x.real > 0 and x.imag < 0:
-          return ctx.make_mpc((x.real._mpf_, (-pi / 4)._mpf_))
-        if x.real < 0 and x.imag < 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (-3 * pi / 4)._mpf_))
-        if x.real < 0 and x.imag > 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (3 * pi / 4)._mpf_))
-    return ctx.log1p(x)
 
   def tan(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tan(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
+      # mpmath.mp.tan(+-inf + 0j) returns nan + 0j, whereas numpy.tan/C99 ctan
+      # returns nan + nanj.
       if ctx.isinf(x.real) and ctx.isfinite(x.imag):
         return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
     return ctx.tan(x)
-
-  def tanh(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tanh(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
-      if ctx.isinf(x.real) and ctx.isfinite(x.imag):
-        return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
-    return ctx.tanh(x)
 
   def log2(self, x):
     return x.context.ln(x) / x.context.ln2
@@ -2112,21 +2088,6 @@ class numpy_with_mpmath:
   def arcsin(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_real = -1 if x.real < 0 else 1
-        real = sign_real * pi / (4 if ctx.isinf(x.imag) else 2)
-        imag = -inf if x.imag < 0 else inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
-
       # On branch cut, mpmath.mp.asin returns different value compared
       # to mpmath.fp.asin and numpy.arcsin (see
       # mpmath/mpmath#786). The following if-block ensures
@@ -2140,26 +2101,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-
-      if ctx.isinf(x.imag):
-        if ctx.isinf(x.real):
-          real = pi / 4 if x.real > 0 else 3 * pi / 4
-        else:
-          real = pi / 2
-        imag = inf if x.imag < 0 else -inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        inf = ctx.inf
-        sign_imag = -1 if x.imag < 0 else 1
-        real = zero if x.real > 0 else pi
-        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
       # On branch cut, mpmath.mp.acos returns different value
       # compared to mpmath.fp.acos and numpy.arccos. The
       # following if-block ensures compatibility with
@@ -2173,21 +2114,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asinh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        real = -inf if x.real < 0 else inf
-        imag = sign_imag * pi / (4 if ctx.isinf(x.real) else 2)
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        return ctx.make_mpc((x.real._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.asinh returns different value
       # compared to mpmath.fp.asinh and numpy.arcsinh (see
       # mpmath/mpmath#786).  The following if-block ensures
@@ -2196,44 +2122,10 @@ class numpy_with_mpmath:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
 
-  def arccosh(self, x):
-    ctx = x.context
-
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = (
-          (3 if x.real < 0 else 1) * sign_imag * pi / 4
-          if ctx.isinf(x.imag)
-          else (sign_imag * pi if x.real < 0 else zero)
-        )
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = sign_imag * pi / 2
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-    return ctx.acosh(x)
-
   def arctan(self, x):
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atan(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.real < 0:
-          return ctx.make_mpc(((-pi / 2)._mpf_, zero._mpf_))
-        return ctx.make_mpc(((pi / 2)._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.atan returns different value compared
       # to mpmath.fp.atan and numpy.arctan (see mpmath/mpmath#865).
       # The following if-block ensures compatibility with
@@ -2246,17 +2138,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atanh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.imag < 0:
-          return ctx.make_mpc((zero._mpf_, (-pi / 2)._mpf_))
-        return ctx.make_mpc((zero._mpf_, (pi / 2)._mpf_))
-
       # On branch cut, mpmath.mp.atanh returns different value
       # compared to mpmath.fp.atanh and numpy.arctanh.  The following
       # if-block ensures compatibility with numpy.arctanh.
@@ -2329,7 +2210,7 @@ def runtime_environment() -> str | None:
   """Returns None, "bazel" or "pytest"."""
   if sys.executable is None:
     return None
-  elif 'bazel-out' in sys.executable:
+  elif "TEST_TMPDIR" in os.environ:
     return "bazel"
   else:
     return "pytest"

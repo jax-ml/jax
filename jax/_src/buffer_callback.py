@@ -80,8 +80,9 @@ def buffer_callback(
       ...
 
   where ``ctx`` is an instance of
-  :class:`~jax.experimental.buffer_callback.ExecutionContext`, which mainly
-  provides access to XLA's computation stream when running on GPU, ``out`` is a
+  :class:`~jax.experimental.buffer_callback.ExecutionContext`, which provides
+  access to XLA's execution ``stage``, process-local ``device_ordinal``, and
+  (when running on GPU) computation ``stream``, ``out`` is a
   pytree of mutable :class:`~jax.experimental.buffer_callback.Buffer` objects,
   and the ``args`` arguments have the same pytree structure as the inputs, but
   each leaf is :class:`~jax.experimental.buffer_callback.Buffer`. This callback
@@ -139,7 +140,6 @@ def buffer_callback(
     static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
-        i_idx, o_idx = int(i_idx), int(o_idx)
         if i_idx >= len(args):
           raise ValueError(
               f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
@@ -240,11 +240,12 @@ def _buffer_callback_lowering(
       "cpu": "xla_buffer_python_cpu_callback",
       "cuda": "xla_buffer_python_gpu_callback",
       "rocm": "xla_buffer_python_gpu_callback",
+      "oneapi": "xla_buffer_python_gpu_callback",
   }.get(platform)
   if target_name is None:
     raise ValueError(f"`buffer_callback` not supported on {platform} backend.")
 
-  if command_buffer_compatible and platform in ("cuda", "rocm"):
+  if command_buffer_compatible and platform in ("cuda", "rocm", "oneapi"):
     target_name += "_cmd_buffer"
 
   def wrapped_callback(exec_ctx, *args: Any):

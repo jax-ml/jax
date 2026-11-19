@@ -50,16 +50,21 @@ def matmul_kernel(
     o_ref,
     acc_ref,
     *,
+    pids: tuple[jax.Array, ...] | None = None,
+    num_k: int | jax.Array | None = None,
     x_fn: Any,
     y_fn: Any,
     z_fn: Any,
     out_dtype: jnp.dtype,
 ):
-  @pl.when(pl.program_id(2) == 0)
+  if pids is None:
+    pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
+  if num_k is None:
+    num_k = pl.num_programs(2)
+  @pl.when(pids[2] == 0)
   def _():
     acc_ref[...] = jnp.zeros_like(acc_ref)
 
-  pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
 
   x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
@@ -68,7 +73,7 @@ def matmul_kernel(
   y = y_fn(pids, scalar_prefetch, y_values)
   acc_ref[...] += jnp.dot(x, y, preferred_element_type=jnp.float32)
 
-  @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+  @pl.when(pids[2] == num_k - 1)
   def _():
     acc = acc_ref[...].astype(out_dtype)
     z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
@@ -78,7 +83,6 @@ def matmul_kernel(
 
 class KernelImpl(enum.Enum):
   PALLAS_CALL = enum.auto()
-  CORE_MAP = enum.auto()
   KERNEL = enum.auto()
 
 
@@ -127,8 +131,6 @@ def _fusible_matmul(
   z_block_spec = pl.BlockSpec(block_shape=(bm, bn), index_map=z_index_map)
   dimension_semantics = (pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
 
-  z_out_type = jax.eval_shape(z, z_type)
-
   # First thing we do is extract the values from the fusions. These will be
   # values that are passed in directly and values that are passed in via
   # scalar prefetch.
@@ -154,13 +156,14 @@ def _fusible_matmul(
       grid_len=len(grid),
   )(y_values)
 
-  z_out_block_spec = fuser.push_block_spec(z, z_block_spec)(z_type)
-  z_fn, (z_value_block_specs, _), _ = fuser.pull_block_spec(
-      z_fn,
-      z_out_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid),
-  )(z_values, z_type)
+  z_fn, z_value_block_specs, _, z_out_type, z_out_block_spec = (
+      fuser.push_pull_block_spec(
+          z_fn,
+          z_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
+          grid_len=len(grid),
+      )(z_values, z_type)
+  )
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
   # prefetch arguments directly to the kernel but don't have Mosaic support atm.
@@ -194,85 +197,36 @@ def _fusible_matmul(
         debug=debug,
     )(*scalar_prefetch, x_values, y_values, z_values,)[0]
 
-  elif impl == KernelImpl.CORE_MAP:
-    out = jax.tree.map(jnp.empty_like, z_out_type)
-
-    (x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs, out_ref
-     ) = jax.tree.map(
-         jax.new_ref, (x_values, y_values, z_values, scalar_prefetch, out))
-
-    @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
-                  interpret=interpret, debug=debug)
-    def _():
-      def _f(acc_ref, scalar_prefetch_smem_refs):
-        pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
-
-        def block_spec_with_prefetch(bs):
-          if bs is pl.no_block_spec:
-            return pl.BlockSpec()
-          if bs.index_map is None:
-            return bs
-          return bs.replace(
-            index_map=lambda *args: bs.index_map(
-                *args, *scalar_prefetch_smem_refs))
-
-        in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-            x_value_block_specs, y_value_block_specs, z_value_block_specs))
-        z_out_block_spec_ = jax.tree.map(
-            block_spec_with_prefetch, z_out_block_spec)
-        pltpu.emit_pipeline(
-            functools.partial(
-                    matmul_kernel,
-                    *scalar_prefetch_smem_refs,
-                    acc_ref=acc_ref,
-                    x_fn=x_fn,
-                    y_fn=y_fn,
-                    z_fn=z_fn,
-                    out_dtype=out_dtype),
-            grid=grid,
-            in_specs=in_specs_,
-            out_specs=[z_out_block_spec_],
-            core_axis_name='core',
-            dimension_semantics=dimension_semantics,
-        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
-      pl.run_scoped(_f,
-                    pltpu.VMEM((bm, bn), jnp.float32),
-                    jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
-
-    return jax.tree.map(lambda ref: ref.get(), out_ref)
-
   elif impl == KernelImpl.KERNEL:
     def body(x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs,
              out_ref, acc_vmem_ref, scalar_prefetch_smem_refs):
       pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
 
-      def block_spec_with_prefetch(bs):
-        if bs is pl.no_block_spec:
-          return pl.BlockSpec()
-        if bs.index_map is None:
-          return bs
-        return bs.replace(
-          index_map=lambda *args: bs.index_map(
-              *args, *scalar_prefetch_smem_refs))
-
-      in_specs_ = jax.tree.map(block_spec_with_prefetch, (
-          x_value_block_specs, y_value_block_specs, z_value_block_specs))
-      z_out_block_spec_ = jax.tree.map(
-          block_spec_with_prefetch, z_out_block_spec)
+      in_specs_ = fuser.block_spec_with_prefetch(
+          (x_value_block_specs, y_value_block_specs, z_value_block_specs),
+          scalar_prefetch_smem_refs,
+      )
+      z_out_block_spec_ = fuser.block_spec_with_prefetch(
+          z_out_block_spec, scalar_prefetch_smem_refs
+      )
       pltpu.emit_pipeline(
-          functools.partial(
-                  matmul_kernel,
-                  *scalar_prefetch_smem_refs,
-                  acc_ref=acc_vmem_ref,
-                  x_fn=x_fn,
-                  y_fn=y_fn,
-                  z_fn=z_fn,
-                  out_dtype=out_dtype),
+          lambda step, *args: matmul_kernel(
+              *scalar_prefetch_smem_refs,
+              *args,
+              acc_ref=acc_vmem_ref,
+              pids=step.index,
+              num_k=grid[2],
+              x_fn=x_fn,
+              y_fn=y_fn,
+              z_fn=z_fn,
+              out_dtype=out_dtype,
+          ),
           grid=grid,
           in_specs=in_specs_,
           out_specs=(z_out_block_spec_,),
           core_axis_name='core',
-          dimension_semantics=dimension_semantics
+          dimension_semantics=dimension_semantics,
+          _explicit_indices=True,
       )(x_values_refs, y_values_refs, z_values_refs, out_ref)
 
     return pl.kernel(
@@ -300,7 +254,7 @@ def fusible_matmul(
     bn: int = 128,
     debug: bool = False,
     interpret: bool = False,
-    impl: KernelImpl = KernelImpl.CORE_MAP,
+    impl: KernelImpl = KernelImpl.KERNEL,
 ) -> jax.Array:
   return fuser.fusible(
       functools.partial(
@@ -353,6 +307,27 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
+
+  @parameterized.product(dtype=['float32'], impl=list(KernelImpl))
+  def test_nested_fuse(self, dtype, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @fuser.fuse
+    def inner(x, y):
+      return fusible_matmul(x, y, impl=impl) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x, y):
+      return jnp.maximum(inner(x, y), 0.0)
+
+    @jit_no_excess_precision
+    def ref(x, y):
+      return jax.nn.relu(mm_ref(x, y) + 1.0)
+
+    np.testing.assert_allclose(outer(x, y), ref(x, y), atol=5e-5)
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum(self, impl):
@@ -1158,15 +1133,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     fused_matmul = jax.jit(fuser.fuse(chained_matmul))
     fused_out = fused_matmul(x, y, w)
 
-    if impl is not KernelImpl.CORE_MAP:
-      # Core_map has unsupported state discharge for some reason.
-      unfused_matmul = jax.jit(chained_matmul)
-      unfused_out = unfused_matmul(x, y, w)
-      if pltpu.get_tpu_info().generation >= 6:
-        # 256 MXU changes some tols.
-        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
-      else:
-        np.testing.assert_array_equal(fused_out, unfused_out)
+    unfused_matmul = jax.jit(chained_matmul)
+    unfused_out = unfused_matmul(x, y, w)
+    if pltpu.get_tpu_info().generation >= 6:
+      # 256 MXU changes some tols.
+      np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+    else:
+      np.testing.assert_array_equal(fused_out, unfused_out)
     np.testing.assert_allclose(
         fused_out,
         chained_matmul_ref(x, y, w),
@@ -1193,15 +1166,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     fused_matmul = jax.jit(fuser.fuse(chained_matmul))
     fused_out = fused_matmul(x, y, w)
 
-    if impl is not KernelImpl.CORE_MAP:
-      # Core_map has unsupported state discharge for some reason.
-      unfused_matmul = jax.jit(chained_matmul)
-      unfused_out = unfused_matmul(x, y, w)
-      if pltpu.get_tpu_info().generation >= 6:
-        # 256 MXU changes some tols.
-        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
-      else:
-        np.testing.assert_array_equal(fused_out, unfused_out)
+    unfused_matmul = jax.jit(chained_matmul)
+    unfused_out = unfused_matmul(x, y, w)
+    if pltpu.get_tpu_info().generation >= 6:
+      # 256 MXU changes some tols.
+      np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+    else:
+      np.testing.assert_array_equal(fused_out, unfused_out)
     np.testing.assert_allclose(
         fused_out,
         chained_matmul_ref(x, y, w),
@@ -1276,6 +1247,23 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         NotImplementedError, 'SplitDims slice .* is non-contiguous'
     ):
       fused_fn(x, w)
+
+  @parameterized.product(impl=list(KernelImpl))
+  def test_matmul_with_dynamic_update_slice_raises(self, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dynamic_update_slice(x, y):
+      z = jnp.zeros((512, 512), jnp.float32)
+      ret_slice = fusible_matmul(x[:128, :], y, impl=impl)
+      return jax.lax.dynamic_update_slice(z, ret_slice, (0, 0))
+
+    with self.assertRaisesRegex(ValueError, 'Stateful primitives .* are not'
+                                ' supported in get_fusion_values'):
+      matmul_dynamic_update_slice(x, y)
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel

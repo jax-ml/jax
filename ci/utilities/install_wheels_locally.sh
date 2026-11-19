@@ -31,14 +31,14 @@ for i in "${!WHEELS[@]}"; do
   fi
 done
 
-if [[ -n "${WHEELS[@]}" ]]; then
+if (( ${#WHEELS[@]} > 0 )); then
   echo "Installing the following wheels:"
   echo "${WHEELS[@]}"
 
   # Install `uv` if it's not already installed. `uv` is much faster than pip for
   # installing Python packages.
   if ! command -v uv >/dev/null 2>&1; then
-    pip install uv~=0.11.2
+    pip install uv~=0.12.3
   fi
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.

@@ -86,6 +86,11 @@ on:
         required: false
         default: 'false'
         type: string
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 permissions: {}
 
 env:
@@ -114,8 +119,9 @@ jobs:
       JAXCI_XLA_COMMIT: "${{ inputs.xla_commit }}"
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX wheels
         if: inputs.build_jaxlib == 'false'

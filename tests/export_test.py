@@ -113,7 +113,7 @@ mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)
 
 ## Setup for multi-platform lowering
-_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5., oneapi=6.)
 
 def _testing_multi_platform_func(x, *,
                                  effect_class_name: str | None = None):
@@ -130,6 +130,7 @@ def _testing_multi_platform_func(x, *,
     tpu=lambda: for_platform("tpu"),
     cuda=lambda: for_platform("cuda"),
     rocm=lambda: for_platform("rocm"),
+    oneapi=lambda: for_platform("oneapi"),
     default=lambda: for_platform("cpu"),
   )
 
@@ -203,6 +204,22 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(4, dtype=np.float32)
     exp_f = get_exported(f)(x)
     self.assertAllClose(f(x), exp_f.call(x))
+
+  def test_weak_type_preserved(self):
+    f = jax.jit(lambda x: x * 1.5 + 1.0)
+    exp = get_exported(f)(0.0)
+    self.assertTrue(exp.in_avals[0].weak_type)
+    self.assertTrue(exp.out_avals[0].weak_type)
+    y = exp.call(0.0)
+    self.assertTrue(y.weak_type)
+    self.assertEqual((y + jnp.float16(1)).dtype, jnp.float16)
+    self.assertEqual((y + jnp.float32(1)).dtype, jnp.float32)
+
+    exp_strong = get_exported(f)(jnp.float32(0.0))
+    self.assertFalse(exp_strong.in_avals[0].weak_type)
+    self.assertFalse(exp_strong.out_avals[0].weak_type)
+    y_strong = exp_strong.call(jnp.float32(0.0))
+    self.assertFalse(y_strong.weak_type)
 
   def test_basic_single_device_sharding(self):
     device = jax.local_devices()[0]
@@ -564,7 +581,12 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
     if test_platform == "gpu":
-      test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
+      if jtu.is_device_rocm():
+        test_platform = "rocm"
+      elif jtu.is_device_oneapi():
+        test_platform = "oneapi"
+      else:
+        test_platform = "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
@@ -609,9 +631,22 @@ class JaxExportTest(jtu.JaxTestCase):
 
     a = np.arange(3, dtype=np.float32)
     with self.assertRaisesRegex(ValueError,
-        "Cannot serialize code with custom calls whose targets .*"):
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was not disabled for any target[\s\S]*"
+        r"DisabledSafetyCheck.custom_call"):
       get_exported(
         jax.jit(lambda a: a + test_primitive.bind(a))
+      )(a)
+
+    # If the safety check was disabled for a *different* target, the error
+    # should list the targets it was disabled for.
+    with self.assertRaisesRegex(ValueError,
+        r"Cannot serialize code with custom calls whose targets [\s\S]*"
+        r"safety check was disabled for the following targets [\s\S]*"
+        r"wrong_target"):
+      get_exported(
+        jax.jit(lambda a: a + test_primitive.bind(a)),
+        disabled_checks=[export.DisabledSafetyCheck.custom_call("wrong_target")]
       )(a)
 
     # Now try again with the safety check disabled
@@ -1079,7 +1114,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
-             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
            poly_spec="(a + 2*b, a, a + b + c)",
@@ -1088,7 +1123,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
-             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#shape-assertion-errors for more details."
            )),
       dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
            poly_spec="(a + 2*b, a, a + b)",
@@ -1098,7 +1133,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
-             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
            poly_spec="(2 * a + b, a, c * c)",
@@ -1107,7 +1142,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
-             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+             "Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),
   ])
   def test_shape_constraints_errors(self, *,
@@ -1149,9 +1184,12 @@ class JaxExportTest(jtu.JaxTestCase):
   ])
   def test_poly_numeric_dtypes(self, dtype=np.int32):
     if str(dtype) in {
+        "bcomplex32",
+        "complex32",
         "float8_e4m3b11fnuz",
         "float8_e4m3fnuz",
         "float8_e5m2fnuz",
+        "float8_e5m3fnu",
         "float6_e2m3fn",
         "float6_e3m2fn",
         "int1",
@@ -1256,30 +1294,16 @@ class JaxExportTest(jtu.JaxTestCase):
     run_devices = export_devices[::-1]  # We can use other devices
     run_mesh = Mesh(run_devices, "y")
     a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
-    if config.use_shardy_partitioner.value:
-      expected_re = re.compile(
-          # The top-level input is replicated
-          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
-          r" #sdy.sharding<@mesh_0, \[\{\}\, \{\}\]>}\).*"
-          # We apply the in_shardings for f_jax
-          r".*sdy.sharding_constraint %arg0 <@mesh, \[\{\"x\"\}\, \{\}\]>.*"
-          r"%1 = .*call @call_exported_f_jax.*"
-          # We apply the out_shardings for f_jax
-          r".*sdy.sharding_constraint %1 <@mesh, \[\{\}, \{\"x\"\}\]>.*",
-          re.DOTALL)
-    else:
-      expected_re = re.compile(
-          # The top-level input it replicated
-          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding ="
-          r" \"{replicated}\"}\).*"
-          # We apply the in_shardings for f_jax
-          r".*custom_call @Sharding\(%arg0\).*mhlo.sharding ="
-          r" \"{devices=\[2,1\]<=\[2\]}\"}.*"
-          r"%1 = .*call @call_exported_f_jax.*"
-          # We apply the out_shardings for f_jax
-          r".*custom_call @Sharding\(%1\).*mhlo.sharding ="
-          r" \"{devices=\[1,2\]<=\[2\]}\"}.*",
-          re.DOTALL)
+    expected_re = re.compile(
+        # The top-level input is replicated
+        r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
+        r" #sdy.sharding<@mesh_0, \[\{\}\, \{\}\]>}\).*"
+        # We apply the in_shardings for f_jax
+        r".*sdy.sharding_constraint %arg0 <@mesh, \[\{\"x\"\}\, \{\}\]>.*"
+        r"%1 = .*call @call_exported_f_jax.*"
+        # We apply the out_shardings for f_jax
+        r".*sdy.sharding_constraint %1 <@mesh, \[\{\}, \{\"x\"\}\]>.*",
+        re.DOTALL)
     hlo = jax.jit(exp.call).lower(a_device).as_text()
     self.assertRegex(hlo, expected_re)
 
@@ -1545,7 +1569,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))(a)
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))(a)
     self.assertEqual(exported.in_avals[0].memory_space, core.MemorySpace.Host)
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
 
@@ -1572,7 +1596,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))()
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))()
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
@@ -1686,11 +1710,7 @@ class JaxExportTest(jtu.JaxTestCase):
                                          collective_name, mesh):
     # Based on pjit_test::test_dot_general
     def check_wsc_in_lowered(text):
-      assert config.use_shardy_partitioner.value  # TODO(necula): is shardy always on?
-      if config.use_shardy_partitioner.value:
-        self.assertIn('sdy.sharding_constraint', text)
-      else:
-        self.assertIn('@Sharding', text)
+      self.assertIn('sdy.sharding_constraint', text)
 
     np_inp1 = np.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
@@ -1783,53 +1803,36 @@ class JaxExportTest(jtu.JaxTestCase):
         r"\) -> \(tensor<10x20xf32> (.*)",  # the result
         vjp_module_str).groups()
 
-    if config.use_shardy_partitioner.value:
-      attr_name = "sdy.sharding"
-    else:
-      attr_name = "mhlo.sharding"
+    attr_name = "sdy.sharding"
 
     if in_shardings == "P":
-      if config.use_shardy_partitioner.value:
-        sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
-        primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
-      else:
-        sharding = re.escape("{devices=[1,2]<=[2]}")
-        primal_in_sharding = "{devices=[1,2]<=[2]}"
-      self.assertRegex(arg0_attrs, sharding)
-      self.assertRegex(res_attrs, sharding)
+      primal_in_sharding = '<@mesh, [{}, {"d"}]>'
+      self.assertRegex(arg0_attrs, re.escape(f"#sdy.sharding{primal_in_sharding}"))
+      self.assertRegex(res_attrs, re.escape(f"#sdy.sharding{primal_in_sharding}"))
     else:
-      primal_in_sharding = "{replicated}"
+      primal_in_sharding = '<@mesh, [{}, {}]>'
       self.assertNotIn(attr_name, arg0_attrs)
       self.assertNotIn(attr_name, res_attrs)
 
     if out_shardings == "P":
-      if config.use_shardy_partitioner.value:
-        self.assertRegex(arg1_attrs,
-                         re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
-        primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
-      else:
-        self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
-        primal_out_sharding = "{devices=[2,1]<=[2]}"
+      primal_out_sharding = '<@mesh, [{"d"}, {}]>'
+      self.assertRegex(arg1_attrs, re.escape(f"#sdy.sharding{primal_out_sharding}"))
     else:
-      if config.use_shardy_partitioner.value:
-        primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
-      else:
-        primal_out_sharding = "{replicated}"
-
+      primal_out_sharding = '<@mesh, [{}, {}]>'
       self.assertNotIn(attr_name, arg1_attrs)
 
-    # Sharding custom calls for the primal input shape all match primal_in_sharding
+    # Sharding constraints for the primal input shape all match primal_in_sharding
     primal_in_sharding_calls = re.findall(
-      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<10x20xf32>",
+      r"sdy\.sharding_constraint .+ (<@mesh, \[.*\]>).*:.*tensor<10x20xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_in_sharding for s in primal_in_sharding_calls),
       primal_in_sharding_calls
     )
 
-    # Custom calls for the primal output shape all match primal_out_sharding
+    # Sharding constraints for the primal output shape all match primal_out_sharding
     primal_out_sharding_calls = re.findall(
-      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
+      r"sdy\.sharding_constraint .+ (<@mesh, \[.*\]>).*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_out_sharding for s in primal_out_sharding_calls),
@@ -1893,8 +1896,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("tpu", "cpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
+                       platforms=("tpu", "cpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm", "oneapi"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1916,14 +1919,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        platforms=("cpu", "cuda", "rocm"))(x)
+                        platforms=("cpu", "cuda", "rocm", "oneapi"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1942,8 +1945,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(jax.jit(exp.call))(x)
@@ -1979,6 +1982,8 @@ class JaxExportTest(jtu.JaxTestCase):
                            "rocm")
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "cuda")
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "oneapi")
 
     times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
     times_4.def_abstract_eval(lambda x: x)
@@ -1997,13 +2002,16 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_3.bind,
                                           multiple_results=False), "cuda")
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "oneapi")
 
     times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
     times_2_or_3_or_4.def_abstract_eval(lambda x: x)
     times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
                                                          multiple_results=False)
 
-    for platform in ["cpu", "cuda", "rocm"]:
+    for platform in ["cpu", "cuda", "rocm", "oneapi"]:
       mlir.register_lowering(times_2_or_3_or_4,
                              times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
@@ -2015,7 +2023,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
+    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu", "oneapi"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
@@ -2071,7 +2079,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return b * 2.
 
     res_native = f_jax(a)
-    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
+    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(a)
 
     # Call with argument placed on different platforms
     for platform in self.platforms:
@@ -2335,9 +2343,8 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res_native, res_exported)
 
   def test_different_meshes(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
-                    "since there are multiple different meshes")
+    self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
+                  "since there are multiple different meshes")
     # Make sure we can save with various meshes, and load with various meshes,
     # all different from one another.
     if jax.local_device_count() < 8:
@@ -2393,46 +2400,42 @@ class JaxExportTest(jtu.JaxTestCase):
                                     NamedSharding(mesh4, P("d"))))(a, b)
 
   @jtu.parameterized_filterable(
-    kwargs=[
-        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy",
-         "poly_shape": False},
-        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": False},
-        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": True},
-    ])
-  def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
-                                                  error_msg, poly_shape):
-    with config.use_shardy_partitioner(use_shardy_on_save):
-      mesh = jtu.create_mesh((8,), ("a",))
-      @jax.jit
-      def f(x, y):
-        z = x + y
-        return jax.lax.with_sharding_constraint(
-            z, NamedSharding(mesh, P("a")))
+      kwargs=[
+          {"poly_shape": False},
+          {"poly_shape": True},
+      ]
+  )
+  def test_lower_and_load_with_sharding_constraint(self, poly_shape):
+    mesh = jtu.create_mesh((8,), ("a",))
 
-      args = (
-          jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh, P(None, "a"))),
-          jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh, P("a"))))
+    @jax.jit
+    def f(x, y):
+      z = x + y
+      return jax.lax.with_sharding_constraint(z, NamedSharding(mesh, P("a")))
 
-      if poly_shape:
-        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
+    args = (
+        jax.ShapeDtypeStruct(
+            (32, 32),
+            dtype=np.float32,
+            sharding=NamedSharding(mesh, P(None, "a")),
+        ),
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32, sharding=NamedSharding(mesh, P("a"))
+        ),
+    )
 
-      exp = get_exported(f)(*args)
+    if poly_shape:
+      args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
 
-      with config.use_shardy_partitioner(not use_shardy_on_save):
-        a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
-        a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
-        b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
-        b = jax.device_put(b, NamedSharding(mesh, P("a")))
+    exp = get_exported(f)(*args)
 
-        if use_shardy_on_save:
-          with self.assertRaisesRegex(ValueError, error_msg):
-            jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
-        else:
-          jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jax.device_put(b, NamedSharding(mesh, P("a")))
+
+    res = jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+    self.assertAllClose(a + b, res)
 
   def test_with_multiple_meshes(self):
     nr_devices = 2
@@ -2465,7 +2468,7 @@ class JaxExportTest(jtu.JaxTestCase):
     (placed_inputs, placed_weights) = jax.device_put((inputs, weights),
                                                       in_shardings)
     out = exp.call(placed_inputs, placed_weights)
-    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
+    self.assertAllClose(out, tuple(jax.lax.dot(i, w) for i, w in zip(inputs, weights)))
 
   def test_export_typed_prng_key(self):
     mesh = jtu.create_mesh((1,), "x")

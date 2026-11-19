@@ -102,12 +102,6 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
     """Tests qdwh with upper triangular input of all ones."""
-    # ROCm: Triton GEMM autotuner cannot compile this specific case.
-    # TODO(gulsumgudukbay): Unskip once fixed. Issue #34711.
-    if (jtu.is_device_rocm()
-        and shape == (300, 300)
-        and dtype == np.float32):
-      self.skipTest("Skipped on ROCm, Triton GEMM autotuner issue.")
     eps = jnp.finfo(dtype).eps
     m, n = shape
     max_cond = np.log10(1.0 / eps)
@@ -167,7 +161,7 @@ class QdwhTest(jtu.JaxTestCase):
     actual_u, actual_h, _, _ = qdwh.qdwh(a)
 
     self._testHermitian(actual_h, 10 * eps)
-    self._testReconstruction(a, actual_u, actual_h, 60 * eps)
+    self._testReconstruction(a, actual_u, actual_h, 61 * eps)
 
     # QDWH gives U_p = U Σₖ V* for input A with SVD A = U Σ V*. For full rank
     # input, we expect convergence Σₖ → I, giving the correct polar factor

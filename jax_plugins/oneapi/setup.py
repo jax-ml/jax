@@ -37,14 +37,17 @@ packages = find_namespace_packages(
     ]
 )
 
+with open('README-pjrt.md', encoding='utf-8') as f:
+  _long_description = f.read()
+
 setup(
     name=project_name,
     version=__version__,
     description="JAX XLA PJRT Plugin for Intel GPUs",
-    long_description="",
+    long_description=_long_description,
     long_description_content_type="text/markdown",
-    author="MiniGoel",
-    author_email="mini.goel@intel.com",
+    author="oneAPI Jax Contributors",
+    author_email="oneapi-jax-contrib@intel.com",
     packages=packages,
     install_requires=[],
     url="https://github.com/jax-ml/jax",

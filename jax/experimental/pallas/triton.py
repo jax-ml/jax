@@ -14,6 +14,11 @@
 
 """Triton-specific Pallas APIs."""
 
+from jax._src.gpu_info import GpuInfo as GpuInfo
+from jax._src.gpu_info import GpuVersion as GpuVersion
+from jax._src.gpu_info import get_gpu_info as get_gpu_info
+from jax._src.gpu_info import get_gpu_info_from_version as get_gpu_info_from_version
+from jax._src.gpu_info import is_gpu_device as is_gpu_device
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.pallas_call_registration import CUSTOM_CALL_TARGET_NAME as CUSTOM_CALL_TARGET_NAME
@@ -31,8 +36,3 @@ from jax._src.pallas.triton.primitives import elementwise_inline_asm as elementw
 from jax._src.pallas.triton.primitives import load as load
 from jax._src.pallas.triton.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.triton.primitives import store as store
-from jax._src.pallas.triton.gpu_info import GpuVersion as GpuVersion
-from jax._src.pallas.triton.gpu_info import get_gpu_info as get_gpu_info
-from jax._src.pallas.triton.gpu_info import get_gpu_info_from_version as get_gpu_info_from_version
-from jax._src.pallas.triton.gpu_info import is_gpu_device as is_gpu_device
-from jax._src.pallas.triton.gpu_info import GpuInfo as GpuInfo

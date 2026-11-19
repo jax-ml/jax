@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 import enum
 import functools
-import itertools
 import math
 import string
 from typing import Any
@@ -29,13 +28,14 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
-from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -47,7 +47,6 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
-from jax._src.state import types as state_types
 from jax.interpreters import mlir
 
 
@@ -637,29 +636,6 @@ def check_debug_print_format(
     )
 
 
-# All of those shenanigans are because we can't make TransformedRef a PyTree,
-# because they should appear as atomic JAX values to the users.
-# TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
-# inferred by the compiler.
-def wrap_with_transforms(
-    fun: Callable,
-    ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
-) -> Callable:
-  if all(not t for t in ref_transforms):
-    return fun
-  def wrapped(*args, **kwargs):
-    args_ft = ft.flatten(
-        (args, kwargs), registry=tree_util.default_registry
-    )
-    transformed_ft = args_ft.map2(
-        ref_transforms,
-        lambda a, t: state_types.TransformedRef(a, t) if t else a
-    )
-    t_args, t_kwargs = transformed_ft.unflatten()
-    return fun(*t_args, **t_kwargs)
-  return wrapped
-
-
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
@@ -696,18 +672,7 @@ def run_scoped(
     collective_axes = (collective_axes,)
   flat_types = ft.flatten((types, kw_types),
                           registry=tree_util.default_registry)
-  # We allow ref avals to be transformed references.
   ref_avals = flat_types.map(lambda t: t.get_ref_aval())
-  avals = ref_avals.map(
-      lambda t: t.ref if isinstance(t, state_types.TransformedRef) else t
-  )
-  # Note that only a subset of all transforms can be found here, and they are
-  # never expected to contain any arrays.
-  ref_transforms = tuple(
-      t.transforms if isinstance(t, state_types.TransformedRef) else ()
-      for t in ref_avals.vals
-  )
-  f_with_transforms = wrap_with_transforms(f, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
@@ -715,9 +680,13 @@ def run_scoped(
   # there.
   with config.mutable_array_checks(False):
     jaxpr, out_avals = pe.trace_to_jaxpr_nocache(
-        f_with_transforms,
-        avals,
+        f,
+        ref_avals,
         api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  ref_transforms = tuple(
+      s.get_ref_transforms() if hasattr(s, "get_ref_transforms") else ()
+      for s in flat_types.vals
+  )
   out = run_scoped_p.bind(*jaxpr.consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,
@@ -748,8 +717,7 @@ def _run_scoped_discharge_rule(
     *args_flat,
     jaxpr,
     collective_axes,
-    ref_transforms,
-    **_,
+    **params,
 ):
   if collective_axes:
     raise NotImplementedError(
@@ -762,6 +730,7 @@ def _run_scoped_discharge_rule(
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr_noconst,
       should_discharge=ctx.should_discharge + [False] * len(jaxpr.invars),
+      strip_memory_space=ctx.strip_memory_space,
   )
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
@@ -775,7 +744,7 @@ def _run_scoped_discharge_rule(
   # are not discharged.
   out = run_scoped_p.bind(
       *args_flat, jaxpr=discharged_body, collective_axes=collective_axes,
-      ref_transforms=ref_transforms,
+      **params,
   )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.
@@ -804,7 +773,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst, should_discharge=True)
+      jaxpr_noconst, should_discharge=True, strip_memory_space=True)
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
@@ -851,6 +820,13 @@ def get_global(what: pallas_core.ScratchShape) -> jax_typing.Array:
 @get_global_p.def_abstract_eval
 def _get_global_abstract_eval(*, what):
   return what
+
+
+def _get_global_jvp(primals, tangents, *, what):
+  del primals, tangents
+  return get_global_p.bind(what=what), ad_util.Zero(what)
+
+ad.primitive_jvps[get_global_p] = _get_global_jvp
 
 
 def _get_global_discharge_rule(ctx, *, what):
@@ -960,8 +936,27 @@ DeviceId = (
     | jax_typing.Array
     | None
     | tuple[int | jax_typing.Array, ...]
-    | dict[Any, int | jax_typing.Array]
+    | Mapping[Any, int | jax_typing.Array]
 )
+
+
+def canonicalize_device_id(device_id: DeviceId) -> DeviceId:
+  """Normalizes dict keys when single-axis and tuple keys are mixed."""
+  if (
+      isinstance(device_id, dict)
+      and any(isinstance(k, tuple) for k in device_id)
+      and not all(isinstance(k, tuple) for k in device_id)
+  ):
+    canonical = {
+        k if isinstance(k, tuple) else (k,): v for k, v in device_id.items()
+    }
+    if len(canonical) != len(device_id):
+      raise ValueError(
+          f"Duplicate axis key in device_id: {list(device_id.keys())}"
+      )
+    return canonical
+  return device_id
+
 
 class SemaphoreEffect(effects.Effect):
   pass
@@ -980,7 +975,7 @@ def semaphore_signal(
     inc: int | jax_typing.Array = 1,
     *,
     device_id: DeviceId = None,
-    device_id_type: DeviceIdType = DeviceIdType.MESH,
+    device_id_type: DeviceIdType | None = None,
     core_index: int | jax_typing.Array | None = None,
 ):
   """Increments the value of a semaphore.
@@ -1001,8 +996,17 @@ def semaphore_signal(
     core_index (optional): If on a multi-core device,
       specifies which core to signal.
   """
+  if device_id_type is not None:
+    deprecations.warn(
+        "jax-pallas-device-id-type",
+        "device_id_type is deprecated and will be removed in a future release.",
+        stacklevel=2,
+    )
+  else:
+    device_id_type = DeviceIdType.MESH
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = canonicalize_device_id(device_id)
   args = [ref, transforms, inc, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_signal_p.bind(
@@ -1140,13 +1144,14 @@ def semaphore_wait(
   """
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   value = jnp.asarray(value, dtype=jnp.int32)
-  args = [ref, transforms, value, decrement]
+  args = [ref, transforms, value]
   flat_args, args_tree = tree_util.tree_flatten(args)
-  semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
+  semaphore_wait_p.bind(*flat_args, args_tree=args_tree, decrement=decrement)
 
 @semaphore_wait_p.def_effectful_abstract_eval
-def _semaphore_wait_abstract_eval(*avals, args_tree):
-  sem_aval, sem_transforms_avals, value_aval, _ = tree_util.tree_unflatten(
+def _semaphore_wait_abstract_eval(*avals, args_tree, decrement: bool):
+  del decrement
+  sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
       args_tree, avals
   )
   check_sem_avals(sem_aval, sem_transforms_avals, "wait")
@@ -1160,11 +1165,11 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   del settings
   invars = eqn.invars
   tree = eqn.params["args_tree"]
+  decrement = eqn.params["decrement"]
   (
       sem,
       sem_transforms,
       value,
-      decrement,
   ) = tree_util.tree_unflatten(tree, invars)
   parts = [
       pp.text("semaphore_wait"),
@@ -1182,8 +1187,9 @@ jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
 
 def _semaphore_wait_discharge_rule(ctx,
                                    *flat_args,
-                                   args_tree):
-  [ref, transforms, value, decrement] = args_tree.unflatten(flat_args)
+                                   args_tree,
+                                   decrement: bool):
+  [ref, transforms, value] = args_tree.unflatten(flat_args)
   sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   value = value.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   if decrement:
@@ -1208,6 +1214,8 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
   physical_axis_dict = {}
   # Handle joint axes (i.e., one logical axis over >1 physical axes)
   for axis_name, idx in device_id_dict.items():
+    if isinstance(axis_name, tuple) and len(axis_name) == 1:
+      axis_name = axis_name[0]
     if isinstance(axis_name, tuple) and any(
         a in mesh_axis_sizes for a in axis_name
     ):
@@ -1228,9 +1236,7 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
           partial_device_idx = idx // inner_mesh_size
 
         if axis_size & (axis_size - 1) == 0:
-          device_idx = partial_device_idx & jnp.asarray(
-              axis_size - 1, dtype=partial_device_idx.dtype
-          )
+          device_idx = partial_device_idx & (axis_size - 1)
         else:
           device_idx = lax.rem(partial_device_idx, axis_size)
         physical_axis_dict[axis_name] = device_idx
@@ -1313,134 +1319,3 @@ def _delay_abstract_eval(nanos):
 def delay(nanos: int | jax_typing.Array) -> None:
   """Sleeps for the given number of nanoseconds."""
   delay_p.bind(nanos)
-
-
-jaxpr_call_p = jax_core.Primitive("jaxpr_call")
-jaxpr_call_p.multiple_results = True
-
-
-@jaxpr_call_p.def_effectful_abstract_eval
-def _jaxpr_call_abstract_eval(*args, jaxpr: jax_core.Jaxpr, **params):
-  del args, params  # Unused.
-  # Filter out input effects, since they are only relevant in the context
-  # of this ``jaxpr_call``.
-  out_effects = {
-      e for e in jaxpr.effects if not isinstance(e, effects.JaxprInputEffect)
-  }
-  return jaxpr.out_avals, out_effects
-
-
-def _jaxpr_call_pp_eqn(
-    eqn: jax_core.JaxprEqn,
-    context: jax_core.JaxprPpContext,
-    settings: jax_core.JaxprPpSettings,
-):
-  flat_args = eqn.invars
-  ref_treedefs = eqn.params["ref_treedefs"]
-  flat_refs, _ = util.split_list(
-      flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
-  )
-  flat_refs = util.split_list(
-      flat_refs,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  trailer = []
-  for treedef, flat_ref in zip(ref_treedefs, flat_refs):
-    ref = treedef.unflatten(flat_ref)
-    transforms = []
-    if isinstance(ref, tuple):
-      ref, transforms = ref
-    trailer.append(pp.text(" "))
-    trailer.append(sp.pp_ref_transforms(context, ref, transforms))
-  return pp.concat([
-      pp.text("jaxpr_call"),
-      pp.text("["),
-      jax_core.pp_kv_pair("jaxpr", eqn.params["jaxpr"], context, settings),
-      pp.text("]"),
-      pp.concat(trailer),
-  ])
-
-
-jax_core.pp_eqn_rules[jaxpr_call_p] = _jaxpr_call_pp_eqn
-
-
-@state_discharge.register_discharge_rule(jaxpr_call_p)
-def _jaxpr_call_discharge(
-    ctx,
-    *flat_args,
-    jaxpr,
-    ref_treedefs,
-    program_ids_treedef,
-):
-  flat_should_discharge = util.split_list(
-      ctx.should_discharge,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  should_discharge = [*map(any, flat_should_discharge)]
-  discharged_closed_jaxpr = state_discharge.discharge_state(
-      jaxpr, should_discharge=should_discharge
-  )
-  discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
-  assert not discharged_consts
-  outs = jaxpr_call_p.bind(
-      *flat_args,
-      jaxpr=discharged_jaxpr,
-      ref_treedefs=tuple(ref_treedefs),
-      program_ids_treedef=program_ids_treedef,
-  )
-  discharged_outs_it = iter(outs[len(jaxpr.outvars) :])
-  new_in_vals = (
-      tuple(
-          itertools.chain.from_iterable(
-              [next(discharged_outs_it) if discharged else None]
-              * ref_treedefs[idx].num_leaves
-              for idx, discharged in enumerate(should_discharge)
-          )
-      )
-      + (None,) * program_ids_treedef.num_leaves
-  )
-  return new_in_vals, outs[: len(jaxpr.outvars)]
-
-
-def _jaxpr_call(
-    jaxpr: jax_core.Jaxpr,
-    *refs: state_types.AbstractRef | state_types.TransformedRef,
-    program_ids: Sequence[jax_typing.Array | None],
-) -> Sequence[jax_typing.Array]:
-  """Internal primitive for calling a kernel jaxpr inside ``emit_pipeline``.
-
-  This is *not* a general purpose primitive. In particular, it assumes that
-  the transformed references have been indexed.
-
-  Args:
-    jaxpr: The jaxpr to call.
-    *refs: The references to pass into the jaxpr.
-    program_ids: The loop-bound program IDs to pass into the jaxpr, or None if
-      the program ID corresponds to a parallel dimension.
-
-  Returns:
-    The outputs of the jaxpr.
-  """
-  assert not jaxpr.outvars
-  flat_refs = []
-  ref_treedefs = []
-  ref: Any
-  for ref in refs:
-    if isinstance(ref, state_types.TransformedRef):
-      if not isinstance(ref.transforms[-1], indexing.NDIndexer):
-        raise ValueError(
-            "TransformedRef must have been indexed before passing into"
-            f" jaxpr_call. Got {ref}."
-        )
-      ref = (ref.ref, ref.transforms)
-    flat_ref, treedef = tree_util.tree_flatten(ref)
-    flat_refs.extend(flat_ref)
-    ref_treedefs.append(treedef)
-  flat_program_ids, program_ids_treedef = tree_util.tree_flatten(program_ids)
-  return jaxpr_call_p.bind(
-      *flat_refs,
-      *flat_program_ids,
-      jaxpr=jaxpr,
-      ref_treedefs=tuple(ref_treedefs),
-      program_ids_treedef=program_ids_treedef,
-  )

@@ -307,6 +307,22 @@ class ImageTest(jtu.JaxTestCase):
     self.assertAllClose(output, expected, atol=2e-03)
 
   @jtu.sample_product(
+    dtype=float_dtypes,
+    method=["lanczos3", "lanczos5"],
+  )
+  def testLanczosIntegerKnots(self, dtype, method):
+    x = jnp.array([1.0, 2.5, 4.0, -0.5, 3.0], dtype=dtype)
+    output = image.scale_and_translate(
+        x,
+        x.shape,
+        spatial_dims=(0,),
+        scale=jnp.ones((1,), dtype=jnp.float32),
+        translation=jnp.zeros((1,), dtype=jnp.float32),
+        method=method,
+    )
+    self.assertArraysEqual(output, x)
+
+  @jtu.sample_product(
     dtype=inexact_dtypes,
     method=["linear", "lanczos3", "lanczos5", "cubic"],
     antialias=[True, False],

@@ -42,6 +42,23 @@ absl::Status SyclMemcpyAsync(void *dst, const void *src, size_t byte_count,
   return TryCatchToStatus([&] { stream->memcpy(dst, src, byte_count); });
 }
 
+absl::Status SyclMemsetAsync(void *ptr, int value, size_t byte_count,
+                             ::sycl::queue *stream) {
+  if (byte_count == 0) {
+    return absl::OkStatus();
+  }
+  if (ptr == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemsetAsync: null destination pointer (ptr); cannot fill it");
+  }
+  if (stream == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemsetAsync: null SYCL queue (sycl::queue* stream); cannot submit "
+        "the memset");
+  }
+  return TryCatchToStatus([&] { stream->memset(ptr, value, byte_count); });
+}
+
 absl::Status SyclGetLastError() { return absl::OkStatus(); }
 
 absl::Status SyclStreamSynchronize(::sycl::queue *stream) {
