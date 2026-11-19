@@ -3,11 +3,16 @@ Pallas TPU
 TPU specific documentation.
 
 .. toctree::
-   :caption: Guides
+   :caption: Getting Started
    :maxdepth: 2
 
    quickstart
-   details
+   TPU Tutorial <tutorial/index>
+
+.. toctree::
+   :caption: Guides
+   :maxdepth: 1
+
    pipelining
    matmul
    sparse
@@ -16,4 +21,10 @@ TPU specific documentation.
    sparsecore
    fuser
    prng
+
+.. toctree::
+   :caption: Hardware & Operations Reference
+   :maxdepth: 1
+
+   details
    hardware
