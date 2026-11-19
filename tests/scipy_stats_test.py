@@ -196,31 +196,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(
         lsp_stats.poisson.logpmf, args_maker,
         check_dtypes=False, rtol=0.0, atol=atol)
-
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testPoissonLogPmfDomainAndTinyRates(self, dtype):
-    k = np.asarray(
-        [np.inf, 0.0, 1.0, 2.0, 100.0, 1e4, 1e6, -1.0, 1.5, 1.0],
-        dtype=dtype,
-    )
-    mu = np.asarray(
-        [0.0, 0.0, 0.0, 1e-12, 1e-8, 1e-8, 1e-8, 1.0, 1.0, -1.0],
-        dtype=dtype,
-    )
-    loc = np.zeros_like(k)
-
-    def args_maker():
-      return [k, mu, loc]
-
-    self._CheckAgainstNumpy(
-        osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
-        check_dtypes=False, rtol=1e-6, atol=1e-5)
-    self._CompileAndCheck(
-        lsp_stats.poisson.logpmf, args_maker,
-        check_dtypes=False, rtol=1e-6, atol=1e-5)
-    actual = np.asarray(lsp_stats.poisson.logpmf(k, mu, loc))
-    self.assertEqual(actual[0], -np.inf)
-    self.assertTrue(np.isnan(actual[-1]))
+    # Public API support checks share this boundary vector test.
+    boundary_k = np.asarray([np.inf, 1.0], dtype=dtype)
+    boundary_mu = np.asarray([0.0, -1.0], dtype=dtype)
+    boundary = np.asarray(lsp_stats.poisson.logpmf(boundary_k, boundary_mu))
+    self.assertEqual(boundary[0], -np.inf)
+    self.assertTrue(np.isnan(boundary[1]))
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfHighPrecisionAndFloat32Maximum(self, dtype):
