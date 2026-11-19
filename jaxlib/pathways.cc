@@ -38,7 +38,11 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
@@ -56,10 +60,13 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/types.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace jax {
 
@@ -121,6 +128,65 @@ absl::Status PyClientFromPyArray(const PyArray& array,
   return absl::OkStatus();
 }
 
+struct ReshardTarget {
+  // IFRT specification for the reshard destination array.
+  ArraySpec spec;
+  // Unwrapped Python `Sharding` object for constructing the output `PyArray`.
+  nb::object py_sharding;
+};
+
+absl::StatusOr<ReshardTarget> MakeReshardTarget(int index, const PyArray& array,
+                                                nb::object out_sharding) {
+  ABSL_ASSIGN_OR_RETURN(DType ifrt_dtype, xla::DtypeToIfRtDType(array.dtype()));
+  Shape ifrt_shape(array.shape());
+
+  nb::object py_layout = nb::none();
+  if (!nb::isinstance<Sharding>(out_sharding) &&
+      nb::hasattr(out_sharding, "layout") &&
+      nb::hasattr(out_sharding, "sharding")) {
+    py_layout = out_sharding.attr("layout");
+    out_sharding = out_sharding.attr("sharding");
+    if (out_sharding.is_none()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Format sharding must not be None for array ", index, "."));
+    }
+  }
+
+  ABSL_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
+                        GetIfrtHloSharding(out_sharding, ifrt_shape));
+
+  std::shared_ptr<const xla::PjRtLayout> ifrt_layout;
+  if (!py_layout.is_none()) {
+    if (!nb::hasattr(py_layout, "_to_xla_layout")) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported layout in Format for array ", index, ": ",
+                       nb::cast<std::string>(nb::repr(py_layout))));
+    }
+    xla::Layout xla_layout =
+        nb::cast<xla::Layout>(py_layout.attr("_to_xla_layout")(array.dtype()));
+    ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
+                          xla::DtypeToPrimitiveType(array.dtype()));
+    ABSL_ASSIGN_OR_RETURN(Shape shard_shape,
+                          ifrt_sharding->GetShardShape(ifrt_shape));
+    ABSL_ASSIGN_OR_RETURN(
+        xla::Shape xla_shape,
+        xla::ShapeUtil::MakeValidatedShape(element_type, shard_shape.dims()));
+    ABSL_RETURN_IF_ERROR(
+        xla::LayoutUtil::ValidateLayoutForShape(xla_layout, xla_shape));
+    ifrt_layout =
+        std::make_shared<const xla::PjRtLayout>(std::move(xla_layout));
+  }
+
+  return ReshardTarget{
+      /*spec=*/ArraySpec{
+          /*dtype=*/std::move(ifrt_dtype),
+          /*shape=*/std::move(ifrt_shape),
+          /*sharding=*/std::move(ifrt_sharding),
+          /*layout=*/std::move(ifrt_layout),
+      },
+      /*py_sharding=*/std::move(out_sharding),
+  };
+}
 
 // Runs `xla::ifrt::Client::ReshardArrays`.
 absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
@@ -142,8 +208,10 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
   nb_class_ptr<PyClient> backend;
   std::vector<ArrayRef> ifrt_arrays;
   std::vector<ArraySpec> ifrt_specs;
+  std::vector<nb::object> py_out_shardings;
   ifrt_arrays.reserve(num_arrays);
   ifrt_specs.reserve(num_arrays);
+  py_out_shardings.reserve(num_arrays);
 
   for (int i = 0; i < num_arrays; ++i) {
     PyArray array = nb::cast<PyArray>(py_arrays[i]);
@@ -154,16 +222,10 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
     ABSL_RETURN_IF_ERROR(PyClientFromPyArray(array, backend));
     ifrt_arrays.push_back(array.ifrt_array_ref());
 
-    ABSL_ASSIGN_OR_RETURN(DType ifrt_dtype,
-                          xla::DtypeToIfRtDType(array.dtype()));
-    Shape ifrt_shape(array.shape());
-    ABSL_ASSIGN_OR_RETURN(ShardingRef ifrt_sharding,
-                          GetIfrtHloSharding(out_shardings[i], ifrt_shape));
-    ifrt_specs.push_back(ArraySpec{
-        /*dtype=*/std::move(ifrt_dtype),
-        /*shape=*/std::move(ifrt_shape),
-        /*sharding=*/std::move(ifrt_sharding),
-    });
+    ABSL_ASSIGN_OR_RETURN(ReshardTarget target,
+                          MakeReshardTarget(i, array, out_shardings[i]));
+    ifrt_specs.push_back(std::move(target.spec));
+    py_out_shardings.push_back(std::move(target.py_sharding));
   }
 
   const ArrayCopySemantics copy_semantics =
@@ -181,7 +243,7 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
   nb::list result;
   for (int i = 0; i < num_arrays; ++i) {
     PyArray new_py_array = PyArray::MakeFromIfrtArrayAndSharding(
-        backend, std::move(outputs[i]), out_shardings[i],
+        backend, std::move(outputs[i]), py_out_shardings[i],
         /*weak_type=*/false,
         /*committed=*/true,
         /*skip_checks=*/true);
