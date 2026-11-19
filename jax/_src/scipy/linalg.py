@@ -2213,6 +2213,8 @@ def _sqrtm_triu(T: Array) -> Array:
   diag = jnp.sqrt(jnp.diag(T))
   n = diag.size
   U = jnp.diag(diag)
+  if n == 0:
+    return U
 
   def i_loop(l, data):
     j, U = data
@@ -2292,7 +2294,7 @@ def _rsf2csf_2d(T: Array, Z: Array) -> tuple[Array, Array]:
   eps = dtypes.finfo(T.dtype).eps
   N = T.shape[0]
 
-  if N == 1:
+  if N <= 1:
     return T, Z
 
   def _update_T_Z(m, T, Z):
@@ -3293,6 +3295,8 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
 
   m, n = F.shape
   total = m * n
+  if total == 0:
+    return F
   # scan the matrix from bottom-right to top-left
   flat_indices = jnp.arange(total - 1, -1, -1)
   Y0 = jnp.zeros((m * n,), dtype=F.dtype)
