@@ -171,7 +171,10 @@ _threefry4x32_lowering_rule = mlir.lower_fun(
 )
 
 mlir.register_lowering(
-    threefry4x32_p, _threefry4x32_lowering_rule, inline=False
+    threefry4x32_p,
+    _threefry4x32_lowering_rule,
+    inline=False,
+    shard_map_collective_rule=lax._naryop_collective_rule,
 )
 
 

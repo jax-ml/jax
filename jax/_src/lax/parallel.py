@@ -1233,6 +1233,23 @@ batching.fancy_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 
 
+def _pxor(x, axis_name):
+  axes = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+          tuple(axis_name))
+  axes = _maybe_skip_one_sized_axes(axes)
+  if not axes:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: pxor_p.bind(leaf, axes=axes, axis_index_groups=None), x)
+
+pxor_p = core.Primitive('pxor')
+pxor_p.def_impl(partial(_allreduce_impl, pxor_p, lax.reduce_xor))
+pxor_p.def_effectful_abstract_eval(partial(_pmin_pmax_abstract_eval, 'pxor'))
+mlir.register_lowering(
+    pxor_p, partial(_all_reduce_lowering, lax.xor_p, lax.reduce_xor),
+    shard_map_collective_rule=_local_manual_collective_rule)
+
+
 def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
   replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
   group_size = len(replica_groups[0])

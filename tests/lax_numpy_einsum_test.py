@@ -25,6 +25,7 @@ import jax
 from jax import dtypes
 from jax import lax
 import jax.numpy as jnp
+from jax._src.lib import xla_version
 import jax._src.test_util as jtu
 
 jax.config.parse_flags_with_absl()
@@ -445,6 +446,36 @@ class EinsumTest(jtu.JaxTestCase):
     msg = "jax.numpy.einsum does not support simultaneous contraction of 3 or more operands"
     with self.assertRaisesRegex(NotImplementedError, msg):
       jnp.einsum('ij,ik,il->jkl', *arrs, optimize=[(0, 1, 2)])
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def test_vmap_jit_closure_captured_ones(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42549
+    if jtu.test_device_matches(['cpu']) and xla_version < 84:
+      self.skipTest('Requires xla_version >= 84')
+    n_met, n_age, n_wave = 3, 20, 100
+    ones_cube = jnp.ones((n_met, n_age, n_wave), dtype=dtype)
+    w = jnp.linspace(0.1, 1.0, n_met * n_age, dtype=dtype).reshape(n_met, n_age)
+    xc = dtype(2.0 if dtype == np.float32 else 10.0)
+    scale = dtype(3.5 if dtype == np.float32 else 3.828e33)
+
+    def f(x, w):
+      per_age = jnp.einsum('ma,maw->aw', w, ones_cube * scale)
+      return (dtype(10.0) ** x) * jnp.sum(per_age, axis=0)
+
+    bx = jnp.stack([xc] * 4)
+    bw = jnp.stack([w] * 4)
+    expected_single = (10.0 ** float(xc)) * np.einsum(
+        'ma,maw->w',
+        np.asarray(w, dtype=np.float64),
+        np.full((n_met, n_age, n_wave), float(scale), dtype=np.float64),
+    )
+    expected = np.broadcast_to(expected_single.astype(dtype), (4, n_wave))
+    rtol = (
+        2e-2 if jtu.test_device_matches(['tpu'])
+        else (1e-3 if dtype == np.float32 else 1e-12)
+    )
+    self.assertAllClose(jax.vmap(jax.jit(f))(bx, bw), expected, rtol=rtol)
+    self.assertAllClose(jax.jit(jax.vmap(f))(bx, bw), expected, rtol=rtol)
 
 
 if __name__ == '__main__':

@@ -253,3 +253,118 @@ platform, and runtime. This makes for two important caveats:
    remain the same on the following day.
 
 When in doubt, see the package API documentation for {mod}`jax.stages`.
+
+
+## Cross-compiling for Cloud TPU via the compilation cache
+
+You can compile against a virtual TPU topology on a CPU machine using
+`jax.experimental.topologies.get_topology_desc` and save the result to the
+{ref}`persistent-compilation-cache`. Point `jax_compilation_cache_dir` to a
+local path or a `gs://` URI shared by both machines, and when the same
+`jax.jit` function later runs on a Cloud TPU VM, JAX loads the cached
+executable and skips compilation. To serialize a compiled executable to a file
+yourself instead of using the cache, see
+`jax.experimental.serialize_executable.serialize` and `deserialize_and_load`.
+
+### Matching the cache key across hosts
+
+Because a cache miss on the TPU VM silently recompiles instead of raising an
+error, the CPU compile host and the Cloud TPU VM must produce the same cache
+key:
+
+* **Python and package versions:** Use identical Python minor versions and
+  identical `jax`, `jaxlib`, and `libtpu` versions on both machines.
+* **Pre-import environment variables:** Before `import jax`, set
+  `os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_use_enhanced_launch_barrier=true"`
+  on both hosts (JAX appends this flag automatically only when physical TPUs are
+  present) and `os.environ.setdefault("TPU_ACCELERATOR_TYPE", "<slice>")` on the
+  CPU host. Set `jax_persistent_cache_min_compile_time_secs=-1` and
+  `jax_persistent_cache_min_entry_size_bytes=-1` on the CPU host so fast compiles
+  are always written.
+* **Target slice and `chips_per_host_bounds`:** Always pass
+  `chips_per_host_bounds` to `get_topology_desc` (its default assumes a
+  multi-host slice):
+
+  | `TPU_ACCELERATOR_TYPE` | `topology_name` | `chips_per_host_bounds` | Typical Mesh Shape | Hosts |
+  | :--- | :--- | :--- | :--- | :--- |
+  | `v5litepod-1` | `"v5e:1x1"` | `(1, 1, 1)` | `(1, 1)` | 1 |
+  | `v5litepod-4` | `"v5e:2x2"` | `(2, 2, 1)` | `(2, 2)` | 1 |
+  | `v5litepod-16` | `"v5e:4x4"` | `(2, 2, 1)` | `(4, 4)` | 4 |
+  | `v6e-1` | `"v6e:1x1"` | `(1, 1, 1)` | `(1, 1)` | 1 |
+  | `v6e-4` | `"v6e:2x2"` | `(2, 2, 1)` | `(2, 2)` | 1 |
+  | `v6e-8` | `"v6e:2x4"` | `(2, 4, 1)` | `(2, 4)` | 1 |
+  | `tpu7x-2` | `"tpu7x:1x1x1"` | `(1, 1, 1)` | `(1, 2)` | 1 |
+  | `tpu7x-8` | `"tpu7x:2x2x1"` | `(2, 2, 1)` | `(2, 4)` | 1 |
+  | `tpu7x-16` | `"tpu7x:2x2x2"` | `(2, 2, 1)` | `(2, 8)` | 2 |
+
+* **Mesh construction and input shardings:** Use `jax.sharding.Mesh` on both
+  hosts. Avoid `jax.make_mesh` as it may default to different `AxisType`
+  settings. Ensure TPU VM inputs are explicitly sharded via
+  `jax.device_put(arr, sharding)`; unsharded inputs default to
+  `SingleDeviceSharding`, which will cause a cache miss. On multi-host slices
+  such as `v5litepod-16`, call `jax.distributed.initialize()` on each worker and
+  build inputs with `jax.make_array_from_callback`.
+* **Verifying cache hits:** Listen for `"/jax/compilation_cache/cache_hits"` via
+  `jax.monitoring.register_event_listener`, or set
+  `logging.getLogger("jax._src.cache_key").setLevel(logging.DEBUG)` on both
+  hosts to compare the eight cache-key component hashes.
+
+### Example: Compile on CPU, then run on Cloud TPU
+
+**1. On the CPU machine (compile and populate the cache):**
+
+```python
+import os
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_use_enhanced_launch_barrier=true"
+os.environ.setdefault("TPU_ACCELERATOR_TYPE", "v5litepod-4")
+
+import jax
+from jax.experimental import mesh_utils, topologies
+import jax.numpy as jnp
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+
+jax.config.update("jax_compilation_cache_dir", "gs://my-bucket/jax-cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", -1)
+
+@jax.jit
+def step(x, w):
+  return jnp.tanh(x @ w)
+
+topo = topologies.get_topology_desc(
+    platform="tpu", topology_name="v5e:2x2", chips_per_host_bounds=(2, 2, 1)
+)
+mesh = Mesh(mesh_utils.create_device_mesh((2, 2), topo.devices), ("x", "y"))
+spec = jax.ShapeDtypeStruct(
+    (1024, 1024), jnp.bfloat16, sharding=NamedSharding(mesh, P("x", "y"))
+)
+with jax.set_mesh(mesh):
+  step.lower(spec, spec).compile()  # Writes compiled TPU executable to cache.
+```
+
+**2. Later, on the Cloud TPU VM (load from the populated cache and run):**
+
+```python
+import os
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_use_enhanced_launch_barrier=true"
+
+import jax
+from jax.experimental import mesh_utils
+import jax.numpy as jnp
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+import numpy as np
+
+jax.config.update("jax_compilation_cache_dir", "gs://my-bucket/jax-cache")
+
+@jax.jit
+def step(x, w):
+  return jnp.tanh(x @ w)
+
+mesh = Mesh(mesh_utils.create_device_mesh((2, 2), jax.devices()), ("x", "y"))
+sharding = NamedSharding(mesh, P("x", "y"))
+with jax.set_mesh(mesh):
+  x = jax.device_put(np.ones((1024, 1024), jnp.bfloat16), sharding)
+  w = jax.device_put(np.ones((1024, 1024), jnp.bfloat16), sharding)
+  # Hits the cache and runs without compiling:
+  out = step(x, w)
+```

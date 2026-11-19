@@ -1127,15 +1127,13 @@ class InterpretTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       return pl.pallas_call(
-        kernel,
-        grid_spec=pl.GridSpec(
-            grid=(('foo', 2), ('bar', 4)),
-            in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
-            out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
-        ),
-        out_shape=jax.ShapeDtypeStruct((2 * 8, 4 * 128), jnp.float32),
-        interpret=pltpu.InterpretParams(),
-    )(x)
+          kernel,
+          grid=(('foo', 2), ('bar', 4)),
+          in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+          out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+          out_shape=jax.ShapeDtypeStruct((2 * 8, 4 * 128), jnp.float32),
+          interpret=pltpu.InterpretParams(),
+      )(x)
 
     x = jnp.zeros((2 * 8, 4 * 128), dtype=jnp.float32)
     y = f(x)

@@ -659,6 +659,23 @@ def _tanpi_taylor(primals_in, series_in, **_):
 jet_rules[lax.tanpi_p] = _tanpi_taylor
 
 def_deriv(
+    lax.exp2m1_p,
+    lambda x: lax.mul(
+        lax_internal._const(x, float(np.log(2.0))),
+        lax.exp(lax.mul(x, lax_internal._const(x, float(np.log(2.0))))),
+    ),
+)
+def_deriv(
+    lax.log2p1_p,
+    lambda x: lax.div(
+        lax_internal._const(x, 1),
+        lax.mul(
+            lax.add(x, lax_internal._const(x, 1)),
+            lax_internal._const(x, float(np.log(2.0))),
+        ),
+    ),
+)
+def_deriv(
     lax.asinpi_p,
     lambda x: lax.mul(
         lax_internal._const(x, 1.0 / np.pi), lax.rsqrt(lax.one_minus_square(x))

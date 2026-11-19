@@ -20,8 +20,8 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version, xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -307,14 +307,7 @@ class TanhGradTest(jtu.JaxTestCase):
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
-        (
-            "tpu_7x",
-            {
-                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
-                f16: 1.0,
-                f32: 8.0,
-            },
-        ),
+        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 8.0}),
     ]
     with jtu.global_config_context(jax_tanh_sech_jvp=True):
       util.check_unary_precision(
@@ -384,8 +377,12 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 3.5, f64: 3.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5})
     bounds = [
-        ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.5, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
@@ -454,8 +451,12 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
@@ -520,8 +521,12 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f32: 3.5, f64: 3.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 2183.5}),
         ("tpu_v5p", {f16: 1.0, f32: 43.0}),
@@ -563,19 +568,10 @@ class AtanhGradTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_grad_accuracy(self, dtype):
-    # In float16 on CPU/GPU, (1 - x) * (1 + x) overflows to -inf for |x| >= 256,
-    # causing the reciprocal to evaluate to -0.0 while the true value is
-    # subnormal (~256 ULPs).
     bounds = [
-        ("cpu", {bf16: 2.5, f16: 256.5, f32: 2.5, f64: 3.5}),
-        ("gpu", {bf16: 2.5, f16: 256.5, f32: 3.0, f64: 3.5}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 190.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 37.5}),
-        ("tpu_v6e", {f16: 1.0, f32: 3.5}),
-        ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.5}),
-    ]
-    output_ftz = [
-        ("gpu", {bf16: True, f32: True, f64: True}),
+        (["cpu", "gpu"], {bf16: 2.5, f16: 2.0, f32: 2.5, f64: 3.5}),
+        ([*TPU_EUPV1, "tpu_v5p", "tpu_v6e"], {f16: 1.0, f32: 3.0}),
+        ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.0}),
     ]
     util.check_unary_precision(
         self,
@@ -584,7 +580,9 @@ class AtanhGradTest(jtu.JaxTestCase):
         lambda x: mpmath.inf if abs(x) == 1 else 1 / (1 - x * x),
         dtype,
         bounds=bounds,
-        output_ftz=output_ftz,
+        domain=lambda dt: (
+            util.Domain.interval(dt, -1.0, 1.0) | util.Domain.infs_and_nans(dt)
+        ),
     )
 
 

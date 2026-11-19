@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src import config
+from jax._src import core
 from jax._src import test_util as jtu
 from jax.sharding import PartitionSpec as P
 
@@ -213,6 +214,79 @@ class LinalgShardingTest(jtu.JaxTestCase):
     )
     hlo = vjp_fun_jit.lower(tangents_sharded).compile()
     self.assertNotIn("all-", hlo.as_text())
+
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_explicit_batch_axis_sharding_qr_cholesky(self, mesh):
+    rng = np.random.default_rng(0)
+    a_np = rng.standard_normal((4, 4, 5, 3), dtype=np.float32)
+    t_np = rng.standard_normal((4, 4, 5, 3), dtype=np.float32)
+    mat_sharding = jax.NamedSharding(mesh, P("x", "y", None, None))
+    vec_sharding = jax.NamedSharding(mesh, P("x", "y", None))
+    a = jax.device_put(a_np, mat_sharding)
+    t = jax.device_put(t_np, mat_sharding)
+
+    qr_jit = jax.jit(functools.partial(lax.linalg.qr, full_matrices=False))
+    q, r = qr_jit(a)
+    self.assertEqual(q.sharding, mat_sharding)
+    self.assertEqual(r.sharding, mat_sharding)
+    self.assertAllClose(q @ r, a_np, atol=1e-4, rtol=1e-4)
+    self.assertNotIn("all-", qr_jit.lower(a).compile().as_text())
+
+    qr_piv_jit = jax.jit(
+        functools.partial(lax.linalg.qr, full_matrices=False, pivoting=True)
+    )
+    qp, rp, p = qr_piv_jit(a)
+    self.assertEqual(qp.sharding, mat_sharding)
+    self.assertEqual(rp.sharding, mat_sharding)
+    self.assertEqual(p.sharding, vec_sharding)
+    self.assertAllClose(
+        qp @ rp,
+        np.take_along_axis(a_np, np.asarray(p)[..., None, :], axis=-1),
+        atol=1e-4,
+        rtol=1e-4,
+    )
+    self.assertNotIn("all-", qr_piv_jit.lower(a).compile().as_text())
+
+    a_empty = jax.device_put(a_np[:, :, :0, :], mat_sharding)
+    q0, r0 = qr_jit(a_empty)
+    self.assertEqual(q0.sharding, mat_sharding)
+    self.assertEqual(r0.sharding, mat_sharding)
+    q0p, r0p, p0 = qr_piv_jit(a_empty)
+    self.assertEqual(q0p.sharding, mat_sharding)
+    self.assertEqual(r0p.sharding, mat_sharding)
+    self.assertEqual(p0.sharding, vec_sharding)
+
+    a_short = jax.device_put(a_np[0], jax.NamedSharding(mesh, P("x")))
+    _, _, p_short = qr_piv_jit(a_short)
+    self.assertEqual(p_short.sharding, jax.NamedSharding(mesh, P("x", None)))
+
+    (_, _), (dq, dr) = jax.jit(
+        lambda x, dx: jax.jvp(
+            functools.partial(lax.linalg.qr, full_matrices=False), (x,), (dx,)
+        )
+    )(a, t)
+    self.assertEqual(dq.sharding, mat_sharding)
+    self.assertEqual(dr.sharding, mat_sharding)
+
+    b_np = rng.standard_normal((4, 4, 4, 4), dtype=np.float32)
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "unsharded on non-batch dimensions"):
+      qr_piv_jit(jax.device_put(
+          b_np, jax.NamedSharding(mesh, P("x", None, "y", None))))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "unsharded on non-batch dimensions"):
+      qr_piv_jit(jax.device_put(
+          b_np, jax.NamedSharding(mesh, P("x", None, None, "y"))))
+
+    spd_np = (
+        b_np @ np.swapaxes(b_np, -1, -2) + 4.0 * np.eye(4, dtype=np.float32))
+    spd = jax.device_put(spd_np, mat_sharding)
+    chol_jit = jax.jit(lax.linalg.cholesky)
+    l = chol_jit(spd)
+    self.assertEqual(l.sharding, mat_sharding)
+    self.assertAllClose(
+        l @ np.swapaxes(l, -1, -2), spd_np, atol=1e-4, rtol=1e-4)
+    self.assertNotIn("all-", chol_jit.lower(spd).compile().as_text())
 
 
 if __name__ == "__main__":

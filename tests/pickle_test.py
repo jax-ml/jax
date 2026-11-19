@@ -241,5 +241,18 @@ class PickleTest(jtu.JaxTestCase):
       self.assertEqual(l, n)
       self.assertEqual(l.dtype, n.dtype)
 
+  def test_pickle_compile_options(self):
+    if jaxlib_extension_version < 521:
+      self.skipTest("Requires jaxlib_extension_version >= 521")
+    opts = xc.CompileOptions()
+    opts.num_replicas = 2
+    restored = pickle.loads(pickle.dumps(opts))
+    self.assertEqual(restored.num_replicas, 2)
+
+    for bad_state in ((), (b"", b"")):
+      with self.assertRaises(RuntimeError):
+        uninit = xc.CompileOptions.__new__(xc.CompileOptions)
+        uninit.__setstate__(bad_state)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

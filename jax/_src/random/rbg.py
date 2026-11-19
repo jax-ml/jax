@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import partial
 import math
 from jax._src import typing
 
@@ -41,9 +42,15 @@ def _rbg_seed(seed: typing.Array) -> typing.Array:
   halfkey = threefry2x32.threefry_seed(seed)
   return jnp.concatenate([halfkey, halfkey])
 
-def _rbg_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
+def _rbg_split(
+    key: typing.Array, shape: prng.Shape, *, out_sharding=None
+) -> typing.Array:
   if config.threefry_partitionable.value:
-    _threefry_split = threefry2x32._threefry_split_foldlike
+    _threefry_split = partial(
+        threefry2x32._threefry_split_foldlike, out_sharding=out_sharding)
+  elif out_sharding is not None and not out_sharding.is_fully_replicated:
+    raise NotImplementedError(
+        'out_sharding requires jax_threefry_partitionable=True.')
   else:
     _threefry_split = threefry2x32._threefry_split_original
   halfkeys = key.reshape(2, 2)
@@ -55,13 +62,16 @@ def _rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   assert not data.shape
   return api.vmap(threefry2x32._threefry_fold_in, (0, None), 0)(key.reshape(2, 2), data).reshape(4)
 
-def _rbg_random_bits(key: typing.Array, bit_width: int, shape: Sequence[int]
-                     ) -> typing.Array:
+def _rbg_random_bits(
+    key: typing.Array, bit_width: int, shape: Sequence[int], *,
+    out_sharding=None
+) -> typing.Array:
   if not key.shape == (4,) and key.dtype == np.dtype('uint32'):
     raise TypeError("_rbg_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  _, bits = lax.rng_bit_generator(key, shape, dtype=prng.UINT_DTYPES[bit_width])
+  _, bits = lax.rng_bit_generator(
+      key, shape, dtype=prng.UINT_DTYPES[bit_width], out_sharding=out_sharding)
   return bits
 
 rbg_prng_impl = prng.PRNGImpl(
@@ -71,17 +81,25 @@ rbg_prng_impl = prng.PRNGImpl(
     random_bits=_rbg_random_bits,
     fold_in=_rbg_fold_in,
     name='rbg',
-    tag='rbg')
+    tag='rbg',
+    supports_out_sharding=True)
 
 prng.register_prng(rbg_prng_impl)
 
 
-def _unsafe_rbg_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
+def _unsafe_rbg_split(
+    key: typing.Array, shape: prng.Shape, *, out_sharding=None
+) -> typing.Array:
   # treat 10 iterations of random bits as a 'hash function'
   num = math.prod(shape)
   _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
-  return lax_slicing.slice_in_dim(
-      keys, start_index=None, limit_index=None, stride=10).reshape(*shape, 4)
+  sliced = lax_slicing.slice_in_dim(
+      keys, start_index=None, limit_index=None, stride=10)
+  phys_s = (
+      None if out_sharding is None else out_sharding.update(
+          spec=out_sharding.spec.update(
+              partitions=(*out_sharding.spec.partitions, None))))
+  return lax.reshape(sliced, (*shape, 4), out_sharding=phys_s)
 
 def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   assert not data.shape
@@ -95,7 +113,8 @@ unsafe_rbg_prng_impl = prng.PRNGImpl(
     random_bits=_rbg_random_bits,
     fold_in=_unsafe_rbg_fold_in,
     name='unsafe_rbg',
-    tag='urbg')
+    tag='urbg',
+    supports_out_sharding=True)
 
 prng.register_prng(unsafe_rbg_prng_impl)
 

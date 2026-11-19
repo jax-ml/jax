@@ -52,6 +52,28 @@ expm1 = np.expm1
 log = np.log
 log2 = np.log2
 log1p = np.log1p
+
+
+def exp2m1(x):
+  x = np.asarray(x)
+  x64 = x.astype(np.float64)
+  small = np.abs(x64) <= 0.5
+  x_small = np.where(small, x64, 0.0)
+  x_large = np.where(small, 0.0, x64)
+  return np.where(
+      small, np.expm1(x_small * np.log(2.0)), np.exp2(x_large) - 1.0
+  ).astype(x.dtype)
+
+
+def log2p1(x):
+  x = np.asarray(x)
+  x64 = x.astype(np.float64)
+  small = np.abs(x64) <= 0.5
+  x_small = np.where(small, x64, 0.0)
+  x_large = np.where(small, 0.0, x64)
+  return np.where(
+      small, np.log1p(x_small) / np.log(2.0), np.log2(1.0 + x_large)
+  ).astype(x.dtype)
 tanh = np.tanh
 sin = np.sin
 cos = np.cos

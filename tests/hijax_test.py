@@ -1343,6 +1343,43 @@ class HijaxTest(jtu.JaxTestCase):
           in (f,) }
         """).strip())
 
+  def test_hiprim_hash_and_eq(self):
+    class CustomOp(HiPrim):
+      def __init__(self, in_aval, out_aval, *, k=1):
+        self.in_avals = (in_aval,)
+        self.out_aval = out_aval
+        self.params = dict(k=k)
+        super().__init__()
+
+      def expand(self, x):
+        return x
+
+    f32_4_8 = core.ShapedArray((4, 8), jnp.dtype('float32'))
+    f32_4_0 = core.ShapedArray((4, 0), jnp.dtype('float32'))
+    q_2_4 = QArrayTy((2, 4))
+    q_2_8 = QArrayTy((2, 8))
+
+    p1 = CustomOp(f32_4_8, [f32_4_8], k=1)
+    p1_dup = CustomOp(f32_4_8, [f32_4_8], k=1)
+    p_diff_in = CustomOp(f32_4_0, [f32_4_8], k=1)
+    p_diff_out = CustomOp(f32_4_8, [f32_4_0], k=1)
+    p_diff_tree = CustomOp(f32_4_8, (f32_4_8,), k=1)
+    p_diff_param = CustomOp(f32_4_8, [f32_4_8], k=2)
+
+    self.assertEqual(p1, p1_dup)
+    self.assertEqual(hash(p1), hash(p1_dup))
+    self.assertNotEqual(p1, p_diff_in)
+    self.assertNotEqual(p1, p_diff_out)
+    self.assertNotEqual(p1, p_diff_tree)
+    self.assertNotEqual(p1, p_diff_param)
+
+    q1 = CustomOp(q_2_4, {'q': q_2_4}, k=1)
+    q1_dup = CustomOp(q_2_4, {'q': q_2_4}, k=1)
+    q_diff = CustomOp(q_2_8, {'q': q_2_8}, k=1)
+    self.assertEqual(q1, q1_dup)
+    self.assertEqual(hash(q1), hash(q1_dup))
+    self.assertNotEqual(q1, q_diff)
+
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive_retval(self, jit):
 
@@ -2077,6 +2114,14 @@ class HijaxTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
     self.assertAllClose(jax.grad(square)(3.0), 6.0)
+    self.assertAllClose(jax.grad(square, with_logs=True)(3.0), (6.0, logs),
+                        check_dtypes=False)
+    self.assertAllClose(jax.value_and_grad(square, with_logs=True)(3.0),
+                        (9.0, (6.0, logs)), check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(lambda x: (square(x), x + 1.0), has_aux=True,
+                 with_logs=True)(3.0),
+        (6.0, 4.0, logs), check_dtypes=False)
 
     # distinct keys are both present; a repeated key is an error
     f2 = lambda x: square(square(x, 'inner'), 'outer')
@@ -2113,6 +2158,11 @@ class HijaxTest(jtu.JaxTestCase):
     for log in logss.values():
       self.assertArraysEqual(log['x'], xs)
       self.assertEqual(log['ct_in'].shape, xs.shape)
+    gs, glogss = jax.jit(jax.grad(f_scan, with_logs=True))(xs)
+    self.assertAllClose(gs, 4.0 * xs)
+    self.assertEqual(set(glogss), {'carry', 'ys'})
+    for log in glogss.values():
+      self.assertArraysEqual(log['x'], xs)
 
   @parameterized.product(
       transform=['eager', 'jit', 'jit_pullback', 'checkpoint', 'scan',

@@ -25,6 +25,7 @@ from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import pjit
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import exp_log
 from jax._src.lax import lax
 from jax._src.lax import trig
 from jax._src.pallas import core as pallas_core
@@ -175,7 +176,9 @@ TRANSCENDENTAL_OPS = [
     lax.atan_p,
     trig.atanpi_p,
     lax.exp_p,
+    exp_log.exp2m1_p,
     lax.log_p,
+    exp_log.log2p1_p,
     lax.logistic_p,
     lax.sqrt_p,
 ]

@@ -227,6 +227,7 @@ py_library_providing_imports_info(
         "//jax/_src:program_order",
         "//jax/_src:public_test_util",
         "//jax/_src:random",
+        "//jax/_src:reduction_order",
         "//jax/_src:ref",
         "//jax/_src:scipy",
         "//jax/_src:shard_map",

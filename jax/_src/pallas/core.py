@@ -909,15 +909,10 @@ def pad_ref(
     shape: tuple[int, ...],
 ) -> TransformedRef:
   """Translate memref to a padded memref for out-of-bounds reads."""
-  if not isinstance(ref, TransformedRef):
-    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
-      raise TypeError("ref must be a reference")
-    ref = TransformedRef(ref, transforms=())
-  shape = tuple(shape)
-  return TransformedRef(
-      ref.ref,
-      (*ref.transforms, PadTransform(shape)),
-  )
+  if not isinstance(ref, TransformedRef) and not isinstance(
+      jax_core.typeof(ref), state_types.AbstractRef):
+    raise TypeError("ref must be a reference")
+  return state_types.apply_transform(ref, PadTransform(tuple(shape)))
 
 
 @dataclasses.dataclass(frozen=True)

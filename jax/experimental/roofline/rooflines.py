@@ -33,6 +33,7 @@ from jax._src.lax import (
   ann,
   control_flow,
   convolution,
+  exp_log,
   fft,
   lax,
   linalg,
@@ -124,6 +125,8 @@ roofline.register_roofline(special.erf_inv_p)(_unary_p_roofline)
 roofline.register_roofline(special.erf_p)(_unary_p_roofline)
 roofline.register_roofline(special.erfc_p)(_unary_p_roofline)
 roofline.register_roofline(special.lgamma_p)(_unary_p_roofline)
+roofline.register_roofline(exp_log.exp2m1_p)(_unary_p_roofline)
+roofline.register_roofline(exp_log.log2p1_p)(_unary_p_roofline)
 roofline.register_roofline(trig.acospi_p)(_unary_p_roofline)
 roofline.register_roofline(trig.asinpi_p)(_unary_p_roofline)
 roofline.register_roofline(trig.atanpi_p)(_unary_p_roofline)

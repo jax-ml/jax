@@ -37,6 +37,7 @@ from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import profiler
+from jax._src import reduction_order as reduction_order_lib
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
@@ -1415,7 +1416,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts, is_jax_late)
+         in_layouts, out_layouts, tuple(mod_ctx.platforms), is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
@@ -1462,7 +1463,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(
-    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
+    jit_p, _pjit_lowering, cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],
@@ -1550,7 +1552,8 @@ def _pjit_batcher_for_sharding(
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(s._internal_device_list, new_op)
-    return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
+    return pxla._get_out_sharding_from_orig_sharding(
+        [new_gs], [None], s, None, None)[0]
   else:
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
       return NamedSharding(
@@ -2318,8 +2321,9 @@ def _canonicalize_reshard_sharding(s, aval, error_on_none=True):
     ds = ds.update(spec=ds.spec._normalized_spec_for_aval(aval.ndim))
   return ds
 
-def reshard(xs, out_shardings):
+def reshard(xs, out_shardings, *, reduction_order: Any = None):
   from jax._src.hijax import HiPspec  # type: ignore
+  reduction_order = reduction_order_lib.normalize_order(reduction_order)
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axis_resources(
       "reshard out_shardings", treedef, out_shardings, tupled_args=True)
@@ -2331,14 +2335,17 @@ def reshard(xs, out_shardings):
     cmesh = (s.mesh if (isinstance(s, NamedSharding) and
                         isinstance(s.mesh, mesh_lib.Mesh))
              else None)
-    out_flat.append(reshard_p.bind(x, dst_sharding=ds, concrete_mesh=cmesh))
+    out_flat.append(
+        reshard_p.bind(
+            x, dst_sharding=ds, concrete_mesh=cmesh,
+            reduction_order=reduction_order))
   return tree_unflatten(treedef, out_flat)
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
 
-def _reshard_is_high(aval, *, dst_sharding, **__):
-  return (aval.is_high or
+def _reshard_is_high(aval, *, dst_sharding, concrete_mesh, reduction_order):
+  return (aval.is_high or reduction_order is not None or
           (isinstance(dst_sharding, NamedSharding)
            and bool(dst_sharding.spec.unreduced)))
 reshard_p.is_high = _reshard_is_high
@@ -2359,8 +2366,9 @@ def _peeled_axes(src_p, dst_p, added_u) -> tuple[Any, ...]:
           else ())
 
 
-def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
-                          out_aval: core.ShapedArray, concrete_mesh):
+def _lower_shaped_reshard(
+    lo_val, in_aval: core.ShapedArray, out_aval: core.ShapedArray,
+    concrete_mesh, reduction_order):
   from jax._src import shard_map  # type: ignore
   from jax._src.lax import lax, parallel as lax_parallel, slicing as lax_slicing  # type: ignore
 
@@ -2370,6 +2378,7 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
   removed_u = src_s.spec.unreduced - dst_s.spec.unreduced
   added_u = dst_s.spec.unreduced - src_s.spec.unreduced
   assert removed_u or added_u
+
   # Can't do this: src_u = ("x",) and dst_u = ("y",)
   if removed_u and added_u:
     raise NotImplementedError(
@@ -2389,14 +2398,44 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
       assert src_s.spec.unreduced_kind == dst_s.spec.unreduced_kind
     else:
       assert dst_s.spec.unreduced_kind is None
-    reduce_fn = {
+    reduce_fn: Callable[..., Any] = {
         UnreducedKind.sum: lax.reduce_sum,
         UnreducedKind.max: lax.reduce_max,
         UnreducedKind.min: lax.reduce_min,
     }[src_s.spec.unreduced_kind]
+
+    # `lo_val` has one leading dim per unreduced axis, e.g. f32[4, 4]{U:x} is
+    # f32[2@x, 4, 4]. Before reducing, slice `lo_val` on any `dst_s` axis that
+    # it doesn't use yet, so the reduction collectives move less data:
+    #
+    #   f32[4, 4]{U:x} -> f32[4, 4@y]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4, 4@y]  slice 'y' (no communication)
+    #                    -> f32[4, 4@y]       all_reduce 'x' on half the data
+    #
+    #   f32[4, 4]{U:x} -> f32[4@(y, x), 4]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4@y, 4]  slice 'y'
+    #                    -> f32[4@(y, x), 4]  reduce_scatter 'x'
+    #
+    # An axis after a reduced axis can't be sliced first: for f32[4@(x, y), 4]
+    # 'y' would land before 'x', so `reduce_fn` raises NotImplementedError.
+    lo_s = typeof(lo_val).sharding
+    cur = [_tupleize_spec(p) for p in lo_s.spec.partitions]
+    # The leading unreduced dims stay as they are.
+    dst = cur[:len(src_u)] + [_tupleize_spec(p) for p in dst_s.spec.partitions]
+    if any(slice_axes := _free_slice_axes(cur, dst)):
+      pre_dst = lo_s.update(spec=lo_s.spec.update(
+          partitions=[c + s for c, s in zip(cur, slice_axes)]))
+      lo_val = reshard_p.bind(lo_val, dst_sharding=pre_dst,
+                              concrete_mesh=concrete_mesh, reduction_order=None)
+
     red_axes = tuple(i for i, a in enumerate(src_u) if a in removed_u)
     rem_s = dst_s.update(spec=P(*dst_u, *dst_s.spec.partitions))
-    lo_out = reduce_fn(lo_val, axes=red_axes, out_sharding=rem_s)
+    if reduction_order is not None:
+      lo_out = reduce_fn(
+          lo_val, axes=red_axes, out_sharding=rem_s,
+          reduction_order=reduction_order)  # type: ignore
+    else:
+      lo_out = reduce_fn(lo_val, axes=red_axes, out_sharding=rem_s)
     return out_aval.raise_val(lo_out)
 
   new_u_pos, new_u = util.unzip2((i, a) for i, a in enumerate(dst_u)
@@ -2412,7 +2451,7 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
   pre_s = NamedSharding(mesh, PartitionSpec(*src_u, *src_parts))
   if typeof(lo_val).sharding != pre_s:
     lo_val = reshard_p.bind(lo_val, dst_sharding=pre_s,
-                            concrete_mesh=concrete_mesh)
+                            concrete_mesh=concrete_mesh, reduction_order=None)
 
   sharded_u = frozenset(a for t in peeled for a in t)
   rep_u = tuple(a for a in new_u if a not in sharded_u)
@@ -2442,18 +2481,22 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
   return out_aval.raise_val(lo_out)
 
 
-def _reshard_to_lojax(hi_val, *, dst_sharding, concrete_mesh):
+def _reshard_to_lojax(
+    hi_val, *, dst_sharding, concrete_mesh, reduction_order):
   in_aval = core.typeof(hi_val)
-  out_aval = core.reshard_aval(in_aval, dst_sharding)
+  out_aval = _reshard_abstract_eval(
+      in_aval, dst_sharding=dst_sharding, concrete_mesh=concrete_mesh,
+      reduction_order=reduction_order)
   if (isinstance(in_aval, core.ShapedArray) and
       isinstance(out_aval, core.ShapedArray) and
       in_aval.sharding.spec.unreduced != out_aval.sharding.spec.unreduced):
     lo_val, = in_aval.lower_val(hi_val)
-    return _lower_shaped_reshard(lo_val, in_aval, out_aval, concrete_mesh)
+    return _lower_shaped_reshard(
+        lo_val, in_aval, out_aval, concrete_mesh, reduction_order)
   lo_vals = in_aval.lower_val(hi_val)
   lo_out_avals = out_aval.lo_ty()
   lo_outs = [reshard_p.bind(lo_val, dst_sharding=lo_out_aval.sharding,  # type: ignore
-                            concrete_mesh=concrete_mesh)
+                            concrete_mesh=concrete_mesh, reduction_order=None)
              for lo_val, lo_out_aval in safe_zip(lo_vals, lo_out_avals)]
   return out_aval.raise_val(*lo_outs)
 reshard_p.to_lojax = _reshard_to_lojax
@@ -2507,13 +2550,41 @@ def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding
   return out_aval.update(layout=out_layout)
 core.reshard_aval_handlers[core.ShapedArray] = _reshard_shaped_array
 
-def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
-  return core.reshard_aval(aval, dst_sharding)
+def _check_reshard_reduction_order(
+    aval, out_aval, dst_sharding, reduction_order):
+  from jax._src.lax import lax  # type: ignore
+  in_u, out_u = aval.sharding.spec.unreduced, out_aval.sharding.spec.unreduced
+  if (not (removed_u := in_u - out_u) or out_u - in_u
+      or reduction_order is reduction_order_lib.ReductionOrder.unreduced):
+    raise core.ShardingTypeError(
+        f'reshard with reduction_order={reduction_order!r} must reduce'
+        f' unreduced axes; got {aval} -> {dst_sharding}.')
+  src_s, dst_s = aval.sharding, out_aval.sharding
+  u_kind = src_s.spec.unreduced_kind
+  if u_kind is UnreducedKind.min:
+    raise ValueError('reshard reduction_order is not supported for min.')
+  src_u = core.order_wrt_mesh(src_s.mesh, src_s.spec.unreduced)
+  dst_u = core.order_wrt_mesh(dst_s.mesh, dst_s.spec.unreduced)
+  red_axes = tuple(i for i, a in enumerate(src_u) if a in removed_u)
+  rem_s = dst_s.update(spec=P(*dst_u, *dst_s.spec.partitions))
+  prim = (lax.reduce_max_p if u_kind is UnreducedKind.max
+          else lax.reduce_sum_p)
+  prim.abstract_eval(
+      aval.lo_ty()[0], axes=red_axes, out_sharding=rem_s,
+      reduction_order=reduction_order)
+
+def _reshard_abstract_eval(
+    aval, *, dst_sharding, concrete_mesh, reduction_order):
+  out_aval = core.reshard_aval(aval, dst_sharding)
+  if reduction_order is not None:
+    _check_reshard_reduction_order(aval, out_aval, dst_sharding, reduction_order)
+  return out_aval
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
-def _reshard_impl(x, *, dst_sharding, concrete_mesh):
+def _reshard_impl(x, *, dst_sharding, concrete_mesh, reduction_order):
   thunk = lambda: dispatch.apply_primitive(
-      reshard_p, x, dst_sharding=dst_sharding, concrete_mesh=concrete_mesh)
+      reshard_p, x, dst_sharding=dst_sharding, concrete_mesh=concrete_mesh,
+      reduction_order=reduction_order)
   if concrete_mesh is None:
     return thunk()
   else:
@@ -2521,32 +2592,38 @@ def _reshard_impl(x, *, dst_sharding, concrete_mesh):
       return thunk()
 reshard_p.def_impl(_reshard_impl)
 
-def _reshard_jvp_rule(primals, tangents, *, dst_sharding, concrete_mesh):
+def _reshard_jvp_rule(
+    primals, tangents, *, dst_sharding, concrete_mesh, reduction_order):
   (p,), (t,) = primals, tangents
   primal_out = reshard_p.bind(p, dst_sharding=dst_sharding,
-                              concrete_mesh=concrete_mesh)
+                              concrete_mesh=concrete_mesh,
+                              reduction_order=reduction_order)
   if type(t) is ad.Zero:
     return primal_out, ad.p2tz(primal_out)
   else:
     tangent_out = reshard_p.bind(t, dst_sharding=dst_sharding,
-                                 concrete_mesh=concrete_mesh)
+                                 concrete_mesh=concrete_mesh,
+                                 reduction_order=None)
     return primal_out, tangent_out
 ad.primitive_jvps[reshard_p] = _reshard_jvp_rule
 
-def _reshard_linearize(is_vjp, nzs, x, *, dst_sharding, concrete_mesh):
+def _reshard_linearize(
+    is_vjp, nzs, x, *, dst_sharding, concrete_mesh, reduction_order):
   (nz,) = nzs
   primal_out = reshard_p.bind(x, dst_sharding=dst_sharding,
-                              concrete_mesh=concrete_mesh)
+                              concrete_mesh=concrete_mesh,
+                              reduction_order=reduction_order)
 
   def linearized(residuals, _, tangent):
     assert not residuals
     return (reshard_p.bind(tangent, dst_sharding=dst_sharding,
-                           concrete_mesh=concrete_mesh)
+                           concrete_mesh=concrete_mesh, reduction_order=None)
             if nz else ad.p2tz(tangent))
   return primal_out, nz, (), None, linearized
 ad.primitive_linearizations[reshard_p] = _reshard_linearize
 
-def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
+def _reshard_transpose_fancy(
+    ct, x, *, dst_sharding, concrete_mesh, reduction_order):
   assert isinstance(x, ad.GradAccum)
   if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
     return
@@ -2556,11 +2633,12 @@ def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
          else contextlib.nullcontext())
   with ctx:
     x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
-                           concrete_mesh=concrete_mesh)
+                           concrete_mesh=concrete_mesh, reduction_order=None)
     x.accum(x_bar)
 ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
-def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
+def _reshard_hlo_lowering(
+    ctx, x_node, *, dst_sharding, concrete_mesh, reduction_order):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 
@@ -2666,25 +2744,28 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> ReshardA2A | ReshardAG:
   """Takes axes off the end of a dim that isn't a prefix of its target.
 
   Prefers moving axes with an all_to_all over dropping them with an
-  all_gather, trying the whole dim's axes before falling back to its last axis.
+  all_gather, trying longer trailing suffixes first.
   """
   out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
                   if not _dst_starts_with_cur(d, c)]
   for i in out_of_place:
-    for axes in (cur[i], cur[i][-1:]):
+    for k in range(len(cur[i])):
+      axes = cur[i][k:]
       target = _a2a_target(cur, dst, axes)
       if target is not None:
         return ReshardA2A(axes, i, target)
 
   # No all_to_all is possible, so all_gather on the first out-of-place dim.
-  # If none of its axes are in `dst`, gather them all at once, e.g.
-  # P(('x', 'y'), None) -> P(None, None) gathers ('x', 'y') together.
-  # Otherwise gather only its last axis, so the axes `dst` still needs stay
-  # sharded, e.g. P(('x', 'y'), None) -> P('x', None) gathers just 'y'
-  # instead of gathering ('x', 'y') and then slicing 'x' back in.
+  # Gather all trailing axes that `dst` doesn't need at once, so any leading
+  # axes `dst` still needs stay sharded, e.g. P(('x', 'y', 'z'), None) ->
+  # P('x', None) gathers ('y', 'z') together without gathering 'x'. If the last
+  # axis is still needed in `dst`, gather just that last axis.
   i = out_of_place[0]
   dst_axes = {a for d in dst for a in d}
-  axes = cur[i][-1:] if any(a in dst_axes for a in cur[i]) else cur[i]
+  k = len(cur[i])
+  while k > 0 and cur[i][k - 1] not in dst_axes:
+    k -= 1
+  axes = cur[i][-1:] if k == len(cur[i]) else cur[i][k:]
   return ReshardAG(axes, i)
 
 
@@ -2779,9 +2860,25 @@ def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
     sizes.append(local_size)
   return slicing.dynamic_slice(x, starts, sizes, allow_negative_indices=False)
 
-def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh):
+def _apply_reshard_steps(x, steps: Sequence[_ReshardStep], mesh):
   from jax._src.lax import parallel  # type: ignore
+  for step in steps:
+    if isinstance(step, ReshardSlice):
+      x = _slice_to_shard(x, step.axes_per_dim, mesh)
+    elif isinstance(step, ReshardPermute):
+      x = parallel.ppermute(x, step.axes, step.perm)
+    elif isinstance(step, ReshardAG):
+      x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
+    else:
+      assert isinstance(step, ReshardA2A)
+      x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
+                              concat_axis=step.src_dim, tiled=True)
+  return x
 
+
+def _reshard_collective_rule(
+    in_avals, out_avals, *, dst_sharding, concrete_mesh, reduction_order):
+  assert reduction_order is None
   (in_aval,), (out_aval,) = in_avals, out_avals
   in_s, out_s = in_aval.sharding, out_aval.sharding
   assert not in_s.spec.unreduced and not out_s.spec.unreduced
@@ -2797,18 +2894,7 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
   steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions, mesh)
 
   def in_collective(x):
-    for step in steps:
-      if isinstance(step, ReshardSlice):
-        x = _slice_to_shard(x, step.axes_per_dim, mesh)
-      elif isinstance(step, ReshardPermute):
-        x = parallel.ppermute(x, step.axes, step.perm)
-      elif isinstance(step, ReshardAG):
-        x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
-      else:
-        assert isinstance(step, ReshardA2A)
-        x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
-                                concat_axis=step.src_dim, tiled=True)
-    return (x,)
+    return (_apply_reshard_steps(x, steps, mesh),)
 
   return mlir.PartitioningRule(in_collective=in_collective)
 
@@ -2816,22 +2902,33 @@ mlir.register_lowering(
     reshard_p, _reshard_hlo_lowering,
     shard_map_collective_rule=_reshard_collective_rule)
 
-def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
+def _reshard_batcher(
+    axis_data, vals_in, dims_in, dst_sharding, concrete_mesh, reduction_order):
   x, = vals_in
   d, = dims_in
   if d is None:
     out = reshard_p.bind(x, dst_sharding=dst_sharding,
-                         concrete_mesh=concrete_mesh)
+                         concrete_mesh=concrete_mesh,
+                         reduction_order=reduction_order)
     return out, None
   vmapped_dst_sharding = batching.get_sharding_for_vmap(
       axis_data, dst_sharding, d)
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    from jax._src.lax import _reduction_order  # type: ignore
+    reduction_order = _reduction_order.shift_order_for_vmap(
+        reduction_order, d, x.ndim - 1)
   y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding,
-                     concrete_mesh=concrete_mesh)
+                     concrete_mesh=concrete_mesh,
+                     reduction_order=reduction_order)
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
 
 def _pp_reshard(eqn, ctx, settings):
-  return core._pp_eqn(eqn.replace(params={}), ctx, settings)
+  params = {
+      k: v for k, v in eqn.params.items()
+      if k == 'reduction_order' and v is not None
+  }
+  return core._pp_eqn(eqn.replace(params=params), ctx, settings)
 core.pp_eqn_rules[reshard_p] = _pp_reshard
 
 # -------------------- Auto and Explicit mode -------------------------
@@ -2916,16 +3013,18 @@ def _auto_axes(fun, *, axes_, out_sharding):
         axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding)
     if mesh_info is None:
       return fun(*args, **kwargs)
+    if config.jax_partitioning.value:
+      raise ValueError(
+          '`auto_axes` is not supported when `jax_partitioning` is enabled.')
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
-    with config.shard_map_partitioning(False):
-      with mesh_lib.use_abstract_mesh(mesh_info.new):
-        in_specs = tree_map(
-            lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
-        args = reshard(args, in_specs)
-        out = fun(*args, **kwargs)
-      res = reshard(out, _out_sharding)
+    with mesh_lib.use_abstract_mesh(mesh_info.new):
+      in_specs = tree_map(
+          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
+      args = reshard(args, in_specs)
+      out = fun(*args, **kwargs)
+    res = reshard(out, _out_sharding)
     if config.no_collectives.value:
       from jax._src.lax import utils as lax_utils  # type: ignore
       out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
@@ -2957,16 +3056,18 @@ def _explicit_axes(fun, *, axes, in_sharding):
       raise ValueError(
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
+    if (config.jax_partitioning.value and
+        not mesh_info.prev.are_all_axes_explicit_or_manual):
+      raise ValueError(
+          '`explicit_axes` is only supported on an all-Explicit mesh when'
+          f' `jax_partitioning` is enabled. Got mesh: {mesh_info.prev}')
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      # The input layout was chosen by Shardy, so let it reshard into explicit.
-      with config.shard_map_partitioning(False):
-        args = reshard(args, _in_sharding)
+      args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(
         lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
         out)
-    with config.shard_map_partitioning(False):
-      return reshard(out, out_specs)
+    return reshard(out, out_specs)
   return decorator
 
 # -------------------- with_layout_constraint --------------------

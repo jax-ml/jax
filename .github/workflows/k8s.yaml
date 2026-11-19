@@ -21,8 +21,8 @@ on:
 
 permissions: {}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 defaults:
   run:
     shell: bash -ex -o pipefail {0}

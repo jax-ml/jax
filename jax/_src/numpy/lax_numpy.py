@@ -69,8 +69,7 @@ from jax._src.util import (
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
-from jax._src.mesh import get_abstract_mesh
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.tree_util import tree_flatten, tree_map
 
 export = set_module('jax.numpy')
@@ -874,6 +873,10 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
     Array(True, dtype=bool)
   """
   sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  if sharding is not None and not sharding.is_fully_replicated:
+    raise core.ShardingTypeError(
+        "out_sharding passed to `jnp.histogram` can only be fully replicated."
+        f" Got {sharding.spec}")
   if isinstance(bins, str):
     if weights is not None:
       raise TypeError("Automated estimation of the number of "
@@ -887,23 +890,35 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
     a, _, weights = util.ensure_arraylike("histogram", a, bins, weights)
     if np.shape(a) != np.shape(weights):
       raise ValueError("weights should have the same shape as a.")
+    ats = core.typeof(a).sharding
+    wts = core.typeof(weights).sharding
+    if (not ats.mesh.empty and not wts.mesh.empty
+        and (ats.mesh._any_axis_explicit or wts.mesh._any_axis_explicit)
+        and ats != wts):
+      raise ValueError(
+          "type of weights must match type of a. Got"
+          f" typeof(a)={core.typeof(a).str_short(True, True)} and"
+          f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if sharding is not None:
-    return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=sharding,
-                     axes=sharding.mesh.explicit_axes
-                     )(a, range, weights)
-  else:
-    return _histogram(a, range, weights, bins, density)
+  return _histogram(a, range, weights, bins, density, out_sharding=sharding)
 
 
-def _histogram(a, range, weights, bins, density):
+def _histogram(a, range, weights, bins, density, out_sharding=None):
+  if (out_sharding is not None and range is None and np.ndim(bins) != 1
+      and np.size(a) != 0 and np.ndim(a) > 0):
+    axes = tuple(builtins.range(np.ndim(a)))
+    s = out_sharding.update(spec=out_sharding.spec.update(partitions=()))
+    range = (lax.reduce_min(a, axes, out_sharding=s),
+             lax.reduce_max(a, axes, out_sharding=s))
   bin_edges = histogram_bin_edges(a, bins, range, weights)
+  if (out_sharding is not None
+      and core.typeof(bin_edges).sharding != out_sharding):
+    bin_edges = reshard(bin_edges, out_sharding)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype
-                                ).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(
+      weights, out_sharding=out_sharding)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
@@ -2678,21 +2693,39 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   xp_left, xp_right = xp_arr[i - 1], xp_arr[i]
   df = fp_right - fp_left
   dx = xp_right - xp_left
-  delta = x_arr - xp_left
+  x_clamped = x_arr
+  if period is None:
+    if not extrapolate_left:
+      x_clamped = where(x_clamped < xp_arr[0], xp_arr[0], x_clamped)
+    if not extrapolate_right:
+      x_clamped = where(x_clamped > xp_arr[-1], xp_arr[-1], x_clamped)
 
-  epsilon = np.spacing(np.finfo(xp_arr.dtype).eps)
-  dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
+  dx0 = dx == 0  # Prevent NaN gradients when `dx` is zero.
   dx_safe = where(dx0, 1, dx)
-  f = where(dx0, fp_left, fp_left + (delta / dx_safe) * df)
+  df_safe = where(dx0, 0, df)
+  subnormal_dx = lax.abs(dx_safe) < dtypes.finfo(xp_arr.dtype).tiny
+
+  def _interp_from(x_ref: Array, fp_ref: Array) -> Array:
+    delta_ref = x_clamped - x_ref
+    dx_denom = where(subnormal_dx & (delta_ref == 0),
+                     lax.stop_gradient(dx_safe), dx_safe)
+    t = delta_ref / dx_denom
+    t = where(subnormal_dx & (df_safe == 0), lax.stop_gradient(t), t)
+    return fp_ref + t * df_safe
+
+  f = where(dx0,
+            where(ufuncs.isnan(x_arr), np.nan,
+                  where(x_arr >= xp_right, fp_right, fp_left)),
+            _interp_from(xp_left, fp_left))
   # `f` is NaN at and around an infinite knot (inf - inf, 0 * inf). Like
   # numpy.interp, return the knot value at an exact knot; elsewhere re-evaluate
   # from the other end of the interval, and fall back to the shared value when
   # both ends are equal. Only entries that are already NaN are replaced.
-  other = fp_right + ((x_arr - xp_right) / dx_safe) * df
+  other = _interp_from(xp_right, fp_right)
   other = where(ufuncs.isnan(other) & (fp_left == fp_right), fp_left, other)
-  f_alt = where(x_arr == xp_left, fp_left,
-                where(x_arr == xp_right, fp_right, other))
-  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr), f_alt, f)
+  f_alt = where(x_arr == xp_right, fp_right,
+                where(x_arr == xp_left, fp_left, other))
+  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr) & ~dx0, f_alt, f)
 
   if not extrapolate_left:
     assert not isinstance(left, str)
@@ -5011,6 +5044,10 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
 
+  # Ensure N is representable in a.dtype (jax-ml/jax#42464)
+  if N > iinfo(a.dtype).max:
+    a = a.astype(dtypes.default_int_dtype())
+
   if mode == 'raise':
     arr: Array = core.concrete_or_error(asarray, a,
       "The error occurred because jnp.choose was jit-compiled"
@@ -6452,48 +6489,19 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     util.check_arraylike("repeat", a, repeats)
   a = asarray(a)
 
+  out_sharding = canonicalize_sharding(out_sharding, 'repeat')
   if axis is None:
     a = a.ravel()
     axis = 0
 
-  if out_sharding is not None:
-    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
-                        out_sharding)
-  ctx_mesh = get_abstract_mesh()
-  if ctx_mesh._any_axis_explicit:
-    aval = core.typeof(a)
-    if axis is None or aval.sharding.spec[axis] is not None:
-      raise ValueError(
-          "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
-    assert axis is not None and aval.sharding.spec[axis] is None
-    out_sharding = (NamedSharding(ctx_mesh, P())
-                    if aval.sharding.mesh.empty else aval.sharding)
-    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
-                        out_sharding)
-  try:
-    return _repeat(repeats, a, axis=axis,
-                   total_repeat_length=total_repeat_length)
-  except core.ShardingTypeError:
-    raise ValueError(
-        "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
+  return _repeat(repeats, a, axis=axis,
+                 total_repeat_length=total_repeat_length,
+                 out_sharding=out_sharding)
 
-def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
-  out_sharding = canonicalize_sharding(out_sharding, 'repeat')
-  if total_repeat_length is None:
-    return auto_axes(partial(fun, repeats, axis=axis,
-                             total_repeat_length=total_repeat_length),
-                     out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
-                     )(a)
-  else:
-    return auto_axes(
-        partial(fun, axis=axis, total_repeat_length=total_repeat_length),
-        out_sharding=out_sharding,
-        axes=out_sharding.mesh.explicit_axes
-        )(repeats, a)
 
 def _repeat(repeats, arr, *, axis: int,
-            total_repeat_length: int | None = None) -> Array:
+            total_repeat_length: int | None = None,
+            out_sharding=None) -> Array:
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
 
   if core.is_symbolic_dim(repeats):
@@ -6519,21 +6527,25 @@ def _repeat(repeats, arr, *, axis: int,
         arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
       result_shape[axis] *= repeats
-      return arr.reshape(result_shape)
+      return arr.reshape(result_shape, out_sharding=out_sharding)
 
     repeats = np.ravel(repeats)
     if arr.ndim != 0:
       repeats = np.broadcast_to(repeats, [arr.shape[axis]])
     total_repeat_length = int(np.sum(repeats))
   else:
-    repeats = ravel(repeats)
+    # `roll`/`cumsum` below require 1D replicated `repeats`.
+    rep_s = None if out_sharding is None else out_sharding.update(spec=P())
+    repeats = ravel(repeats, out_sharding=rep_s)
     if arr.ndim != 0:
       repeats = broadcast_to(repeats, [arr.shape[axis]])
 
   # Special case when a is a scalar.
   if arr.ndim == 0:
     if np.shape(repeats) == (1,):
-      return array_creation.full([total_repeat_length], arr)
+      return array_creation.full(
+          [total_repeat_length], arr, out_sharding=out_sharding
+      )
     else:
       raise ValueError('`repeat` with a scalar parameter `a` is only '
       'implemented for scalar values of the parameter `repeats`.')
@@ -6542,11 +6554,12 @@ def _repeat(repeats, arr, *, axis: int,
   if total_repeat_length == 0:
     result_shape = list(arr.shape)
     result_shape[axis] = 0
-    return reshape(array([], dtype=arr.dtype), result_shape)
+    return lax.full_like(arr, 0, shape=result_shape, sharding=out_sharding)
 
   # If repeats is on a zero sized axis, then return the array.
   if arr.shape[axis] == 0:
-    return arr
+    return (lax.full_like(arr, 0, shape=arr.shape, sharding=out_sharding)
+            if out_sharding is not None else arr)
 
   # This implementation of repeat avoid having to instantiate a large.
   # intermediate tensor.
@@ -6560,7 +6573,8 @@ def _repeat(repeats, arr, *, axis: int,
   block_split_indicators = block_split_indicators.at[scatter_indices].add(1)
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = reductions.cumsum(block_split_indicators) - 1
-  return indexing.take(arr, gather_indices, axis=axis)
+  return indexing.take(
+      arr, gather_indices, axis=axis, out_sharding=out_sharding)
 
 
 @export
@@ -8186,7 +8200,7 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   a_reshaped = expand_dims(a, range(1, 2 * np.ndim(a), 2))
   b_reshaped = expand_dims(b, range(0, 2 * np.ndim(b), 2))
   out_shape = tuple(np.multiply(np.shape(a), np.shape(b)))
-  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
+  return reshape(ufuncs.multiply(a_reshaped, b_reshaped), out_shape)
 
 
 @export
@@ -8236,6 +8250,7 @@ def vander(
            [ 1,  4, 16, 64]], dtype=int32)
   """
   x = util.ensure_arraylike("vander", x)
+  x, = util.promote_dtypes_numeric(x)
   if x.ndim != 1:
     raise ValueError("x must be a one-dimensional array")
   N = x.shape[0] if N is None else core.concrete_or_error(
@@ -8903,9 +8918,8 @@ def _gcd_cond_fn(xs: tuple[Array, Array]) -> Array:
 
 def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
   x1, x2 = xs
-  x1, x2 = (where(x2 != 0, x2, x1),
-            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
-  return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
+  return (where(x2 != 0, x2, x1),
+          where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
 
 
 @export
@@ -8951,8 +8965,13 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (ufuncs.abs(x1), ufuncs.abs(x2)))
-  return gcd
+  utype = np.dtype(f"uint{dtypes.itemsize_bits(x1.dtype)}")
+  u1 = lax._convert_element_type(ufuncs.abs(x1), utype)
+  u2 = lax._convert_element_type(ufuncs.abs(x2), utype)
+  out, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (u1, u2))
+  return lax._convert_element_type(
+      out, x1.dtype, weak_type=dtypes.is_weakly_typed(x1)
+  )
 
 
 @export
@@ -8995,12 +9014,17 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   """
   x1, x2 = util.ensure_arraylike("lcm", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
-  x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)
   if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.lcm must be integers.")
-  d = gcd(x1, x2)
-  return where(d == 0, lax._const(d, 0),
-               ufuncs.multiply(x1, ufuncs.floor_divide(x2, d)))
+  utype = np.dtype(f"uint{dtypes.itemsize_bits(x1.dtype)}")
+  u1 = lax._convert_element_type(ufuncs.abs(x1), utype)
+  u2 = lax._convert_element_type(ufuncs.abs(x2), utype)
+  d = gcd(u1, u2)
+  out = where(d == 0, lax._const(d, 0),
+              ufuncs.multiply(u1, ufuncs.floor_divide(u2, d)))
+  return lax._convert_element_type(
+      out, x1.dtype, weak_type=dtypes.is_weakly_typed(x1)
+  )
 
 
 @export

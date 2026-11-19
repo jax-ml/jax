@@ -616,6 +616,10 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
+  # The architecture to infer layouts for. Allows derivation rules to make
+  # arch-dependent decisions.
+  arch: utils.Arch
+
   # A map of `ValueSite` to the variable that it is associated with.
   variable_for_value_site: dict[ValueSite, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
@@ -1115,8 +1119,7 @@ def _layout_cast_constraint_system(
         f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
-  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is 0.12.0.
-  strict = bool(getattr(op, "strict", False))
+  strict = bool(op.strict)
   return (
       cs.ConstraintSystem(
           assignments={result_var: out_layout},
@@ -1680,7 +1683,7 @@ def _tcgen05_mma_constraint_system(
     operands_for_variable[a_var] = [a]
     constraints.append(mma_tiling_constraint(a_var, op))
 
-  if (sparse_meta_operand := getattr(op, "a_sparse_metadata")) is not None:
+  if (sparse_meta_operand := op.a_sparse_metadata) is not None:
     sparse_meta = ValueSite(
         op, VariableType.OPERAND, list(op.operands).index(sparse_meta_operand)
     )
@@ -1705,17 +1708,42 @@ def _tcgen05_mma_constraint_system(
     scale_index = list(op.operands).index(scale_operand)
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
-    if op.collective and scale_operand == op.b_scale and M == 64:
-      layout = tcgen05.b_scales_m64_collective_layout()
-    else:
-      layout = tcgen05.scales_layout()
-    layout = cs.TMEMLayout(layout)
-    assignments[scale_var] = layout
-    if not cs.is_valid_assignment(scale_var, layout):
-      raise ValueError(
-          f"Cannot assign {layout} to {scale_operand=} with"
-          f" shape {scale.shape}."
+    arch = ctx.arch
+    is_sm107f = arch.major == 10 and arch.minor >= 7
+    if scale_operand == op.a_scale and is_sm107f and not (op.collective and M == 64):
+      # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
+      # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
+      # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
+      # architectures, only `scales_layout()` is supported.
+      # The order of the candidates matters: `OneOf` candidates are tried in
+      # order. `scales_layout()` replicates scale factors across all four
+      # 32-lane sub-partitions (consuming 4x more TMEM columns than
+      # `scales_128_lane_layout()`), so we prefer the 128-lane layout.
+      candidate_layouts = (
+          cs.TMEMLayout(tcgen05.scales_128_lane_layout()),
+          cs.TMEMLayout(tcgen05.scales_layout()),
       )
+      valid_layouts = tuple(
+          l for l in candidate_layouts if cs.is_valid_assignment(scale_var, l)
+      )
+      if not valid_layouts:
+        raise ValueError(
+            f"Cannot assign any of {candidate_layouts} to {scale_operand=}"
+            f" with shape {scale.shape}."
+        )
+      constraints.append(cs.OneOf(scale_var, valid_layouts))
+    else:
+      if op.collective and scale_operand == op.b_scale and M == 64:
+        layout = tcgen05.b_scales_m64_collective_layout()
+      else:
+        layout = tcgen05.scales_layout()
+      layout = cs.TMEMLayout(layout)
+      assignments[scale_var] = layout
+      if not cs.is_valid_assignment(scale_var, layout):
+        raise ValueError(
+            f"Cannot assign {layout} to {scale_operand=} with"
+            f" shape {scale.shape}."
+        )
     operands_for_variable[scale_var] = [scale]
 
   if scaled:
@@ -2887,7 +2915,7 @@ def infer_layout(
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
-  ctx = DerivationContext()
+  ctx = DerivationContext(arch=utils.Arch(*arch))
 
   def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.

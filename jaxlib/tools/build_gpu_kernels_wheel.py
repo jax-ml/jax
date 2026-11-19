@@ -84,7 +84,12 @@ pyext = "pyd" if build_utils.is_windows() else "so"
 
 
 def write_setup_cfg(sources_path, cpu):
-  tag = build_utils.platform_tag(cpu)
+  accelerator = (
+      "cuda" if args.enable_cuda else
+      "rocm" if args.enable_rocm else
+      "oneapi" if args.enable_oneapi else "none"
+  )
+  tag = build_utils.platform_tag(cpu, accelerator)
   with open(sources_path / "setup.cfg", "w") as f:
     f.write(f"""[metadata]
 license_files = LICENSE.txt

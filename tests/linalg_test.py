@@ -1903,8 +1903,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       inverted_pivots = jnp.argsort(p[0])
       return (q @ r)[:, inverted_pivots]
 
-    m, n = shape
-    if pivoting and mode != "r" and (m == n or (m > n and mode != "full")):
+    if pivoting and mode != "r":
       for a in args_maker():
         jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
@@ -2750,6 +2749,25 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
+
+  @jtu.sample_product(
+      shape=[(2, 3, 4), (2, 3, 3), (2, 4, 3), (2, 3, 4, 5)],
+      dtype=float_types + complex_types,
+      full_matrices=[False, True],
+  )
+  @jax.default_matmul_precision("float32")
+  def test_batched_pivoted_qr_jvp(self, shape, dtype, full_matrices):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Pivoting is only supported on CPU and GPU.")
+    rng = jtu.rand_default(self.rng())
+    a = rng(shape, dtype)
+
+    def qr_and_mul(x):
+      q, r, p = lax.linalg.qr(x, pivoting=True, full_matrices=full_matrices)
+      inverted_pivots = jnp.argsort(p, axis=-1)
+      return jnp.take_along_axis(q @ r, inverted_pivots[..., None, :], axis=-1)
+
+    jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
 
   @jtu.sample_product(shape=[(2,), (3,), (3, 2), (3, 4), (3, 4, 5)],

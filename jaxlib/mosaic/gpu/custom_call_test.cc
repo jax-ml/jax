@@ -59,6 +59,10 @@ using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::SizeIs;
 
+constexpr absl::string_view kMetadataCopiedMessage = "Constructed device state";
+constexpr absl::string_view kMetadataSkippedMessage =
+    "Skipping collective metadata copy";
+
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
   ASSIGN_OR_RETURN(auto result,
@@ -339,8 +343,9 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
   {
     InfoLogCollector collector;
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(collector.Stop(),
-                Contains(HasSubstr(kAllocationMessage)).Times(1));
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Contains(HasSubstr(kAllocationMessage)).Times(1));
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataCopiedMessage)).Times(1));
   }
 
   {
@@ -348,7 +353,47 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
     // skipped.
     InfoLogCollector collector;
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(collector.Stop(), Not(Contains(HasSubstr(kAllocationMessage))));
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kAllocationMessage))));
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kMetadataCopiedMessage))));
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataSkippedMessage)).Times(1));
+  }
+}
+
+TEST_F(CustomCallTest, MetadataCopiedWhenBufferAddressChanges) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+
+  SetVLogLevel("custom_call", 5);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  // Keep `held_result` alive so the next execution allocates a new output
+  // buffer address, which changes the collective metadata.
+  std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
+  {
+    std::vector<xla::PjRtBuffer*> no_buffers;
+    ASSERT_OK_AND_ASSIGN(held_result,
+                         executable->Execute({no_buffers}, /*options=*/{}));
+    ASSERT_THAT(held_result, SizeIs(1));
+    ASSERT_THAT(held_result[0], SizeIs(1));
+    EXPECT_THAT(held_result[0][0]->GetReadyFuture().Await(), IsOk());
+  }
+
+  {
+    InfoLogCollector collector;
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+    std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs, Contains(HasSubstr(kMetadataCopiedMessage)).Times(1));
+    EXPECT_THAT(logs, Not(Contains(HasSubstr(kMetadataSkippedMessage))));
   }
 }
 
@@ -369,7 +414,10 @@ TEST_F(CustomCallTest, IgnoresUnknownAttributes) {
 TEST_F(CustomCallTest, SerializationAndDeduplication) {
   // Use a unique kernel hash to avoid cache hits from previous tests.
   std::string kernel_hash = "serdes_dedup_test_hash_012345678";
-  std::string module_str = TestMGPUHloModule();
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\", "
+      "symmetric_memory_parameters = \"0\", skip_device_barrier = true, "
+      "collective_id = 0");
   // Substitute the unique hash into the module.
   module_str = absl::StrReplaceAll(
       module_str, {{"6f8a2b1d5e9c0f4a3b7d8e2c1a6b0f9e", kernel_hash}});

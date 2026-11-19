@@ -22,6 +22,7 @@ import opt_einsum
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import reduction_order as reduction_order_lib
 from jax._src.export import shape_poly
 from jax._src.lax import lax
 from jax._src.numpy import util
@@ -48,7 +49,7 @@ def einsum(
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
+    out_sharding=None, reduction_order=None,
 ) -> Array: ...
 
 @overload
@@ -61,7 +62,7 @@ def einsum(
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
+    out_sharding=None, reduction_order=None,
 ) -> Array: ...
 
 @export
@@ -73,7 +74,7 @@ def einsum(
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
+    out_sharding=None, reduction_order=None,
 ) -> Array:
   """Einstein summation
 
@@ -320,7 +321,8 @@ def einsum(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances.")
 
-  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=api.Inline.JAX_EARLY)
+  reduction_order = reduction_order_lib.normalize_order(reduction_order)
+  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5, 6), inline=api.Inline.JAX_EARLY)
   if spec is not None:
     jit_einsum = api.named_call(jit_einsum, name=spec)
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
@@ -338,10 +340,10 @@ def einsum(
         out_sharding=out_sharding,
     )(operand_arrays, contractions=contractions, precision=precision,
       preferred_element_type=preferred_element_type, _dot_general=_dot_general,
-      out_sharding=None)
+      out_sharding=None, reduction_order=reduction_order)
   else:
     return jit_einsum(operand_arrays, contractions, precision,
-                      preferred_element_type, _dot_general, out_sharding)
+                      preferred_element_type, _dot_general, out_sharding, reduction_order)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -443,6 +445,7 @@ def _einsum(
     preferred_element_type,
     _dot_general=lax.dot_general,
     out_sharding=None,
+    reduction_order=None,
 ):
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(
@@ -456,6 +459,8 @@ def _einsum(
   def sum(x, axes, out_s):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
+    if reduction_order is not None:
+      return lax.reduce_sum(x, axes, out_sharding=out_s, reduction_order=reduction_order)
     return lax.reduce(
         x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
         axes, out_s)
@@ -488,6 +493,8 @@ def _einsum(
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
     return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
+  if reduction_order is not None and len(contractions) != 1:
+    raise ValueError("einsum with reduction_order= requires a single reduction or contraction")
   for operand_indices, contracted_names_set, einstr in contractions:
     contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
@@ -501,6 +508,8 @@ def _einsum(
       counts = collections.Counter(names)
       # sum out unique contracted indices with a single reduce-sum
       uniques = [name for name in contracted_names if counts[name] == 1]
+      if reduction_order is not None and (not uniques or any(c > 1 for c in counts.values())):
+        raise ValueError("einsum with reduction_order= requires a single reduction or contraction")
       operand, names = sum_uniques(operand, names, uniques, out_sharding)
       # for every repeated index, do a contraction against an identity matrix
       operand, names = sum_repeats(operand, names, counts, result_names,
@@ -508,6 +517,8 @@ def _einsum(
     elif len(operand_indices) == 2:
       lhs, rhs = map(operands.pop, operand_indices)
       lhs_names, rhs_names = input_names
+      if reduction_order is not None and tuple(operand_indices) == (1, 0):
+        lhs, rhs, lhs_names, rhs_names = rhs, lhs, rhs_names, lhs_names
 
       # handle cases where one side of a contracting or batch dimension is 1
       # but its counterpart is not.
@@ -522,10 +533,12 @@ def _einsum(
       # sum out unique contracted indices in lhs and rhs
       lhs_uniques = [name for name in contracted_names
                      if lhs_counts[name] == 1 and rhs_counts[name] == 0]
-      lhs, lhs_names = sum_uniques(lhs, lhs_names, lhs_uniques)
-
       rhs_uniques = [name for name in contracted_names
                      if rhs_counts[name] == 1 and lhs_counts[name] == 0]
+      if reduction_order is not None and (lhs_uniques or rhs_uniques or any(
+          c > 1 for c in (*lhs_counts.values(), *rhs_counts.values()))):
+        raise ValueError("einsum with reduction_order= requires a single reduction or contraction")
+      lhs, lhs_names = sum_uniques(lhs, lhs_names, lhs_uniques)
       rhs, rhs_names = sum_uniques(rhs, rhs_names, rhs_uniques)
 
       # for every repeated index, contract against an identity matrix
@@ -536,6 +549,8 @@ def _einsum(
 
       lhs_or_rhs_names = set(lhs_names) | set(rhs_names)
       contracted_names = [x for x in contracted_names if x in lhs_or_rhs_names]
+      if reduction_order is not None and not contracted_names:
+        raise ValueError("einsum with reduction_order= requires a single reduction or contraction")
       lhs_and_rhs_names = set(lhs_names) & set(rhs_names)
       batch_names = [x for x in result_names if x in lhs_and_rhs_names]
 
@@ -564,7 +579,7 @@ def _einsum(
       # right to left, so we expect (rhs,lhs) to have the best chance of not
       # needing a transpose.
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
-      if names == result_names:
+      if reduction_order is None and names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
         dot_out_sharding = ({} if out_sharding is None else
                             {'out_sharding': out_sharding})
@@ -581,7 +596,8 @@ def _einsum(
                             {'out_sharding': out_sharding})
         operand = _dot_general(lhs, rhs, dimension_numbers, precision,
                                 preferred_element_type=preferred_element_type,
-                                **dot_out_sharding)
+                                **dot_out_sharding,
+                                **({} if reduction_order is None else {'reduction_order': reduction_order}))
     else:
       raise NotImplementedError(
         "jax.numpy.einsum does not support simultaneous contraction of 3 or more"

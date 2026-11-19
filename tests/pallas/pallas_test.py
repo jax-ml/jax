@@ -551,9 +551,16 @@ class PallasCallTest(ptu.PallasTPUTest):
             shape[-1],
             shape[-2],
         )
-        evenly_divisible = (
-            (bs0 == as0 or bs0 % 128 == 0) and
-            (bs1 == as1 or bs1 % 8 == 0))
+        # Blocks with 1, 2 or 4 rows are retiled by the pipeline DMAs, if they
+        # have at least as many rows as are packed into a sublane.
+        retiled = (
+            bs1 in (1, 2, 4)
+            and bs1 >= 4 // np.dtype(dtype).itemsize
+            and jtu.is_libtpu_at_least("0.0.54")
+        )
+        evenly_divisible = (bs0 == as0 or bs0 % 128 == 0) and (
+            bs1 == as1 or bs1 % 8 == 0 or retiled
+        )
         if not evenly_divisible:
           test_context = self.assertRaisesRegex(
               ValueError,

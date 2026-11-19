@@ -51,7 +51,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
-from jax._src.scipy.bessel import iv as iv, jn as jn, yn as yn
+from jax._src.scipy.bessel import iv as iv, jn as jn, kn as kn, yn as yn
 from jax._src.scipy.betaln import _betaln
 from jax._src.scipy.gamma import gamma_real
 from jax._src.typing import Array, ArrayLike
@@ -4176,15 +4176,16 @@ def _hyp1f1_asymptotic(a, b, x):
 
 @jit
 @jnp_vectorize.vectorize
-def _hyp1f1_param_derivative(a, b, x, p):
-  """Computes the parameter-derivative series for 1F1 at parameter ``p``.
+def _hyp1f1_param_derivative(a, b, x, which):
+  """Computes the parameter-derivative series for 1F1 at parameter ``which``.
 
   Evaluates ``sum_{k=1}^inf ((a)_k / (b)_k) (x^k / k!) H_k(p)`` where
-  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
-  This equals ``d/da hyp1f1(a, b, x)`` for ``p = a`` and
-  ``-d/db hyp1f1(a, b, x)`` for ``p = b``. Factored into a single ``@jit``
-  helper to save trace and compile time across ``a`` and ``b``.
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)`` and
+  ``p`` is ``a`` (``which == 0``) or ``b`` (``which == 1``). Selecting ``p``
+  inside a single ``@jit`` helper keeps the input signature identical across
+  ``a`` and ``b`` even when ``a`` and ``b`` have different broadcast shapes.
   """
+  p = lax.select(which == 0, a, b)
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
@@ -4215,7 +4216,7 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
-  return _hyp1f1_param_derivative(a, b, x, a)
+  return _hyp1f1_param_derivative(a, b, x, jnp.int32(0))
 
 
 def _hyp1f1_b_derivative(a, b, x):
@@ -4224,22 +4225,42 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
-  return -_hyp1f1_param_derivative(a, b, x, b)
+  return -_hyp1f1_param_derivative(a, b, x, jnp.int32(1))
 
 
-@jit
 def _hyp1f1_x_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/04/
   """
 
-  return a / b * hyp1f1(a + 1, b + 1, x)
+  return a / b * _hyp1f1(a + 1, b + 1, x)
 
 
 @custom_derivatives.custom_jvp
 @jit
 @jnp_vectorize.vectorize
+def _hyp1f1(a: Array, b: Array, x: Array) -> Array:
+  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
+  # There is room for improvement in the implementation using recursion to
+  # evaluate lower values of hyp1f1 when a or b or both are > 60-80
+  result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
+
+  return lax.select_n(index,
+                      result,
+                      jnp.array(1, dtype=x.dtype),
+                      jnp.exp(x),
+                      jnp.array(np.inf, dtype=x.dtype))
+
+
+_hyp1f1.defjvps(
+  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
+  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
+  lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
+)
+
+
 def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""The 1F1 hypergeometric function.
 
@@ -4264,29 +4285,10 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   Returns:
     array of 1F1 values.
   """
-  # This is backed by https://doi.org/10.48550/arXiv.1407.7786
-  # There is room for improvement in the implementation using recursion to
-  # evaluate lower values of hyp1f1 when a or b or both are > 60-80
   a, b, x = promote_args_inexact('hyp1f1', a, b, x)
-
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("hyp1f1 does not support complex-valued inputs.")
-
-  result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
-  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
-
-  return lax.select_n(index,
-                      result,
-                      jnp.array(1, dtype=x.dtype),
-                      jnp.exp(x),
-                      jnp.array(np.inf, dtype=x.dtype))
-
-
-hyp1f1.defjvps(
-  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
-  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
-  lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
-)
+  return _hyp1f1(a, b, x)
 
 
 def _hyp2f1_terminal(a, b, c, x):
@@ -4525,15 +4527,17 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
 
 @jit
 @jnp_vectorize.vectorize
-def _hyp2f1_param_derivative(a, b, c, x, p):
-  """Computes the parameter-derivative series for 2F1 at parameter ``p``.
+def _hyp2f1_param_derivative(a, b, c, x, which):
+  """Computes the parameter-derivative series for 2F1 at parameter ``which``.
 
   Evaluates ``sum_{k=1}^inf ((a)_k (b)_k / (c)_k) (x^k / k!) H_k(p)`` where
-  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
-  This equals ``d/dp hyp2f1(a, b, c, x)`` for ``p in {a, b}`` and
-  ``-d/dc hyp2f1(a, b, c, x)`` for ``p = c``. Factored into a single ``@jit``
-  helper to save trace and compile time across ``a``, ``b``, and ``c``.
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)`` and
+  ``p`` is ``a``, ``b``, or ``c`` for ``which`` in ``{0, 1, 2}``. Selecting
+  ``p`` inside a single ``@jit`` helper keeps the input signature identical
+  across ``a``, ``b``, and ``c`` even when arguments have mixed broadcast
+  shapes.
   """
+  p = lax.select_n(which, a, b, c)
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
@@ -4564,7 +4568,7 @@ def _hyp2f1_a_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
-  return _hyp2f1_param_derivative(a, b, c, x, a)
+  return _hyp2f1_param_derivative(a, b, c, x, jnp.int32(0))
 
 
 def _hyp2f1_b_derivative(a, b, c, x):
@@ -4573,7 +4577,7 @@ def _hyp2f1_b_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
-  return _hyp2f1_param_derivative(a, b, c, x, b)
+  return _hyp2f1_param_derivative(a, b, c, x, jnp.int32(1))
 
 
 def _hyp2f1_c_derivative(a, b, c, x):
@@ -4582,48 +4586,23 @@ def _hyp2f1_c_derivative(a, b, c, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
-  return -_hyp2f1_param_derivative(a, b, c, x, c)
+  return -_hyp2f1_param_derivative(a, b, c, x, jnp.int32(2))
 
 
-@jit
 def _hyp2f1_x_derivative(a, b, c, x):
   """
   Define the derivative with respect to ``x``:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/05/
   """
 
-  return a * b / c * hyp2f1(a + 1, b + 1, c + 1, x)
+  return a * b / c * _hyp2f1(a + 1, b + 1, c + 1, x)
 
 
 @custom_derivatives.custom_jvp
 @jit
 @jnp_vectorize.vectorize
-def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
-  r"""The 2F1 hypergeometric function.
-
-  JAX implementation of :obj:`scipy.special.hyp2f1`.
-
-  .. math::
-
-     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
-
-  where :math:`(\cdot)_k` is the Pochhammer symbol.
-
-  The JAX version only accepts positive and real inputs. Values of
-  ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
-  lead to erroneous results; consider enabling double precision in this case.
-
-  Args:
-    a: arraylike, real-valued
-    b: arraylike, real-valued
-    c: arraylike, real-valued
-    x: arraylike, real-valued
-
-  Returns:
-    array of 2F1 values.
-  """
+def _hyp2f1(a: Array, b: Array, c: Array, x: Array) -> Array:
   # This is backed by https://doi.org/10.48550/arXiv.1407.7786
-  a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
   eps = dtypes.finfo(x.dtype).eps * 50
 
   d = c - a - b
@@ -4667,12 +4646,40 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
                       term_or_serie)
 
 
-hyp2f1.defjvps(
+_hyp2f1.defjvps(
   lambda a_dot, primal_out, a, b, c, x: _hyp2f1_a_derivative(a, b, c, x) * a_dot,
   lambda b_dot, primal_out, a, b, c, x: _hyp2f1_b_derivative(a, b, c, x) * b_dot,
   lambda c_dot, primal_out, a, b, c, x: _hyp2f1_c_derivative(a, b, c, x) * c_dot,
   lambda x_dot, primal_out, a, b, c, x: _hyp2f1_x_derivative(a, b, c, x) * x_dot
 )
+
+
+def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
+  r"""The 2F1 hypergeometric function.
+
+  JAX implementation of :obj:`scipy.special.hyp2f1`.
+
+  .. math::
+
+     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
+
+  where :math:`(\cdot)_k` is the Pochhammer symbol.
+
+  The JAX version only accepts positive and real inputs. Values of
+  ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
+  lead to erroneous results; consider enabling double precision in this case.
+
+  Args:
+    a: arraylike, real-valued
+    b: arraylike, real-valued
+    c: arraylike, real-valued
+    x: arraylike, real-valued
+
+  Returns:
+    array of 2F1 values.
+  """
+  a, b, c, x = promote_args_inexact('hyp2f1', a, b, c, x)
+  return _hyp2f1(a, b, c, x)
 
 
 # 13-point Gauss-type quadrature on the canonical Owen's T integral

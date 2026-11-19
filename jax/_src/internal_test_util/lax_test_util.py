@@ -201,6 +201,7 @@ def lax_ops():
       op_record("is_finite", 1, float_dtypes, test_util.rand_small),
       op_record("exp", 1, float_dtypes + complex_dtypes, test_util.rand_small),
       op_record("exp2", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("exp2m1", 1, float_dtypes, test_util.rand_small),
       # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
       # precision.
       op_record(
@@ -216,6 +217,7 @@ def lax_ops():
       op_record(
           "log2", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
+      op_record("log2p1", 1, float_dtypes, test_util.rand_positive),
       op_record(
           "log1p", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
@@ -390,7 +392,13 @@ def lax_ops():
       ),
       op_record("mulhi", 2, int_dtypes + uint_dtypes, test_util.rand_fullrange),
       op_record("fma", 3, float_dtypes, test_util.rand_default, tol=0),
-      op_record("fmuladd", 3, float_dtypes, test_util.rand_default),
+      op_record(
+          "fmuladd",
+          3,
+          float_dtypes,
+          test_util.rand_default,
+          tol={dtypes.bfloat16: 5e-2, np.float16: 5e-3},
+      ),
       op_record(
           "div", 2, default_dtypes + complex_dtypes, test_util.rand_nonzero
       ),
@@ -409,7 +417,6 @@ def lax_ops():
 def backend_supports_fma(dtype) -> bool:
   if (
       jaxlib_extension_version < 515
-      or not test_util.is_libtpu_at_least("0.0.52")
       or not test_util.stablehlo_version_at_least("1.24.0")
   ):
     return False

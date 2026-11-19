@@ -52,7 +52,7 @@ from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -1022,10 +1022,24 @@ def _check_block_mappings(
     else:
       bs1, as1 = 1, 1
 
+    if bm.array_aval.dtype == jnp.bool_:
+      bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
+    else:
+      bitwidth = dtypes.itemsize_bits(physical_dtype)
+    packing = 32 // bitwidth
+
     if rank >= 2:
-      evenly_divisible = (
-          (bs0 == as0 or bs0 % 128 == 0) and
-          (bs1 == as1 or bs1 % 8 == 0)
+      # VMEM blocks with 1, 2 or 4 rows are retiled by the pipeline DMAs. A
+      # block needs at least as many rows as are packed into a sublane.
+      retiled = (
+          bs1 in (1, 2, 4)
+          and bs1 >= packing
+          and tpu_core.unwrap_core_memory_space(memory_space)
+          == tpu_core.MemorySpace.VMEM
+          and is_libtpu_at_least("0.0.54")
+      )
+      evenly_divisible = (bs0 == as0 or bs0 % 128 == 0) and (
+          bs1 == as1 or bs1 % 8 == 0 or retiled
       )
       if not evenly_divisible:
         extra_msg = ""
@@ -1040,17 +1054,13 @@ def _check_block_mappings(
             "The Pallas TPU lowering currently requires that the last two "
             "dimensions of your block shape are divisible by 8 and 128 "
             "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
+            "overall array. The second to last dimension of a VMEM block "
+            "may also be 1, 2 or 4, if it is at least 32 // dtype bitwidth. "
             + extra_msg
             + err_details()
         )
     else:
       assert rank == 1
-      if bm.array_aval.dtype == jnp.bool_:
-        bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
-      else:
-        bitwidth = dtypes.itemsize_bits(physical_dtype)
-      packing = 32 // bitwidth
       sublane_count = tpu_info.get_tpu_info().num_sublanes
       lane_count = tpu_info.get_tpu_info().num_lanes
       min_tiling = lane_count * packing
@@ -1116,10 +1126,10 @@ def lower_jaxpr_into_pipelined_module(
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.53"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.53). Found"
         f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
@@ -1495,10 +1505,10 @@ def lower_jaxpr_into_unpipelined_module(
     )
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.53"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.53). Found"
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
@@ -2245,8 +2255,6 @@ def _pad_memref(
     padder: pallas_core.PadTransform,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
-  if not is_libtpu_at_least("0.0.52"):
-    raise NotImplementedError("pad_ref requires libtpu >= 0.0.52")
   ref_ty = ir.MemRefType(ref.type)
   padded_iter = iter(padder.shape)
   new_shape: list[int] = []
@@ -3748,9 +3756,18 @@ def _reduce_index_helper(
     raise NotImplementedError("Only single axis reduction supported")
 
   axis = axes[0]
-  # TODO(b/460843515): Support 1D inputs in Mosaic.
+  keep_dims = xla_version >= 84
+  # Mosaic natively supports 1D inputs to tpu.reduce_index since XLA version
+  # 89. Older versions (and the forward compatible serialization format, which
+  # drops the reduced dimension) require reshaping the input to 2D first.
+  supports_1d = (
+      xla_version >= 89
+      and ctx.is_libtpu_at_least("0.0.54")
+      and not ctx.forward_compatible
+  )
   is_1d = len(x_aval.shape) == 1
-  if is_1d:
+  reshape_1d = is_1d and not supports_1d
+  if reshape_1d:
     x = vector.shape_cast(
         ctx.aval_to_ir_type(
             jax_core.ShapedArray((1, *x_aval.shape), x_aval.dtype)
@@ -3762,7 +3779,6 @@ def _reduce_index_helper(
   else:
     in_shape = x_aval.shape
 
-  keep_dims = ifrt_version >= 84
   out_shape = (
       *in_shape[:axis],
       *((1,) if keep_dims else ()),
@@ -4421,7 +4437,7 @@ _cmpui_lowering_types = {
 # Mapping for floating point comparisons.
 _cmpf_lowering_types = {
     lax.eq_p: arith.CmpFPredicate.OEQ,
-    lax.ne_p: arith.CmpFPredicate.ONE,
+    lax.ne_p: arith.CmpFPredicate.UNE,
     lax.lt_p: arith.CmpFPredicate.OLT,
     lax.le_p: arith.CmpFPredicate.OLE,
     lax.gt_p: arith.CmpFPredicate.OGT,
@@ -4502,6 +4518,14 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
 
   if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[primitive]
+    # Older TC compilers reject UNE but lower ONE to the same unordered
+    # hardware compare.
+    if (
+        primitive == lax.ne_p
+        and ctx.lowering_context.kernel_type == tpu_core.CoreType.TC
+        and (ctx.forward_compatible or ctx.lowering_context.backend is None)
+    ):
+      pred = arith.CmpFPredicate.ONE
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.cmpf(predicate, x, y)
 
@@ -5023,7 +5047,7 @@ def _eval_jaxpr_lowering_rule(ctx: LoweringRuleContext, *args, call_jaxpr, **_):
 
 @register_lowering_rule(pjit.reshard_p, kernel_types=[*tpu_core.CoreType])
 def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
-                           concrete_mesh):
+                           concrete_mesh, reduction_order):
   return x
 
 
@@ -5618,9 +5642,11 @@ def _semaphore_signal_lowering_rule(
 @register_lowering_rule(
     primitives.semaphore_wait_p, kernel_types=[*tpu_core.CoreType]
 )
-def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
-  sem_aval, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
+def _semaphore_wait_lowering_rule(
+    ctx: LoweringRuleContext, *args, args_tree, decrement: bool
+):
+  sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
   if not decrement:
     raise NotImplementedError("Non-decrementing wait is not supported.")
   sem, _ = _transform_ref(
@@ -6100,7 +6126,8 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 @register_lowering_rule(prng.random_bits_p)
 def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape,
-                         num_streams=1):
+                         num_streams, out_sharding):
+  del out_sharding
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
@@ -6213,7 +6240,10 @@ def _threefry2x32_lowering(ctx: LoweringRuleContext, k1, k2, m1, m2):
 
 
 @register_lowering_rule(prng.iota_2x32_shape_p)
-def _iota_2x32_shape_lowering(ctx: LoweringRuleContext, *, shape):
+def _iota_2x32_shape_lowering(
+    ctx: LoweringRuleContext, *, shape, out_sharding
+):
+  del out_sharding
   total_elements = math.prod(shape)
   if total_elements > np.iinfo(jnp.int32).max:
     raise NotImplementedError(f"Iota with >{np.iinfo(jnp.int32).max} items.")

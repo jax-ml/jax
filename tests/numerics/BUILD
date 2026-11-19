@@ -58,9 +58,11 @@ py_library(
 jax_multiplatform_test(
     name = "arithmetic_test",
     srcs = ["arithmetic_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 1,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -73,9 +75,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "bessel_test",
     srcs = ["bessel_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 7,
-    tags = ["cpu:4"],
+    shard_count = 12,
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -90,11 +94,11 @@ jax_multiplatform_test(
     name = "erf_test",
     srcs = ["erf_test.py"],
     backend_tags = {
+        "cpu": ["cpu:4"],
         "tpu": ["notsan"],
     },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 10,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -108,9 +112,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "exp_test",
     srcs = ["exp_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
-    tags = ["cpu:4"],
+    shard_count = 6,
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -123,9 +129,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "gamma_test",
     srcs = ["gamma_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 6,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -139,9 +147,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "hyperbolic_test",
     srcs = ["hyperbolic_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 10,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -154,9 +164,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "log_test",
     srcs = ["log_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
-    tags = ["cpu:4"],
+    shard_count = 6,
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -170,9 +182,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "power_test",
     srcs = ["power_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 6,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
@@ -185,9 +199,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "trig_test",
     srcs = ["trig_test.py"],
+    backend_tags = {
+        "cpu": ["cpu:4"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 18,
-    tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
     ] + py_deps([
