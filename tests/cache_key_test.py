@@ -18,6 +18,7 @@ import re
 import sys
 import unittest
 from typing import cast as type_cast
+from unittest import mock
 
 import numpy as np
 
@@ -40,6 +41,49 @@ from jax._src.custom_partitioning import custom_partitioning
 
 
 config.parse_flags_with_absl()
+
+
+def _varint(value):
+  out = bytearray()
+  while True:
+    byte = value & 0x7F
+    value >>= 7
+    if value:
+      out.append(byte | 0x80)
+    else:
+      out.append(byte)
+      return bytes(out)
+
+
+def _protobuf_field(field_no, wire_type, value):
+  out = _varint((field_no << 3) | wire_type)
+  if wire_type == 2:
+    out += _varint(len(value))
+  return out + value
+
+
+def _cpu_topology_bytes(process_index, cpu_name=b"znver5"):
+  """Serialize a minimal PjRtTopologyDescriptionProto with a CPU topology.
+
+  The layout follows xla/pjrt/proto/topology_description.proto (fields 1-3
+  and 9, the platform-specific topology Any) and
+  xla/pjrt/plugin/xla_cpu/cpu_topology.proto (CpuTopologyProto fields 1 and
+  5, CpuDevice field 2 = process_index). Only the field layout matters
+  here; the target-machine-options payload is opaque bytes.
+  """
+  device = _protobuf_field(2, 0, _varint(process_index))
+  cpu_topology = _protobuf_field(1, 2, device) + _protobuf_field(
+      5, 2, _protobuf_field(2, 2, cpu_name)
+  )
+  topology_any = _protobuf_field(
+      1, 2, b"type.googleapis.com/xla.CpuTopologyProto"
+  ) + _protobuf_field(2, 2, cpu_topology)
+  return (
+      _protobuf_field(1, 0, _varint(0))
+      + _protobuf_field(2, 2, b"cpu")
+      + _protobuf_field(3, 2, b"cpu")
+      + _protobuf_field(9, 2, topology_any)
+  )
 
 
 class CacheKeyTest(jtu.JaxTestCase):
@@ -243,10 +287,69 @@ class CacheKeyTest(jtu.JaxTestCase):
     backend = xla_bridge.get_backend()
     hash_1 = cache_key.get(computation, devices, compile_options_1, backend)
     hash_2 = cache_key.get(computation, devices, compile_options_2, backend)
-    if backend.platform == "gpu":
+    if backend.platform in ("gpu", "cpu"):
+      # The device assignment is stripped from the cache key on GPU and CPU
+      # so that processes in a multi-process job compute the same key.
       self.assertEqual(hash_1, hash_2)
     else:
       self.assertNotEqual(hash_1, hash_2)
+
+  def test_strip_cpu_topology_process_index(self):
+    # The process_index of a CpuDevice must not affect the cache key: two
+    # processes in one multi-process job serialize topologies that differ
+    # only in process_index (https://github.com/jax-ml/jax/issues/42734).
+    stripped_0 = cache_key._strip_cpu_topology_process_index(
+        _cpu_topology_bytes(0)
+    )
+    stripped_1 = cache_key._strip_cpu_topology_process_index(
+        _cpu_topology_bytes(1)
+    )
+    self.assertEqual(stripped_0, stripped_1)
+    # Stripping is idempotent.
+    self.assertEqual(
+        cache_key._strip_cpu_topology_process_index(stripped_1), stripped_1
+    )
+    # A different CPU model is still distinguished.
+    self.assertNotEqual(
+        stripped_1,
+        cache_key._strip_cpu_topology_process_index(
+            _cpu_topology_bytes(1, cpu_name=b"skylake")
+        ),
+    )
+    # Inputs without a CPU topology return None.
+    self.assertIsNone(cache_key._strip_cpu_topology_process_index(b""))
+    self.assertIsNone(
+        cache_key._strip_cpu_topology_process_index(b"\xff\xff\xff")
+    )
+
+  def _hash_accelerator_config_with_topology(self, topology, devices):
+    hash_obj = hashlib.sha256()
+    with mock.patch.object(
+        xla_client, "get_topology_for_devices", return_value=topology
+    ):
+      cache_key._hash_accelerator_config(hash_obj, devices)
+    return hash_obj.digest().hex()
+
+  def test_hash_accelerator_config_ignores_cpu_process_index(self):
+    devices = np.array([[jax.local_devices()[0]]])
+    topology_class = type(
+        xla_client.get_topology_for_devices(list(devices.flat))
+    )
+    topology_0 = topology_class.deserialize(_cpu_topology_bytes(0))
+    topology_1 = topology_class.deserialize(_cpu_topology_bytes(1))
+    topology_other_cpu = topology_class.deserialize(
+        _cpu_topology_bytes(1, cpu_name=b"skylake")
+    )
+    self.assertEqual(
+        self._hash_accelerator_config_with_topology(topology_0, devices),
+        self._hash_accelerator_config_with_topology(topology_1, devices),
+    )
+    self.assertNotEqual(
+        self._hash_accelerator_config_with_topology(topology_0, devices),
+        self._hash_accelerator_config_with_topology(
+            topology_other_cpu, devices
+        ),
+    )
 
   @parameterized.parameters([False, True])
   @jtu.thread_unsafe_test()  # env vars are not thread-safe

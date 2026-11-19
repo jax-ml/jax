@@ -22,6 +22,9 @@ import math
 import os
 import platform
 import re
+import socket
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -118,6 +121,47 @@ def count_cache_items() -> int:
 def clear_cache() -> None:
   if cc._cache is not None:
     cc._cache.clear()
+
+
+# Worker script for test_multiprocess_cpu_cache_hit below, run as a separate
+# process per process id (see https://github.com/jax-ml/jax/issues/42734).
+# Usage: cache_worker.py <process_id> <cache_dir> <port>
+_CPU_MULTIPROCESS_CACHE_WORKER = """
+import sys
+
+import jax
+import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec as P
+
+
+def main():
+  process_id = int(sys.argv[1])
+  cache_dir = sys.argv[2]
+  port = int(sys.argv[3])
+
+  jax.config.update("jax_cpu_collectives_implementation", "gloo")
+  jax.config.update("jax_compilation_cache_dir", cache_dir)
+  jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+  jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
+  jax.distributed.initialize(f"localhost:{port}", 2, process_id)
+
+  mesh = jax.make_mesh((2,), ("x",))
+  sharding = NamedSharding(mesh, P("x"))
+  x = jax.make_array_from_process_local_data(
+      sharding, jnp.full((1, 4), process_id + 1.0)
+  )
+
+  @jax.jit
+  def step(x):
+    return jnp.sum(x) + jnp.max(x * 2)
+
+  print(f"process {process_id}: {float(step(x))}", flush=True)
+  jax.distributed.shutdown()
+
+
+if __name__ == "__main__":
+  main()
+"""
 
 
 @jtu.thread_unsafe_test_class()  # mocking isn't thread-safe
@@ -653,6 +697,49 @@ class CompilationCacheTest(CompilationCacheTestCase):
         self.assertEqual(files_in_directory, 1)
       elif process_id == 1:
         self.assertEqual(files_in_directory, 0)
+
+  def test_multiprocess_cpu_cache_hit(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42734: with
+    # Gloo collectives and a persistent compilation cache, the second run of
+    # a two-process CPU job hung because the processes computed different
+    # cache keys -- the device assignment pinned each process's local device
+    # and the CPU topology embedded each process's index -- so only process
+    # 0 hit the cache and the processes got different Gloo run ids. Both
+    # runs must complete with the same result.
+    if not jtu.test_device_matches(["cpu"]):
+      raise SkipTest("Test requires CPU devices")
+    with tempfile.TemporaryDirectory() as tmpdir:
+      worker_path = os.path.join(tmpdir, "cache_worker.py")
+      with open(worker_path, "w") as f:
+        f.write(_CPU_MULTIPROCESS_CACHE_WORKER)
+      cache_dir = os.path.join(tmpdir, "cache")
+      with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("localhost", 0))
+        port = sock.getsockname()[1]
+      for run in (1, 2):
+        procs = [
+            subprocess.Popen(
+                [sys.executable, worker_path, str(i), cache_dir, str(port)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            for i in range(2)
+        ]
+        outputs = []
+        try:
+          for p in procs:
+            outputs.append(p.communicate(timeout=120)[0])
+        except subprocess.TimeoutExpired:
+          for p in procs:
+            p.kill()
+          self.fail(f"run {run} hung (see jax-ml/jax#42734)")
+        self.assertTrue(
+            all(p.returncode == 0 for p in procs),
+            f"run {run} failed: {outputs}",
+        )
+        for process_id, output in enumerate(outputs):
+          self.assertIn(f"process {process_id}: 16.0", output)
 
   def test_backend_serialization_deserialization(self):
     backend = xla_bridge.get_backend()
