@@ -597,7 +597,12 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     else:
       # Storing WGMMA bf16 (16B/row) to GMEM touches partial 32B sectors and
       # cannot use an optimized store transfer.
-      with self.assertRaisesRegex(Exception, "GMEM transfer does not access"):
+      error_regex = (
+          "Failed to infer a possible set of layouts"
+          if self.is_wg_semantics()
+          else "GMEM transfer does not access"
+      )
+      with self.assertRaisesRegex(Exception, error_regex):
         run_kernel(optimized=True)
       np.testing.assert_array_equal(run_kernel(optimized=False), x + 1)
 
