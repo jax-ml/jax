@@ -87,10 +87,20 @@ class PyDeviceList {
 
   nanobind::tuple Dump() const;
 
-  int64_t Hash();  // Mutates hash_, needs self lock.
+  // Returns the cached hash. Mutates `hash_`; requires the self lock.
+  // Empty IFRT-backed lists hash identically to `()`. Non-empty IFRT-backed
+  // lists hash via `absl::HashOf` rather than Python's `tuple` hash to avoid
+  // materializing `PyDevice` wrappers, so mixing `DeviceList` with `tuple` keys
+  // (or cross-representation `DeviceList` keys) in the same `dict`/`set` is
+  // unsupported.
+  int64_t Hash();
 
-  static bool Equal(nb_class_ptr<PyDeviceList> self, nanobind::handle other);
-  static bool NotEqual(nb_class_ptr<PyDeviceList> self, nanobind::handle other);
+  // Returns `bool` or `NotImplemented` for Python `__eq__`.
+  static nanobind::object Equal(nb_class_ptr<PyDeviceList> self,
+                                nanobind::handle other);
+  // Returns `bool` or `NotImplemented` for Python `__ne__`.
+  static nanobind::object NotEqual(nb_class_ptr<PyDeviceList> self,
+                                   nanobind::handle other);
 
   // Finds the memory kind info from an addressable device. Requires the GIL
   // or self lock.

@@ -104,7 +104,12 @@ int64_t PyDeviceList::Hash() {
   if (!hash_.has_value()) {
     switch (device_list_.index()) {
       case 0: {
-        hash_ = AbslHashToPythonHash(absl::HashOf(std::get<0>(device_list_)));
+        const xla::ifrt::DeviceListRef& device_list = std::get<0>(device_list_);
+        if (device_list->empty()) {
+          hash_ = nb::hash(nb::tuple());
+        } else {
+          hash_ = AbslHashToPythonHash(absl::HashOf(device_list));
+        }
         break;
       }
       case 1:
@@ -117,39 +122,129 @@ int64_t PyDeviceList::Hash() {
   return *hash_;
 }
 
-/*static*/ bool PyDeviceList::Equal(nb_class_ptr<PyDeviceList> self,
-                                    nb::handle other) {
-  if (!nb::isinstance<PyDeviceList>(other)) {
+namespace {
+
+// Compares an IFRT `DeviceList` against an exact Python `tuple`
+// element-by-element without materializing `PyDevice` wrappers for exact
+// `PyDevice` elements.
+bool EqualIfrtDeviceListAndTuple(const nb_class_ptr<PyClient>& py_client,
+                                 const xla::ifrt::DeviceListRef& self_devices,
+                                 const nb::tuple& other_tuple) {
+  absl::Span<xla::ifrt::Device* const> devices = self_devices->devices();
+  if (other_tuple.size() != devices.size()) {
     return false;
   }
-  auto o = nb::cast<PyDeviceList*>(other);
-  // Fast-path using a pointer equality check.
-  if (self.get() == o) {
+  if (devices.empty()) {
     return true;
   }
-  int64_t h1, h2;
-  {
-    nb::ft_object_guard lock(self);
-    h1 = self->Hash();
+  const nb::handle py_device_type = nb::type<PyDevice>();
+  size_t i = 0;
+  for (nb::handle elem : other_tuple) {
+    if (elem.type().is(py_device_type) && nb::inst_ready(elem)) {
+      const PyDevice* py_device = nb::inst_ptr<PyDevice>(elem);
+      if (py_device->client().get() != py_client.get() ||
+          py_device->device() != devices[i]) {
+        return false;
+      }
+    } else if (!py_client->GetPyDevice(devices[i]).equal(elem)) {
+      return false;
+    }
+    ++i;
   }
-  {
-    nb::ft_object_guard lock(other);
-    h2 = o->Hash();
+  return true;
+}
+
+}  // namespace
+
+/*static*/ nb::object PyDeviceList::Equal(nb_class_ptr<PyDeviceList> self,
+                                          nb::handle other) {
+  if (nb::isinstance<PyDeviceList>(other)) {
+    if (!nb::inst_ready(other)) {
+      return nb::not_implemented();
+    }
+    PyDeviceList* other_device_list = nb::inst_ptr<PyDeviceList>(other);
+    // Fast-path using a pointer equality check.
+    if (self.get() == other_device_list) {
+      return nb::bool_(true);
+    }
+    if (self->device_list_.index() == other_device_list->device_list_.index()) {
+      switch (self->device_list_.index()) {
+        case 0: {
+          const xla::ifrt::DeviceListRef& self_devices =
+              std::get<0>(self->device_list_);
+          const xla::ifrt::DeviceListRef& other_devices =
+              std::get<0>(other_device_list->device_list_);
+          // Handle empty lists before delegating to backend `operator==` so
+          // empty IFRT `DeviceList`s compare equal across different backends
+          // (e.g., `BasicDeviceList` vs Pathways `DeviceList`).
+          if (self_devices->empty() || other_devices->empty()) {
+            return nb::bool_(self_devices->empty() && other_devices->empty());
+          }
+          int64_t self_hash;
+          int64_t other_hash;
+          {
+            nb::ft_object_guard lock(self);
+            self_hash = self->Hash();
+          }
+          {
+            nb::ft_object_guard lock(other);
+            other_hash = other_device_list->Hash();
+          }
+          if (self_hash != other_hash) {
+            return nb::bool_(false);
+          }
+          bool equal;
+          {
+            nb::gil_scoped_release gil_release;
+            equal = *self_devices == *other_devices;
+          }
+          return nb::bool_(equal);
+        }
+        case 1:
+          return nb::bool_(
+              std::get<1>(self->device_list_)
+                  .equal(std::get<1>(other_device_list->device_list_)));
+        default:
+          throw nb::value_error("Unrecognized DeviceList type");
+      }
+    }
+    if (self->device_list_.index() == 0 &&
+        other_device_list->device_list_.index() == 1) {
+      return nb::bool_(EqualIfrtDeviceListAndTuple(
+          self->py_client_, std::get<0>(self->device_list_),
+          std::get<1>(other_device_list->device_list_)));
+    }
+    if (self->device_list_.index() == 1 &&
+        other_device_list->device_list_.index() == 0) {
+      return nb::bool_(EqualIfrtDeviceListAndTuple(
+          other_device_list->py_client_,
+          std::get<0>(other_device_list->device_list_),
+          std::get<1>(self->device_list_)));
+    }
+    throw nb::value_error("Unrecognized DeviceList type");
   }
-  if (h1 != h2) {
-    return false;
+  if (!PyTuple_CheckExact(other.ptr())) {
+    return nb::not_implemented();
   }
-  if (self->device_list_.index() == 0 && o->device_list_.index() == 0) {
-    nb::gil_scoped_release gil_release;
-    return *std::get<0>(self->device_list_) == *std::get<0>(o->device_list_);
-  } else {
-    return self->AsTuple().equal(o->AsTuple());
+  nb::tuple other_tuple = nb::borrow<nb::tuple>(other);
+  switch (self->device_list_.index()) {
+    case 0:
+      return nb::bool_(EqualIfrtDeviceListAndTuple(
+          self->py_client_, std::get<0>(self->device_list_), other_tuple));
+    case 1:
+      return nb::bool_(std::get<1>(self->device_list_).equal(other_tuple));
+    default:
+      throw nb::value_error("Unrecognized DeviceList type");
   }
 }
 
-/*static*/ bool PyDeviceList::NotEqual(nb_class_ptr<PyDeviceList> self,
-                                       nb::handle other) {
-  return !Equal(std::move(self), other);
+/*static*/ nb::object PyDeviceList::NotEqual(nb_class_ptr<PyDeviceList> self,
+                                             nb::handle other) {
+  nb::object result = Equal(std::move(self), other);
+  if (nb::isinstance<nb::not_implemented>(result)) {
+    return result;
+  }
+  return nb::bool_(!nb::cast<bool>(result));
 }
 
 int PyDeviceList::Len() const {
@@ -464,8 +559,10 @@ PyDeviceList::MemoryKinds(nb_class_ptr<PyDeviceList> self) {
   nb::class_<PyDeviceList>(m, "DeviceList")
       .def(nb::init<nb::typed<nb::tuple, PyDevice, nb::ellipsis>>())
       .def("__hash__", &PyDeviceList::Hash, nb::lock_self())
-      .def("__eq__", &PyDeviceList::Equal)
-      .def("__ne__", &PyDeviceList::NotEqual)
+      .def("__eq__", &PyDeviceList::Equal, nb::is_operator(),
+           nb::sig("def __eq__(self, arg: object, /) -> bool"))
+      .def("__ne__", &PyDeviceList::NotEqual, nb::is_operator(),
+           nb::sig("def __ne__(self, arg: object, /) -> bool"))
       .def("__len__", &PyDeviceList::Len)
       .def("__getitem__", &PyDeviceList::GetItem,
            nb::sig("def __getitem__(self, index: int, /) -> Device"))
