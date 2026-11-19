@@ -90,6 +90,10 @@ def get(
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
+  is_multi_process_cpu = (
+      backend.platform == "cpu"
+      and len({device.process_index for device in devices.flat}) > 1
+  )
   entries = [
       (
           "computation",
@@ -116,14 +120,18 @@ def get(
           lambda hash_obj: _hash_serialized_compile_options(
               hash_obj,
               compile_options,
-              # In case of GPU multi-process tasks we need to strip device
-              # assignment to use cache key as invariant between processes.
-              strip_device_assignment=(backend.platform == "gpu"),
+              # In case of multi-process tasks we need to strip device
+              # assignment to use the cache key invariant between processes.
+              strip_device_assignment=(
+                  backend.platform == "gpu" or is_multi_process_cpu
+              ),
           ),
       ),
       (
           "accelerator_config",
-          lambda hash_obj: _hash_accelerator_config(hash_obj, devices),
+          lambda hash_obj: _hash_accelerator_config(
+              hash_obj, devices, use_topology=not is_multi_process_cpu
+          ),
       ),
       (
           "compression",
@@ -267,7 +275,15 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
+def _hash_accelerator_config(
+    hash_obj, accelerators: np.ndarray, *, use_topology: bool = True
+):
+  if not use_topology:
+    # CPU topology descriptions include process-local details, so they are
+    # not invariant across processes. Hash the device kinds instead.
+    _hash_devices(hash_obj, accelerators)
+    return
+
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)

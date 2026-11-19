@@ -17,6 +17,8 @@ import os
 import re
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 from typing import cast as type_cast
 
 import numpy as np
@@ -247,6 +249,38 @@ class CacheKeyTest(jtu.JaxTestCase):
       self.assertEqual(hash_1, hash_2)
     else:
       self.assertNotEqual(hash_1, hash_2)
+
+  def test_multi_process_cpu_cache_key(self):
+    computation = jax.jit(lambda x: x + 1).lower(1).compiler_ir()
+    devices = np.array(
+        [
+            SimpleNamespace(device_kind="cpu", process_index=0),
+            SimpleNamespace(device_kind="cpu", process_index=1),
+        ],
+        dtype=object,
+    )
+    backend = xla_bridge.get_backend("cpu")
+    compile_options_1 = compiler.get_compile_options(
+        num_replicas=1,
+        num_partitions=1,
+        device_assignment=np.array([[0]]),
+    )
+    compile_options_2 = compiler.get_compile_options(
+        num_replicas=1,
+        num_partitions=1,
+        device_assignment=np.array([[2048]]),
+    )
+
+    # CPU topology descriptions contain process-local fields, so the cache key
+    # should use device kinds and remain invariant to each process's assignment.
+    with mock.patch.object(
+        cache_key.xla_client, "get_topology_for_devices"
+    ) as get_topology:
+      key_1 = cache_key.get(computation, devices, compile_options_1, backend)
+      key_2 = cache_key.get(computation, devices, compile_options_2, backend)
+
+    self.assertEqual(key_1, key_2)
+    get_topology.assert_not_called()
 
   @parameterized.parameters([False, True])
   @jtu.thread_unsafe_test()  # env vars are not thread-safe
