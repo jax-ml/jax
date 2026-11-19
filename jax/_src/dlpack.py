@@ -24,7 +24,6 @@ from jax._src.interpreters import pxla
 from jax._src.lax.lax import _array_copy
 from jax._src.layout import AutoLayoutSingleton, Format
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
@@ -353,9 +352,8 @@ def from_dlpack(
       else None
   )
   try:
-    layout_arg = (layout,) if jaxlib_extension_version >= 510 else ()
     arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy, int(dl_device_type), *layout_arg
+        dlpack, dlpack_device, stream, copy, int(dl_device_type), layout
     )
   except xla_client.XlaRuntimeError as e:
     se = str(e)

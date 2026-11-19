@@ -67,7 +67,6 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
-from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2704,11 +2703,6 @@ class DotAlgorithmPreset(enum.Enum):
           DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
           | DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
       ):
-        if jaxlib_extension_version < 514:
-          raise ValueError(
-              f"The dot algorithm '{self}' requires jaxlib_extension_version "
-              '>= 514.'
-          )
         f8 = ir.Float8E4M3FNType.get()
         num_ops = (
             3 if self == DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3 else 4
@@ -5045,7 +5039,7 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  if ctx.is_forward_compat() or xla_version < 80:
+  if ctx.is_forward_compat():
     x_aval, = ctx.avals_in
     log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
     log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
@@ -5068,7 +5062,7 @@ log2_p = standard_unop(_float | _complex, 'log2')
 ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 
 def _log2_lower(ctx, x, accuracy):
-  if ctx.is_forward_compat() or xla_version < 80:
+  if ctx.is_forward_compat():
     x_aval, = ctx.avals_in
     log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
     if np.issubdtype(x_aval.dtype, np.complexfloating):
@@ -5288,8 +5282,9 @@ ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
 
 
 def _asin_lowering(ctx, x, **params):
-  use_chlo = jaxlib_extension_version >= 512 and not ctx.is_forward_compat()
-  if use_chlo or dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+  if not ctx.is_forward_compat() or dtypes.issubdtype(
+      ctx.avals_in[0].dtype, np.complexfloating
+  ):
     return _nary_lower_hlo(chlo.asin, ctx, x, **params)
   def _asin_real(x):
     one = _const(x, 1)
@@ -6032,9 +6027,7 @@ def _mulhi_u64_hlo(ctx, lhs, rhs, u64_aval):
 
 
 def _mulhi_lower(ctx, x, y):
-  # HloFunctionImporter (used by ShardyXLA) added HloOpcode::kMulhi support in
-  # xla_version 84; decompose to StableHLO on older jaxlib or forward-compat.
-  if not ctx.is_forward_compat() and xla_version >= 84:
+  if not ctx.is_forward_compat():
     return _nary_lower_hlo(chlo.mulhi, ctx, x, y)
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
@@ -6123,10 +6116,6 @@ def _fma_transpose(ct, a, b, c):
 
 
 def _fma_lower(ctx, a, b, c):
-  if jaxlib_extension_version < 515:
-    raise NotImplementedError(
-        'lax.fma requires jaxlib_extension_version >= 515.'
-    )
   return _nary_lower_hlo(hlo.fma, ctx, a, b, c)  # pyrefly: ignore[missing-attribute]
 
 
@@ -6141,7 +6130,7 @@ def _muladd_hlo(x, y, z):
 
 
 def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
-  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
+  if ctx.is_forward_compat():
     return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
   aval_out, = ctx.avals_out
   if aval_out.dtype in native_dtypes:

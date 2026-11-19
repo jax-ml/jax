@@ -21,7 +21,6 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -549,19 +548,11 @@ class AcosTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acos_accuracy(self, dtype):
-    if jaxlib_extension_version >= 512:
-      bounds = [
-          ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
-          ("tpu", {f16: 1.0, f32: 1.0}),
-      ]
-    else:
-      bounds = [
-          ("cpu", {bf16: 1.5, f16: 1.5, f32: 1.5, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
-          ([*TPU_EUPV1, "tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 5.0}),
-          ("tpu_v6e", {f16: 1.0, f32: 4.0}),
-      ]
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
+        ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
+        ("tpu", {f16: 1.0, f32: 1.0}),
+    ]
     interesting_points = _ACOS_INTERESTING_POINTS
     util.check_unary_precision(
         self,
@@ -579,19 +570,11 @@ class AsinTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asin_accuracy(self, dtype):
-    if jaxlib_extension_version >= 512:
-      bounds = [
-          ("cpu", {f32: 1.0, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
-          ("tpu", {f32: 1.0}),
-      ]
-    else:
-      bounds = [
-          ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
-          ([*TPU_EUPV1, "tpu_v5p"], {bf16: 0.5, f32: 5.0}),
-          (["tpu_v6e", "tpu_7x"], {bf16: 0.5, f32: 4.5}),
-      ]
+    bounds = [
+        ("cpu", {f32: 1.0, f64: 1.5}),
+        ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
+        ("tpu", {f32: 1.0}),
+    ]
     util.check_unary_precision(
         self,
         jnp.asin,

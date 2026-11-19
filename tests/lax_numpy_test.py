@@ -50,7 +50,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.numpy import ufuncs as jnp_ufuncs
 from jax._src.util import safe_zip, tuple_update
 
@@ -638,8 +637,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(dtype=float_dtypes)
   def testMatmulBroadcastOperandReduce(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41414
-    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
-      self.skipTest("Requires xla_version >= 84")
     x = jnp.ones((64, 8), dtype=dtype)
     y = jax.jit(lambda x: (x @ jnp.ones((8, 64), dtype)).sum())(x)
     tol = {np.float16: 1e-2, jnp.bfloat16: 2e-2}
@@ -647,8 +644,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testMatmulBroadcastOperandGrad(self):
     # Regression test for https://github.com/jax-ml/jax/issues/41414
-    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
-      self.skipTest("Requires xla_version >= 84")
     rng = jtu.rand_default(self.rng())
     x = rng((1000, 16), np.float32)
     grad_fn = jax.jit(jax.grad(lambda s, x: jnp.sum(x.T @ (s * x))))
@@ -664,8 +659,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.default_matmul_precision("float32")
   def testMatmulConstantLhsReduce(self, shape_and_transpose, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/42651
-    if jtu.test_device_matches(["cpu"]) and jaxlib_extension_version < 525:
-      self.skipTest("Requires jaxlib_extension_version >= 525")
     m, k, n, transpose_rhs = shape_and_transpose
     rng = jtu.rand_default(self.rng())
     tol = {

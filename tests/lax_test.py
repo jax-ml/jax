@@ -19,7 +19,7 @@ import math
 import operator
 import types
 import unittest
-from unittest import mock, SkipTest
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -43,7 +43,6 @@ from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
@@ -250,8 +249,6 @@ class LaxTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testLogPow(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41261
-    if jaxlib_extension_version < 510:
-      self.skipTest("Requires jaxlib_extension_version >= 510")
     a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
     b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
     args_maker = lambda: [a, b]
@@ -350,8 +347,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertAllClose(dc2, jnp.sum(ct))
 
   def testFmuladdPlatformLowering(self):
-    if jaxlib_extension_version < 515:
-      self.skipTest("Requires jaxlib_extension_version >= 515")
     if not jtu.stablehlo_version_at_least("1.24.0"):
       self.skipTest("Requires StableHLO >= 1.24.0")
     f = jax.jit(lax.fmuladd)
@@ -432,11 +427,6 @@ class LaxTest(jtu.JaxTestCase):
       exported = export.export(jax.jit(lax.mulhi))(x, y)
       self.assertNotIn("chlo.mulhi", exported.mlir_module())
       self.assertArraysEqual(exported.call(x, y), expected)
-
-      with mock.patch.object(lax_internal, "xla_version", 78):
-        f = jax.jit(lambda a, b: lax.mulhi(a, b))
-        self.assertNotIn("chlo.mulhi", f.trace(x, y).lower().as_text())
-        self.assertArraysEqual(f(x, y), expected)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
@@ -1534,11 +1524,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def _skipIfF8E4M3FNDotAlgorithmUnsupported(self, algorithm):
-    if jaxlib_extension_version < 514:
-      raise SkipTest(
-          f"The dot algorithm '{algorithm}' requires jaxlib_extension_version "
-          ">= 514."
-      )
     if not jtu.stablehlo_version_at_least("1.21.0"):
       raise SkipTest(
           f"The dot algorithm '{algorithm}' requires StableHLO >= 1.21.0."
@@ -1697,55 +1682,54 @@ class LaxTest(jtu.JaxTestCase):
       hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
       self.assertRegex(hlo, expected)
 
-    if jaxlib_extension_version >= 514:
-      lhs_f16 = rng(lhs_shape, np.float16)
-      rhs_f16 = rng(rhs_shape, np.float16)
-      for num_ops in (3, 4):
-        preset = f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"
-        expected = (
-            "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
-            "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
-            f"rhs_component_count = 1, num_primitive_operations = {num_ops}"
-        )
-        with jax.default_matmul_precision(preset):
-          # CPU rejects these presets, so lower for TPU.
-          hlo = (
-              jax.jit(lax.dot)
-              .trace(lhs, rhs)
-              .lower(lowering_platforms=("tpu",))
-              .as_text()
-          )
-          self.assertIn(expected, hlo)
-          hlo_outer = (
-              jax.jit(lambda x, y: jnp.einsum("i,j->ij", x, y))
-              .trace(lhs[0], rhs[0])
-              .lower(lowering_platforms=("tpu",))
-              .as_text()
-          )
-          self.assertNotIn("algorithm =", hlo_outer)
-        hlo_bf16_out = (
-            jax.jit(
-                partial(
-                    lax.dot,
-                    precision=preset,
-                    preferred_element_type=dtypes.bfloat16,
-                )
-            )
+    lhs_f16 = rng(lhs_shape, np.float16)
+    rhs_f16 = rng(rhs_shape, np.float16)
+    for num_ops in (3, 4):
+      preset = f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"
+      expected = (
+          "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
+          "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
+          f"rhs_component_count = 1, num_primitive_operations = {num_ops}"
+      )
+      with jax.default_matmul_precision(preset):
+        # CPU rejects these presets, so lower for TPU.
+        hlo = (
+            jax.jit(lax.dot)
             .trace(lhs, rhs)
             .lower(lowering_platforms=("tpu",))
             .as_text()
         )
-        self.assertIn(expected, hlo_bf16_out)
-        self.assertNotIn("convert", hlo_bf16_out)
-        hlo_f16 = (
-            jax.jit(partial(lax.dot, precision=preset))
-            .trace(lhs_f16, rhs_f16)
+        self.assertIn(expected, hlo)
+        hlo_outer = (
+            jax.jit(lambda x, y: jnp.einsum("i,j->ij", x, y))
+            .trace(lhs[0], rhs[0])
             .lower(lowering_platforms=("tpu",))
             .as_text()
         )
-        self.assertIn(
-            "(tensor<3x4xf32>, tensor<4x3xf32>) -> tensor<3x3xf32>", hlo_f16
-        )
+        self.assertNotIn("algorithm =", hlo_outer)
+      hlo_bf16_out = (
+          jax.jit(
+              partial(
+                  lax.dot,
+                  precision=preset,
+                  preferred_element_type=dtypes.bfloat16,
+              )
+          )
+          .trace(lhs, rhs)
+          .lower(lowering_platforms=("tpu",))
+          .as_text()
+      )
+      self.assertIn(expected, hlo_bf16_out)
+      self.assertNotIn("convert", hlo_bf16_out)
+      hlo_f16 = (
+          jax.jit(partial(lax.dot, precision=preset))
+          .trace(lhs_f16, rhs_f16)
+          .lower(lowering_platforms=("tpu",))
+          .as_text()
+      )
+      self.assertIn(
+          "(tensor<3x4xf32>, tensor<4x3xf32>) -> tensor<3x3xf32>", hlo_f16
+      )
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -4526,12 +4510,12 @@ class LaxTest(jtu.JaxTestCase):
 
     for fn in (unrolled_fn, scan_fn):
       cpu_hlo = fn.trace(x).lower(lowering_platforms=("cpu",)).as_text()
-      if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+      if jtu.stablehlo_version_at_least("1.24.0"):
         self.assertIn("stablehlo.fma", cpu_hlo)
       tpu_hlo = fn.trace(x).lower(lowering_platforms=("tpu",)).as_text()
       self.assertNotIn("stablehlo.fma", tpu_hlo)
 
-    if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+    if jtu.stablehlo_version_at_least("1.24.0"):
       polyval_cpu_hlo = (
           polyval_fn.trace(jnp.array([c1, c0]), x)
           .lower(lowering_platforms=("cpu",))

@@ -28,7 +28,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, Recompute
@@ -176,8 +175,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     self.assertEqual(dev.default_memory().kind, self._default_memory_kind)
 
   def test_uninitialized_memory_gc_clear(self):
-    if jaxlib_extension_version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     mem = _jax.Memory.__new__(_jax.Memory)
     cycle = [mem]
     cycle.append(cycle)

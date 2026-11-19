@@ -23,7 +23,7 @@ import enum
 import functools
 import math
 import threading
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple
 import warnings
 
 import numpy as np
@@ -33,7 +33,6 @@ from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
                            immutable, set_module)
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -613,22 +612,13 @@ def _raise_value_error(name):
 empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
-if TYPE_CHECKING or jaxlib_extension_version >= 509:
-  abstract_mesh_context_manager = config_ext.Config[Any](
-      'abstract_mesh_context_manager',
-      empty_abstract_mesh,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-      include_in_jaxpr_eqn_ctx=True,
-  )
-else:
-  abstract_mesh_context_manager = config_ext.Config[Any](
-      'abstract_mesh_context_manager',
-      empty_abstract_mesh,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  jax_config._jaxpr_eqn_ctx_configs.append(abstract_mesh_context_manager)
+abstract_mesh_context_manager = config_ext.Config[Any](
+    'abstract_mesh_context_manager',
+    empty_abstract_mesh,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
+)
 
 device_context = config_ext.Config[Any](
     'device_context', empty_concrete_mesh, include_in_jit_key=True

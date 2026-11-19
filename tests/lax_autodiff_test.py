@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.test_util import check_grads
 
 jax.config.parse_flags_with_absl()
@@ -276,13 +275,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     for rec in LAX_GRAD_OPS
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
-    if op is lax.fma and (
-        jaxlib_extension_version < 515
-        or not jtu.stablehlo_version_at_least("1.24.0")
-    ):
-      raise SkipTest(
-          "fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0"
-      )
+    if op is lax.fma and not jtu.stablehlo_version_at_least("1.24.0"):
+      raise SkipTest("fma requires StableHLO >= 1.24.0")
     rng = rng_factory(self.rng())
     if jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       if op is lax.cosh and dtype == np.complex64:
