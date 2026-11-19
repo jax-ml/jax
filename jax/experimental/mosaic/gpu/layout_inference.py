@@ -1090,10 +1090,10 @@ def _branching_op_constraint_system(
   for region in op.regions:
     [block] = region.blocks
     yield_op = _terminator(block, scf.YieldOp)
-    for var in value_sites_for_variable.keys():
+    for var, value_sites in value_sites_for_variable.items():
       assert var.key.type == VariableType.RESULT
       yield_operand = ValueSite(yield_op, VariableType.OPERAND, var.key.index)
-      value_sites_for_variable[var].append(yield_operand)
+      value_sites.append(yield_operand)
 
   return cs.ConstraintSystem(), value_sites_for_variable
 
