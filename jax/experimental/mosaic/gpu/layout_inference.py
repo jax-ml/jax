@@ -137,10 +137,6 @@ class ValueSite:
       return f"{match.group(0)}:a-{self.index}"
 
 
-def is_hopper(arch: tuple[int, int]) -> bool:
-  return arch == (9, 0)
-
-
 def extract_assignment_candidates_from_reduce_equation(
     small: cs.RegisterLayout,
     large: cs.Variable,
@@ -220,7 +216,7 @@ def _default_tmem_layout_for_variable(
 def _register_layouts_for_optimized_transfer_to_smem(
     shaped_type: ir.ShapedType,
     smem_layout: cs.SMEMTransforms,
-    arch: tuple[int, int],
+    arch: utils.Arch,
 ) -> Iterator[fa.FragmentedLayout]:
   """Yields register layout candidates for optimized transfers to SMEM."""
   if smem_layout.tiling is None:
@@ -229,7 +225,7 @@ def _register_layouts_for_optimized_transfer_to_smem(
       yield reg_layout
     return
 
-  if is_hopper(arch):
+  if arch == utils.HOPPER:
     candidate_layouts = [
         fa.WGMMA_LAYOUT,
         fa.WGMMA_TRANSPOSED_LAYOUT,
@@ -338,7 +334,7 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
 def _extract_layout_candidates_from_smem_registers_transfer(
     constraint: cs.IsTransferableSmemRegisters,
     division_constraint_per_var: dict[cs.Variable, cs.Divides],
-    arch: tuple[int, int]
+    arch: utils.Arch,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   src, tgt = constraint.source, constraint.target
   match src, tgt:
@@ -445,7 +441,7 @@ def _extract_layout_candidates_from_broadcast(
 
 # TODO(bchetioui): flatten this call hierarchy.
 def _extract_variable_assignments_from_constraints(
-    constraints: Sequence[cs.Constraint], arch: tuple[int, int],
+    constraints: Sequence[cs.Constraint], arch: utils.Arch,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to extract variable assignments from all constraints."""
   dpv = _divides_per_var(constraints)
@@ -483,7 +479,7 @@ def _extract_variable_assignments_from_constraints(
 def conjure_assignment(
     unknowns: Sequence[cs.Variable],
     constraint_system: cs.ConstraintSystem,
-    arch: tuple[int, int],
+    arch: utils.Arch,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   """Attempts to conjure an assignment for an unknown variable."""
   # TODO(allanrenucci): We should be able to short-circuit the search here if
@@ -541,7 +537,7 @@ def find_assignments_for(
     constraint_system: cs.ConstraintSystem,
     *,
     fuel: int,
-    arch: tuple[int, int],
+    arch: utils.Arch,
 ) -> tuple[dict[cs.Variable, cs.Constant] | cs.Unsatisfiable, int]:
   """Attempts to find assignments that satisfy `constraint_system` for `unknowns`.
 
@@ -1708,8 +1704,7 @@ def _tcgen05_mma_constraint_system(
     scale_index = list(op.operands).index(scale_operand)
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
-    arch = ctx.arch
-    is_sm107f = arch.major == 10 and arch.minor >= 7
+    is_sm107f = ctx.arch.is_sm107f
     if scale_operand == op.a_scale and is_sm107f and not (op.collective and M == 64):
       # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
       # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
@@ -2894,7 +2889,7 @@ def check_for_expensive_relayout(module: ir.Module):
 
 def infer_layout(
     module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL,
-    arch: tuple[int, int] = (9, 0)
+    arch: utils.Arch = utils.HOPPER
 ):
   """Infers layouts for the given module.
 
@@ -2915,7 +2910,7 @@ def infer_layout(
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
-  ctx = DerivationContext(arch=utils.Arch(*arch))
+  ctx = DerivationContext(arch)
 
   def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.
