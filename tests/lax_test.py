@@ -412,6 +412,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertTrue(proxy_rule_ctx.is_forward_compat())
 
   @jtu.sample_product(dtype=lax_test_util.int_dtypes + lax_test_util.uint_dtypes)
+  @jtu.thread_unsafe_test()  # mock.patch mutates module-global lax_internal.xla_version
   def testMulhiForwardCompatLowering(self, dtype):
     info = dtypes.iinfo(dtype)
     if not config.enable_x64.value and info.bits == 64:
