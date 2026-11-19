@@ -263,6 +263,8 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def_prop_rw("xla_cpu_enable_fast_math",
                    &DebugOptions::xla_cpu_enable_fast_math,
                    &DebugOptions::set_xla_cpu_enable_fast_math)
+      .def_prop_rw("xla_cpu_ftz", &DebugOptions::xla_cpu_ftz,
+                   &DebugOptions::set_xla_cpu_ftz)
       .def_prop_rw("xla_cpu_enable_xprof_traceme",
                    &DebugOptions::xla_cpu_enable_xprof_traceme,
                    &DebugOptions::set_xla_cpu_enable_xprof_traceme)

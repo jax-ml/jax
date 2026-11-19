@@ -93,7 +93,7 @@ mpmath.mp.prec = 100
 
 
 def get_hardware_variant() -> str:
-  """Returns hardware platform group, e.g. 'cpu', 'gpu', or specific TPU 'tpu_v4i'."""
+  """Returns hardware platform group, e.g. 'cpu', 'gpu', or 'tpu_v4i'."""
   dut = jtu.device_under_test()
   if dut == "tpu":
     device_kind = jax.devices()[0].device_kind
@@ -104,9 +104,13 @@ def get_hardware_variant() -> str:
   return dut
 
 
-def _default_ftz(dtype) -> bool:
+def default_ftz(dtype) -> bool:
   """Returns whether subnormals flush to zero by default for `dtype`."""
-  if jtu.device_under_test() == "gpu":
+  dut = jtu.device_under_test()
+  if dut == "cpu":
+    if not jax.config.jax_cpu_flush_subnormals:
+      return False
+  elif dut == "gpu":
     return False
   if dtype is not None and np.dtype(dtype) == np.float16:
     return False
@@ -504,7 +508,7 @@ def ulp_diff(
   the error directly in `mpmath` without rounding `reference` to `float64`.
   """
   if ftz is None:
-    ftz = _default_ftz(dtype)
+    ftz = default_ftz(dtype)
   dt = np.dtype(dtype)
   ref_arr = np.asarray(reference)
   if dt == np.float64 or ref_arr.dtype == object:
@@ -548,7 +552,7 @@ class _FloatMpf(mpmath.mpf):
 def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool | None = None):
   """Evaluates scalar mpmath function at current mpmath precision."""
   if input_ftz is None:
-    input_ftz = _default_ftz(dtype)
+    input_ftz = default_ftz(dtype)
   if input_ftz and dtype is not None:
     vals = tuple(
         _flush_subnormals(np.array(v, dtype=dtype), dtype).item()
@@ -624,7 +628,7 @@ def eval_ulp_stats(
 ) -> tuple[dict[str, int], list[tuple[float, ...]]]:
   """Computes signed ULP histogram counts and top-k worst cases for a chunk."""
   if ftz is None:
-    ftz = _default_ftz(dtype)
+    ftz = default_ftz(dtype)
   is_tuple_inputs = isinstance(inputs, (tuple, list))
   n = len(inputs[0]) if is_tuple_inputs else len(inputs)
   if n == 0:
@@ -1425,9 +1429,9 @@ def check_nary_precision(
     test_case.skipTest("float64 on TPU is ef57 double-double")
 
   variant = get_hardware_variant()
-  default_ftz = _default_ftz(dtype)
-  in_ftz = _resolve_override(input_ftz, variant, dtype, default_ftz)
-  out_ftz = _resolve_override(output_ftz, variant, dtype, default_ftz)
+  is_ftz = default_ftz(dtype)
+  in_ftz = _resolve_override(input_ftz, variant, dtype, is_ftz)
+  out_ftz = _resolve_override(output_ftz, variant, dtype, is_ftz)
   chk_signed_zeros = _resolve_override(check_signed_zeros, variant, dtype, True)
   ignore_predicate = resolve_ignore_inputs(ignore_inputs, variant, dtype)
   raw_bound = _resolve_override(bounds, variant, dtype, 0.5)
