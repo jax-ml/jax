@@ -1781,6 +1781,7 @@ struct ExtraBufferInfo {
         external_reference_hold(std::move(external_reference_hold)) {}
 
   std::vector<int64_t> strides;
+  std::vector<Py_ssize_t> metadata;
   // We keep an external reference hold to the xla::PjRtBuffer. This prevents a
   // use-after-free in the event that Delete() is called on a buffer with an
   // live buffer protocol view. It does however mean that Delete() sometimes
@@ -1894,24 +1895,51 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
         buffers.front(), std::move(external_reference_hold));
     view->itemsize =
         xla::ShapeUtil::ByteSizeOfPrimitiveType(buffer.element_type());
-    ABSL_ASSIGN_OR_RETURN(view->len, buffer.GetOnDeviceSizeInBytes());
+    ABSL_ASSIGN_OR_RETURN(auto size_in_bytes, buffer.GetOnDeviceSizeInBytes());
+    if (size_in_bytes > std::numeric_limits<Py_ssize_t>::max()) {
+      return xla::InvalidArgument("Array size does not fit Py_ssize_t");
+    }
+    view->len = static_cast<Py_ssize_t>(size_in_bytes);
     view->readonly = 1;
     if ((flags & PyBUF_FORMAT) == PyBUF_FORMAT) {
       view->format = const_cast<char*>(format);
     }
     if ((flags & PyBUF_ND) == PyBUF_ND) {
-      view->ndim = buffer.dimensions().size();
-      static_assert(sizeof(int64_t) == sizeof(Py_ssize_t),
-                    "Py_ssize_t must be 64 bits");
+      if (buffer.dimensions().size() > std::numeric_limits<int>::max()) {
+        return xla::InvalidArgument("Array rank does not fit int");
+      }
+      view->ndim = static_cast<int>(buffer.dimensions().size());
       if (view->ndim != 0) {
-        view->shape = reinterpret_cast<Py_ssize_t*>(
-            const_cast<int64_t*>(buffer.dimensions().data()));
         if ((flags & PyBUF_STRIDES) == PyBUF_STRIDES) {
           extra->strides =
               ByteStridesForShape(buffer.element_type(), buffer.dimensions(),
                                   buffer.layout()->xla_layout());
-          view->strides = reinterpret_cast<Py_ssize_t*>(
-              const_cast<int64_t*>(extra->strides.data()));
+        }
+        if constexpr (sizeof(Py_ssize_t) == sizeof(int64_t)) {
+          view->shape = reinterpret_cast<Py_ssize_t*>(
+              const_cast<int64_t*>(buffer.dimensions().data()));
+          if ((flags & PyBUF_STRIDES) == PyBUF_STRIDES) {
+            view->strides =
+                reinterpret_cast<Py_ssize_t*>(extra->strides.data());
+          }
+        } else {
+          extra->metadata.reserve(buffer.dimensions().size() +
+                                  extra->strides.size());
+          for (absl::Span<const int64_t> values :
+               {buffer.dimensions(), absl::MakeConstSpan(extra->strides)}) {
+            for (int64_t value : values) {
+              if (value < std::numeric_limits<Py_ssize_t>::min() ||
+                  value > std::numeric_limits<Py_ssize_t>::max()) {
+                return xla::InvalidArgument(
+                    "Array shape or stride does not fit Py_ssize_t");
+              }
+              extra->metadata.push_back(static_cast<Py_ssize_t>(value));
+            }
+          }
+          view->shape = extra->metadata.data();
+          if ((flags & PyBUF_STRIDES) == PyBUF_STRIDES) {
+            view->strides = view->shape + view->ndim;
+          }
         }
       }
     }
