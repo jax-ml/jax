@@ -498,6 +498,58 @@ def trace(
     yield session
 
 
+def _check_capture_supported(fn_name: str) -> None:
+  backend = xla_bridge.get_backend()
+  if "cuda" not in backend.platform_version:
+    raise RuntimeError(
+        f"{fn_name} is only supported on CUDA GPU backends, got"
+        f" {backend.platform!r}."
+    )
+  if not hasattr(_profiler, fn_name):
+    raise RuntimeError(f"jaxlib is too old to support {fn_name}.")
+
+
+def start_capture() -> None:
+  """Starts external GPU profiler capture on CUDA GPUs.
+
+  Triggers ``cuProfilerStart`` on the CUDA driver so external tools such as
+  Nsight Systems (``nsys profile --capture-range=cudaProfilerApi``) and Nsight
+  Compute (``ncu --profile-from-start off``) begin collecting data.
+
+  Note that JAX dispatches operations asynchronously; call
+  :func:`jax.block_until_ready` on outputs before :func:`stop_capture` so
+  enqueued work finishes inside the capture window.
+
+  The calling thread needs a current CUDA context. On a new thread, run a JAX
+  computation before calling this function.
+  """
+  _check_capture_supported("start_capture")
+  _profiler.start_capture()
+
+
+def stop_capture() -> None:
+  """Stops external GPU profiler capture started by :func:`start_capture`."""
+  _check_capture_supported("stop_capture")
+  _profiler.stop_capture()
+
+
+@contextmanager
+def capture() -> Iterator[None]:
+  """Context manager that starts and stops external GPU profiler capture.
+
+  For example, under ``nsys profile --capture-range=cudaProfilerApi``::
+
+    with jax.profiler.capture():
+      y = step(x)
+      jax.block_until_ready(y)
+  """
+  start_capture()
+  try:
+    yield
+  finally:
+    stop_capture()
+
+
 class TraceAnnotation(_profiler.TraceMe):
   """Context manager that generates a trace event in the profiler.
 

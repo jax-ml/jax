@@ -486,6 +486,17 @@ pip install tensorboard xprof
 
 ## Nsight
 
-NVIDIA's `Nsight` tools can be used to trace and profile JAX code on GPU. For
-details, see the [`Nsight`
+NVIDIA's `Nsight` tools can be used to trace and profile JAX code on GPU. Use
+{func}`jax.profiler.capture` (or {func}`jax.profiler.start_capture` and
+{func}`jax.profiler.stop_capture`) to scope collection to specific steps under
+`nsys profile --capture-range=cudaProfilerApi` or
+`ncu --profile-from-start off`:
+
+```python
+with jax.profiler.capture():
+  y = step(x)
+  jax.block_until_ready(y)
+```
+
+For details, see the [`Nsight`
 documentation](https://developer.nvidia.com/tools-overview).
