@@ -1241,6 +1241,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "linalg_sharding_test",
     srcs = ["linalg_sharding_test.py"],
+    backend_tags = {
+        "cpu": [
+            "notsan",  # Times out.
+        ],
+    },
     enable_backends = [
         "cpu",
     ],
