@@ -649,6 +649,47 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       # self.assertEqual(result, 0.0)
       self.assertAllClose(result, np.nan)
 
+  @jax.numpy_dtype_promotion('standard')
+  def testPowIntPowerAtZeroHigherOrderGrad(self):
+    # https://github.com/jax-ml/jax/issues/20574
+    for dtype in [jnp.int32, jnp.uint32]:
+      for exp_val, d2_expected in [(0, 0.0), (1, 0.0), (2, 2.0)]:
+        exp = jnp.array([exp_val], dtype=dtype)
+        with self.subTest(dtype=dtype, exp_val=exp_val):
+          fn_arr = lambda x, e=exp: x ** e
+          self.assertAllClose(
+              jax.jacfwd(jax.jacfwd(fn_arr))(jnp.array([0.0])),
+              jnp.array([[[d2_expected]]]),
+          )
+          self.assertAllClose(
+              jax.jacrev(jax.jacrev(fn_arr))(jnp.array([0.0])),
+              jnp.array([[[d2_expected]]]),
+          )
+
+          fn_scalar = lambda x, e=exp: jnp.sum(x ** e)
+          self.assertAllClose(jax.grad(jax.grad(fn_scalar))(0.0), d2_expected)
+          self.assertAllClose(jax.grad(jax.grad(jax.grad(fn_scalar)))(0.0), 0.0)
+
+    # Shape broadcasting in _pow_jvp_lhs when x.shape != y.shape for integer y.
+    for y in [jnp.array(0), jnp.array(1)]:
+      with self.subTest(broadcast_y=y):
+        fn_bcast = lambda x, e=y: lax.pow(x, e)
+        self.assertAllClose(
+            jax.jacfwd(jax.jacfwd(fn_bcast))(jnp.zeros((2,))),
+            jnp.zeros((2, 2, 2)),
+        )
+        self.assertAllClose(
+            jax.jacrev(jax.jacrev(fn_bcast))(jnp.zeros((2,))),
+            jnp.zeros((2, 2, 2)),
+        )
+        self.assertAllClose(
+            jax.grad(lambda z, e=y: jnp.sum(
+                jax.grad(lambda x: jnp.sum(lax.pow(x, e)))(z)))(
+                jnp.zeros((2, 3))
+            ),
+            jnp.zeros((2, 3)),
+        )
+
   def testPowIntPowerAtZero(self):
     # https://github.com/jax-ml/jax/issues/14397
     ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
