@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE_SUFFIX = "-cache"
 _ATIME_SUFFIX = "-atime"
+_SIZE_FILE = ".size"
 
 
 def _is_local_filesystem(path: str) -> bool:
@@ -174,6 +175,20 @@ class LRUCache(CacheInterface):
     if not self.eviction_enabled:
       return
 
+    # Writers with a limit hold the lock, so a total kept next to the entries
+    # stays exact. Scan only when it is missing or the new entry would not fit.
+    size_path = self.path / _SIZE_FILE
+    if size_path.exists():
+      try:
+        total = int(size_path.read_text())
+      except ValueError:
+        # A process may have exited while writing the total. Rebuild it from
+        # the scan below.
+        total = None
+      if total is not None and total + additional_size <= self.max_size:
+        size_path.write_text(str(total + additional_size))
+        return
+
     # a priority queue, each element is a tuple `(file_atime, key, file_size)`
     h: list[tuple[int, str, int]] = []
     dir_size = 0
@@ -215,3 +230,5 @@ class LRUCache(CacheInterface):
         atime_path.unlink()
 
       dir_size -= file_size
+
+    size_path.write_text(str(dir_size + additional_size))
