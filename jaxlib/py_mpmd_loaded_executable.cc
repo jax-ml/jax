@@ -46,6 +46,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/execution_options.h"
 #include "jaxlib/py_user_context.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/pytree.h"
@@ -113,6 +114,7 @@ absl::StatusOr<nb::list> PyMpmdLoadedExecutable::Execute(nb::sequence args) {
                         UnwrapArrays(args));
   xla::ifrt::ExecuteOptions execute_options;
   execute_options.execution_stream_id = GetExecutionStreamId();
+  PopulateExecutionOptions(execute_options);
 
   xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   xla::ifrt::LoadedExecutable::ExecuteResult result;
