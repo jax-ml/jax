@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -217,7 +218,11 @@ MakeIfrtArrayFromFullyReplicatedShard(ifrt::Client* ifrt_client,
       std::move(host_buffer_shard.shape),
       std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
       /*layout=*/nullptr, shard.host_buffer_semantics,
+#if JAX_XLA_VERSION_NUMBER >= 90
+      std::move(host_buffer_shard.hold));
+#else
       std::move(host_buffer_shard.on_done));
+#endif
 }
 
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
@@ -240,7 +245,7 @@ absl::StatusOr<ifrt::ArrayRef> MakeSingleDeviceIfrtArrayFromShard(
 using HostBuffer = ifrt::Client::HostBuffer;
 
 struct HostBufferHash {
-  // We hash on everything except for on_done.
+  // We hash on everything except for hold.
   size_t operator()(const HostBuffer* h) const {
     return absl::Hash<
         std::tuple<const void*, xla::ifrt::DType, const xla::ifrt::Shape&,
@@ -368,10 +373,10 @@ absl::StatusOr<ShardFn> HandlePythonScalar(nb::handle obj, ifrt::Client* client,
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
         [](const auto& v) { return static_cast<const void*>(&v); }, data);
-    ifrt::Client::HostBuffer ifrt_host_buffer = {
-        ptr, ifrt_dtype, ifrt::Shape({}),
-        /*byte_strides=*/std::nullopt,
-        /*on_done=*/nullptr};
+    ifrt::Client::HostBuffer ifrt_host_buffer = {ptr, ifrt_dtype,
+                                                 ifrt::Shape({}),
+                                                 /*byte_strides=*/std::nullopt,
+                                                 /*hold=*/nullptr};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/true,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -413,10 +418,10 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
         [](const auto& v) { return static_cast<const void*>(&v); }, data);
-    ifrt::Client::HostBuffer ifrt_host_buffer = {
-        ptr, ifrt_dtype, ifrt::Shape({}),
-        /*byte_strides=*/std::nullopt,
-        /*on_done=*/nullptr};
+    ifrt::Client::HostBuffer ifrt_host_buffer = {ptr, ifrt_dtype,
+                                                 ifrt::Shape({}),
+                                                 /*byte_strides=*/std::nullopt,
+                                                 /*hold=*/nullptr};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/true,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -513,7 +518,7 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
     ifrt::Client::HostBuffer ifrt_host_buffer = {
         ptr, ifrt_dtype, ifrt::Shape({}),
         /*byte_strides=*/std::nullopt,
-        /*on_done=*/std::move(py_buffer_ref)};
+        /*hold=*/std::move(py_buffer_ref)};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };

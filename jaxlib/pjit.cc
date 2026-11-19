@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -1525,7 +1526,11 @@ class NumpyHandler : public ShardArgsHandler {
           .dtype = ifrt_dtype,
           .shape = shard_shape,
           .byte_strides = std::move(byte_strides),
+#if JAX_XLA_VERSION_NUMBER >= 90
+          .hold = py_buffer_ref,
+#else
           .on_done = py_buffer_ref,
+#endif
       };
       spec.buffers.push_back({{i}, std::move(host_buffer)});
     }
