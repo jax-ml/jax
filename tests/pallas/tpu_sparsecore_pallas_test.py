@@ -2479,6 +2479,7 @@ class VectorSubcoreTest(PallasSCTest):
       plsc.subcore_barrier()
       pltpu.sync_copy(o_ref.at[(subcore_id + 1) % mesh.num_subcores],
                       vmem_ref.at[subcore_id])
+      plsc.subcore_barrier()
       pltpu.sync_copy(vmem_ref.at[subcore_id], o_ref.at[subcore_id])
     expected = 2 * jnp.roll(jnp.arange(mesh.num_subcores), -1)
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
