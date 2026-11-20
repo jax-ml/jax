@@ -582,7 +582,7 @@ If you would like to pass a tuple or list to a JAX function, you can do so by fi
 :id: nFf_DydixG8v
 :outputId: e31b43b3-05f7-4300-fdd2-40e3896f6f8f
 
-jnp.sum(jnp.array(x))
+make_jaxpr(permissive_sum)(jnp.array(x))
 ```
 
 +++ {"id": "MUycRNh6e50W"}
