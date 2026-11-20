@@ -332,7 +332,7 @@ jobs:
           artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest"},
           ]
           exclude:
@@ -388,7 +388,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0", tag: "therock-10.2"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           exclude:
@@ -431,7 +431,7 @@ jobs:
           runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0", tag: "therock-10.2"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
