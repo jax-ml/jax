@@ -22,6 +22,7 @@ Experimental Modules
     jax.experimental.mesh_utils
     jax.experimental.multihost_utils
     jax.experimental.pallas
+    jax.experimental.protobuf
     jax.experimental.random
     jax.experimental.serialize_executable
     jax.experimental.sparse

@@ -8,6 +8,7 @@ hypothesis
 mpmath>=1.4.1
 pillow>=11.3
 portpicker
+protobuf>=5.26
 pytest
 pytest-xdist
 rich
