@@ -19,12 +19,19 @@ body:
 
       * If you prefer a non-templated issue report, click [here][Raw report].
 
+      * Before filing, you may want to check the [JAX FAQ][FAQ] and
+      [The Sharp Bits][Sharp Bits] notebook for common questions and gotchas.
+
 
       [Discussions]: https://github.com/jax-ml/jax/discussions
 
       [issue search]: https://github.com/jax-ml/jax/search?q=is%3Aissue&type=issues
 
       [Raw report]: https://github.com/jax-ml/jax/issues/new?template=none
+
+      [FAQ]: https://docs.jax.dev/en/latest/faq.html
+
+      [Sharp Bits]: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html
 - type: textarea
   attributes:
     label: Description
