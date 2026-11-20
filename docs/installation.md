@@ -19,6 +19,9 @@ different builds for different operating systems and accelerators.
   ```
 * **GPU (AMD, ROCm)**
   ```
+  # ROCm already installed on the system (e.g. /opt/rocm); installs only the JAX ROCm wheels
+  pip install -U "jax[rocm7-local]"
+
   # jax[rocm] defaults to ROCm 7 (same as jax[rocm7]), with kernels for all supported GPUs
   pip install -U "jax[rocm]" --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
 
