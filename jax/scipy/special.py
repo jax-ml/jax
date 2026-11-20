@@ -20,6 +20,7 @@ from jax._src.scipy.special import (
   bessel_jn as _deprecated_bessel_jn,
   beta as beta,
   betainc as betainc,
+  betaincinv as betaincinv,
   betaln as betaln,
   boxcox as boxcox,
   boxcox1p as boxcox1p,

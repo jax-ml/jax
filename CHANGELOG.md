@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.special.betaincinv`, the inverse of the regularized
+    incomplete beta function in its last argument, with gradients with respect
+    to that argument only, like {func}`jax.scipy.special.betainc`.
 * Breaking changes
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations
