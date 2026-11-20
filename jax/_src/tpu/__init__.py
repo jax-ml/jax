@@ -11,3 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import os
+
+from jax._src import traceback_util
+from jax._src.tpu import fusion as _fusion
+from jax._src.tpu import pipeline as _pipeline
+
+del _fusion, _pipeline
+traceback_util.register_exclusion(os.path.dirname(__file__))

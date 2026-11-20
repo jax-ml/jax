@@ -210,9 +210,13 @@ Control flow operators
   :toctree: _autosummary
 
     associative_scan
+    block_slice
+    block_update
     cond
     fori_loop
+    fusion
     map
+    pipeline
     scan
     select
     select_n
