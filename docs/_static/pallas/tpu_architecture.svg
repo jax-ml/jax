@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="100%" height="100%">
+  <style>
+    .bg { fill: #f8f9fa; }
+    .box { fill: #ffffff; stroke: #202124; stroke-width: 2; rx: 8; }
+    .box-hbm { fill: #e8f0fe; stroke: #1a73e8; stroke-width: 2; rx: 8; }
+    .box-vmem { fill: #fce8e6; stroke: #d93025; stroke-width: 2; rx: 8; }
+    .box-vregs { fill: #fef7e0; stroke: #f9ab00; stroke-width: 2; rx: 8; }
+    .box-compute { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 8; }
+    .box-scalar { fill: #f3e8fd; stroke: #9334e6; stroke-width: 2; rx: 8; }
+    .text-title { font-family: sans-serif; font-size: 20px; font-weight: bold; fill: #202124; text-anchor: middle; }
+    .text-desc { font-family: sans-serif; font-size: 14px; fill: #5f6368; text-anchor: middle; }
+    .arrow { stroke: #5f6368; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    .arrow-dashed { stroke: #5f6368; stroke-width: 2; fill: none; stroke-dasharray: 5,5; marker-end: url(#arrowhead); }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#5f6368" />
+    </marker>
+  </defs>
+
+  <!-- Background/Chip outline -->
+  <rect class="bg" x="50" y="50" width="700" height="420" rx="16" stroke="#dadce0" stroke-width="3"/>
+  <text x="400" y="80" class="text-title" fill="#80868b">TensorCore Architecture</text>
+
+  <!-- HBM -->
+  <rect class="box-hbm" x="150" y="100" width="500" height="60" />
+  <text x="400" y="130" class="text-title">HBM (High Bandwidth Memory)</text>
+  <text x="400" y="150" class="text-desc">Main Memory (High Capacity, High Latency)</text>
+
+  <!-- HBM to VMEM and SMEM arrows -->
+  <path class="arrow" d="M 300 160 L 300 200" />
+  <text x="310" y="185" class="text-desc" style="text-anchor: start;">Asynchronous DMA</text>
+
+  <path class="arrow" d="M 600 160 L 600 200" />
+
+  <!-- VMEM -->
+  <rect class="box-vmem" x="150" y="200" width="300" height="60" />
+  <text x="300" y="230" class="text-title">VMEM (Vector Memory)</text>
+  <text x="300" y="250" class="text-desc">On-chip SRAM Staging Area</text>
+
+  <!-- SMEM -->
+  <rect class="box-scalar" x="500" y="200" width="200" height="60" />
+  <text x="600" y="230" class="text-title">SMEM (Scalar Mem)</text>
+  <text x="600" y="250" class="text-desc">Control &amp; Indexing</text>
+
+  <!-- VMEM to VRegs arrow -->
+  <path class="arrow" d="M 300 260 L 300 300" />
+  <text x="310" y="285" class="text-desc" style="text-anchor: start;">Load/Store</text>
+
+  <!-- SMEM to Scalar Unit arrow -->
+  <path class="arrow" d="M 600 260 L 600 300" />
+
+  <!-- VRegs -->
+  <rect class="box-vregs" x="150" y="300" width="300" height="60" />
+  <text x="300" y="330" class="text-title">VRegs (Vector Registers)</text>
+  <text x="300" y="350" class="text-desc">Feeds the Compute Units</text>
+
+  <!-- Scalar Unit -->
+  <rect class="box-scalar" x="500" y="300" width="200" height="140" />
+  <text x="600" y="365" class="text-title">Scalar Unit</text>
+  <text x="600" y="385" class="text-desc">Control Flow,</text>
+  <text x="600" y="405" class="text-desc">Address Calc.</text>
+
+  <!-- VRegs to Compute arrows -->
+  <path class="arrow" d="M 225 360 L 225 390" />
+  <path class="arrow" d="M 375 360 L 375 390" />
+
+  <!-- MXU -->
+  <rect class="box-compute" x="120" y="390" width="150" height="60" />
+  <text x="195" y="420" class="text-title">MXU</text>
+  <text x="195" y="440" class="text-desc">Matrix Multiply</text>
+
+  <!-- VPU -->
+  <rect class="box-compute" x="300" y="390" width="150" height="60" />
+  <text x="375" y="420" class="text-title">VPU</text>
+  <text x="375" y="440" class="text-desc">Vector Math</text>
+
+  <!-- Coordination arrow -->
+  <path class="arrow-dashed" d="M 500 370 L 460 370" />
+  <text x="480" y="365" class="text-desc" style="text-anchor: end;">Controls</text>
+
+</svg>
