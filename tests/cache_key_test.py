@@ -16,27 +16,27 @@ import hashlib
 import os
 import re
 import sys
-import unittest
 from typing import cast as type_cast
-
-import numpy as np
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
-from jax.experimental import pallas as pl
 from jax._src import cache_key
 from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.custom_partitioning import custom_partitioning
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.sharding_impls import NamedSharding
-from jax._src.custom_partitioning import custom_partitioning
+from jax.experimental import pallas as pl
+import numpy as np
 
 
 config.parse_flags_with_absl()
@@ -70,6 +70,9 @@ class CacheKeyTest(jtu.JaxTestCase):
     debug_options.xla_dump_disable_metadata = True
     debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
     debug_options.xla_gpu_experimental_autotune_cache_mode = 2
+    if jaxlib_extension_version >= 527:
+      debug_options.xla_autotune_cache_mode = 2
+      debug_options.xla_autotune_cache_dir = "/tmp/autotune_cache"
     hash2 = self.get_hashed_value(
         cache_key._hash_serialized_compile_options, compile_options
     )
