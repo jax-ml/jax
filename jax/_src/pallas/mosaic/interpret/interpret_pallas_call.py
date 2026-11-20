@@ -19,6 +19,7 @@ import enum
 import functools
 import itertools
 import math
+import os
 import threading
 from typing import Any, Literal
 
@@ -178,6 +179,14 @@ def _get_shared_memory() -> memory.SharedMemory:
 def _clear_shared_memory():
   global _shared_memory
   with _shared_memory_init_lock:
+    if _shared_memory is not None:
+      _shared_memory.note_clean_up_barrier_passed()
+      # If there are active escaped semaphores or in-flight cross-kernel DMAs,
+      # do not clear shared memory so they can persist across pallas_calls.
+      if _shared_memory.has_escaped_semaphores_or_pending_dmas():
+        with _shared_memory.lock:
+          _shared_memory.output_ranges.clear()
+        return
     _shared_memory = None
 
 
@@ -189,7 +198,6 @@ def _initialize_shared_memory(
     token, device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
   global _shared_memory, races, dma_id_counter
-  del device_id
 
   num_devices = int(num_devices)
   num_cores_per_device = int(num_cores_per_device)
@@ -212,12 +220,14 @@ def _initialize_shared_memory(
           barrier=threading.Barrier(
               num_devices, action=_update_clocks_for_global_barrier
           ),
+          allocation_barrier=threading.Barrier(num_devices),
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory
           ),
           logging_mode=interpret_params.logging_mode,
       )
   assert _shared_memory.num_cores == num_cores
+  _shared_memory.start_pallas_call(int(device_id))
   return token
 
 
@@ -239,6 +249,18 @@ def _update_clocks_for_global_barrier():
   ]
   shared_memory.update_clocks(cores)
 
+
+@fail_on_exception
+def _allocation_barrier(token, device_id):
+  del device_id
+  shared_memory = _get_shared_memory()
+  if shared_memory.num_devices > 1:
+    try:
+      shared_memory.allocation_barrier.wait()
+    except threading.BrokenBarrierError:
+      shared_memory.check_failed()
+      raise
+  return token
 
 @fail_on_exception
 def _barrier(token, device_id):
@@ -374,6 +396,8 @@ def _allocate_buffer(
     val: Array,
     padded_shape: tuple[int, ...] | None = None,
     source_info: source_info_util.SourceInfo | None = None,
+    logical_key: Any = None,
+    operand_key: Any = None,
 ):
   """Allocates a memory buffer on the device with id `device_id` and core with id `local_core_id`.
 
@@ -389,6 +413,10 @@ def _allocate_buffer(
     val: Array of values to initialize the allocated buffer with.
     padded_shape: If not None, the shape to pad the buffer to.
     source_info: Information about the source code location of the allocation.
+    logical_key: If not None, identifies the corresponding buffer on other
+      devices, so that remote DMAs can translate buffer ids.
+    operand_key: If not None, the logical key is `operand_key` within the
+      current pallas_call on this device. Used for pallas_call operands.
 
   Returns:
     Integer id for the allocated buffer.
@@ -399,6 +427,10 @@ def _allocate_buffer(
   del memory_space, val
 
   shared_memory = _get_shared_memory()
+  if operand_key is not None:
+    logical_key = (
+        'pallas_call', shared_memory.pallas_call_seq[device_id], *operand_key
+    )
 
   logical_shape = value.shape
   if padded_shape is not None:
@@ -446,6 +478,7 @@ def _allocate_buffer(
             source_info=source_info,
         ),
     )
+    shared_memory.register_logical_buffer(device_id, lci, buffer_id, logical_key)
     local_core_id_to_buffer_id[lci] = buffer_id
 
   # The buffer ids should always be kept in sync across all cores.
@@ -465,6 +498,8 @@ def _call_allocate_buffer(
     val,
     interpret_params: InterpretParams,
     source_info: source_info_util.SourceInfo | None = None,
+    logical_key: Any = None,
+    operand_key: Any = None,
 ):
   """Stages out a call to `_allocate_buffer` for a buffer holding `val`."""
   # The padded shape depends on the TPU that the tracing context targets (see
@@ -474,10 +509,15 @@ def _call_allocate_buffer(
       interpret_params.buffer_bounds == 'padded'
       and memory_space is not mosaic_core.MemorySpace.SMEM
   ):
-    padded_shape = _get_padded_shape(val.shape, np.dtype(val.dtype))
+    dtype = np.dtype('int32') if jnp.issubdtype(val.dtype, pallas_core.semaphore_dtype) else np.dtype(val.dtype)
+    padded_shape = _get_padded_shape(val.shape, dtype)
   return callback.io_callback(
       functools.partial(
-          _allocate_buffer, padded_shape=padded_shape, source_info=source_info
+          _allocate_buffer,
+          padded_shape=padded_shape,
+          source_info=source_info,
+          logical_key=logical_key,
+          operand_key=operand_key,
       ),
       (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
       token,
@@ -485,6 +525,508 @@ def _call_allocate_buffer(
       local_core_id,
       TPU_MEMORY_SPACE_IDXS[memory_space],
       val,
+  )
+
+
+def _is_escaped_hbm_dma_dst(shared_memory, device_id: int, buffer_id: int):
+  """Whether a pending DMA, waited for in a later pallas_call, writes to the buffer.
+
+  `shared_memory.lock` must be held.
+  """
+  return any(
+      dev == device_id and buffer_id in buffer_ids
+      for (dev, _), buffer_ids in (
+          shared_memory.escaped_hbm_dma_dst_buffers.items()
+      )
+  )
+
+
+def _pending_dst_fill_value(dtype, code: int) -> np.ndarray | None:
+  """The value returned for the elements of a buffer that pending DMAs write.
+
+  A DMA into a kernel output buffer, whose receive semaphore escaped the
+  pallas_call and has not been waited for when the pallas_call returns, writes
+  to the buffer at a time that is not known, so the values of the elements it
+  writes are not known until the semaphore is waited for. `_get_output`
+  returns those elements set to a value that depends on the buffer's `code`.
+  Two such buffers on a device with the same shape and dtype have different
+  codes (see `_pending_dst_fill_code`), so the values returned for them differ,
+  and `_bind_kernel_args_to_dma_dsts` can tell which buffer an input of a
+  later pallas_call is. The values are:
+    - floating point: the quiet NaN with payload `code + 1` (the uninitialized
+      value, `np.nan`, has payload 0);
+    - integers: the largest value minus `code + 1` (the uninitialized value is
+      the largest value).
+
+  Args:
+    dtype: The dtype of the buffer.
+    code: The buffer's code.
+
+  Returns:
+    The value, as a 0-d array of `dtype`, or None if `dtype` has no such value
+    for `code` (booleans, and floating point types with fewer than 16 bits).
+  """
+  dtype = np.dtype(dtype)
+  nbits = 8 * dtype.itemsize
+  if jnp.issubdtype(dtype, jnp.floating):
+    finfo = jnp.finfo(dtype)
+    nmant = finfo.nmant
+    if finfo.bits != nbits or nbits < 16 or code + 1 >= 1 << (nmant - 1):
+      return None
+    nexp = nbits - 1 - nmant
+    bits = (((1 << nexp) - 1) << nmant) | (1 << (nmant - 1)) | (code + 1)
+    return np.array(bits, dtype=np.dtype(f'uint{nbits}')).view(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    iinfo = jnp.iinfo(dtype)
+    if iinfo.bits != nbits or code + 1 >= 1 << (nbits - 2):
+      return None
+    return np.array(int(iinfo.max) - (code + 1), dtype=dtype)
+  return None
+
+
+def _pending_dst_fill_code(shared_memory, buffer_key, value) -> int | None:
+  """Returns the code of a DMA dst buffer (see `_pending_dst_fill_value`).
+
+  Assigns the smallest code that no other buffer on the device with the same
+  shape and dtype has. The buffer keeps its code until no DMA into it is
+  pending (see `_release_escaped_dma_dst`). `shared_memory.lock` must be held.
+
+  Args:
+    shared_memory: The shared memory.
+    buffer_key: The key of the buffer.
+    value: The value of the buffer.
+
+  Returns:
+    The code, or None if the buffer's dtype has no fill value for the code.
+  """
+  if buffer_key in shared_memory.pending_dst_fill_code_of:
+    return shared_memory.pending_dst_fill_code_of[buffer_key][1]
+  kind = (buffer_key[2], tuple(value.shape), np.dtype(value.dtype))
+  in_use = shared_memory.pending_dst_fill_codes[kind]
+  code = 0
+  while code in in_use:
+    code += 1
+  if _pending_dst_fill_value(value.dtype, code) is None:
+    return None
+  in_use.add(code)
+  shared_memory.pending_dst_fill_code_of[buffer_key] = (kind, code)
+  return code
+
+
+def _release_escaped_dma_dst(shared_memory, buffer_key):
+  """Forgets the snapshot, code and mirror of a buffer with no pending DMAs.
+
+  `shared_memory.lock` must be held.
+  """
+  shared_memory.escaped_dma_dst_snapshots.pop(buffer_key, None)
+  shared_memory.escaped_dma_dst_mirrors.pop(buffer_key, None)
+  kind_and_code = shared_memory.pending_dst_fill_code_of.pop(buffer_key, None)
+  if kind_and_code is not None:
+    kind, code = kind_and_code
+    shared_memory.pending_dst_fill_codes[kind].discard(code)
+
+
+def _mirror_escaped_dma_dst(
+    shared_memory, kernel_key, pending, device_id: int, buffer_id: int
+) -> bool:
+  """Makes an HBM output buffer the mirror of a kernel output buffer.
+
+  The kernel buffer, which is not in HBM, is the dst of the `pending` DMAs, and
+  the pallas_call returns it in the HBM buffer. Copies the kernel buffer to the
+  HBM buffer after all devices have finished the kernel, so that the HBM buffer
+  has the values written by every DMA that has run. The pending DMAs that run
+  later also write to the HBM buffer (see `DMA.execute_write`), which is
+  recorded as their dst in `escaped_hbm_dma_dst_buffers`, so that an aliased
+  HBM input of a later pallas_call can be bound to it, as on a TPU (see
+  `_bind_hbm_inputs_to_dma_dsts`). `shared_memory.lock` must be held.
+
+  Args:
+    shared_memory: The shared memory.
+    kernel_key: The key of the kernel buffer.
+    pending: The pending DMAs into the kernel buffer (see
+      `escaped_dma_dst_pending`).
+    device_id: The device id.
+    buffer_id: The id of the HBM buffer.
+
+  Returns:
+    Whether the HBM buffer holds the whole kernel buffer, and is now its mirror.
+  """
+  kernel_buff = shared_memory.mem.get(kernel_key)
+  hbm_buff = shared_memory.mem.get(('hbm', buffer_id, device_id, 0))
+  if not (
+      isinstance(kernel_buff, memory.Buffer)
+      and isinstance(hbm_buff, memory.Buffer)
+      and kernel_buff.logical_shape == hbm_buff.logical_shape
+      and kernel_buff.dtype == hbm_buff.dtype
+  ):
+    return False
+  hbm_buff[()] = kernel_buff[()]
+  sem_ids = {sem_id for _, sem_id in pending.values()}
+  old_buffer_id = shared_memory.escaped_dma_dst_mirrors.get(kernel_key)
+  if old_buffer_id is not None and old_buffer_id != buffer_id:
+    # A later pallas_call returns the kernel buffer again.
+    for sem_id in sem_ids:
+      shared_memory.escaped_hbm_dma_dst_buffers.get(
+          (device_id, sem_id), set()
+      ).discard(old_buffer_id)
+    if not _is_escaped_hbm_dma_dst(shared_memory, device_id, old_buffer_id):
+      shared_memory.escaped_hbm_dma_dst_snapshots.pop(
+          (device_id, old_buffer_id), None
+      )
+  shared_memory.escaped_dma_dst_mirrors[kernel_key] = buffer_id
+  for sem_id in sem_ids:
+    shared_memory.escaped_hbm_dma_dst_buffers.setdefault(
+        (device_id, sem_id), set()
+    ).add(buffer_id)
+  return True
+
+
+@fail_on_exception
+def _get_output(
+    token,
+    device_id,
+    local_core_id,
+    memory_space,
+    buffer_id,
+    transforms,
+    kernel_buffer_id=None,
+    *,
+    kernel_memory_space: int | None = None,
+):
+  """Reads a pallas_call output, keeping a copy if a pending DMA writes to it.
+
+  If the output was copied from the whole kernel buffer with id
+  `kernel_buffer_id` in `kernel_memory_space` (not HBM), and DMAs whose receive
+  semaphores escaped the pallas_call write to the kernel buffer and have not
+  been waited for, the HBM output buffer becomes a mirror of the kernel buffer
+  (see `_mirror_escaped_dma_dst`), and the elements that those DMAs write are
+  returned set to `_pending_dst_fill_value`, so that a later pallas_call that
+  gets the output as an input can tell which kernel buffer it is (see
+  `_bind_kernel_args_to_dma_dsts`).
+  """
+  device_id, buffer_id = int(device_id), int(buffer_id)
+  shared_memory = _get_shared_memory()
+  with shared_memory.lock:
+    kernel_key, pending = None, {}
+    if kernel_memory_space is not None:
+      assert kernel_buffer_id is not None
+      kernel_key = (
+          TPU_MEMORY_SPACE_NAMES[int(kernel_memory_space)],
+          int(kernel_buffer_id),
+          device_id,
+          0,
+      )
+      pending = shared_memory.escaped_dma_dst_pending.get(kernel_key, {})
+      if not pending or not _mirror_escaped_dma_dst(
+          shared_memory, kernel_key, pending, device_id, buffer_id
+      ):
+        kernel_key, pending = None, {}
+    token, value = get.__wrapped__(
+        token,
+        device_id,
+        local_core_id,
+        memory_space,
+        buffer_id,
+        transforms,
+        check_race=False,
+    )
+    if kernel_key is not None:
+      code = _pending_dst_fill_code(shared_memory, kernel_key, value)
+      fill = (
+          None if code is None else _pending_dst_fill_value(value.dtype, code)
+      )
+      if fill is not None:
+        bits_dtype = np.dtype(f'uint{8 * value.dtype.itemsize}')
+        bits = value.view(bits_dtype)
+        for rnge, _ in pending.values():
+          rnge = interpret_utils.clip_range_to_shape(
+              rnge + tuple(slice(0, s) for s in value.shape[len(rnge) :]),
+              value.shape,
+          )
+          if rnge is not None:
+            bits[rnge] = fill.view(bits_dtype)
+      shared_memory.escaped_dma_dst_snapshots[kernel_key] = value.copy()
+    if _is_escaped_hbm_dma_dst(shared_memory, device_id, buffer_id):
+      shared_memory.escaped_hbm_dma_dst_snapshots[(device_id, buffer_id)] = (
+          value.copy()
+      )
+  return token, value
+
+
+def _same_bits(x: np.ndarray | None, y: np.ndarray) -> bool:
+  return (
+      x is not None
+      and x.shape == y.shape
+      and x.dtype == y.dtype
+      and x.tobytes() == y.tobytes()
+  )
+
+
+@fail_on_exception
+def _bind_kernel_args_to_dma_dsts(
+    token,
+    device_id,
+    *args,
+    arg_idxs: tuple[int, ...],
+    memory_spaces: tuple[int, ...],
+):
+  """Decides which kernel args (not in HBM) of a pallas_call are DMA dst buffers.
+
+  A remote DMA started in an earlier pallas_call, with a receive semaphore that
+  escaped that pallas_call, writes to the kernel buffer for one of its outputs.
+  If this pallas_call gets that output back as an input, along with the
+  semaphore, then the kernel arg for the input is the buffer (as on a TPU), so
+  that the kernel reads the values that the DMA writes.
+
+  An input can be such a buffer only if it has the value that the earlier
+  pallas_call returned for the buffer (see `_get_output`, which returns the
+  elements that pending DMAs write to set to a value that differs between
+  buffers). A kernel arg is bound to a buffer only if its input can be no other
+  buffer, and no other input can be that buffer. Otherwise which input is which
+  buffer is not known, so the kernel arg is not bound, and gets a new buffer.
+
+  Args:
+    token: The token.
+    device_id: The device id.
+    *args: The values of the inputs in `arg_idxs`, then the ids of the
+      semaphores passed to the pallas_call.
+    arg_idxs: The indices of the inputs whose kernel args are in a memory space
+      other than HBM, each with the shape of its input.
+    memory_spaces: The memory space of each kernel arg in `arg_idxs`.
+
+  Returns:
+    The token, and the id of the buffer that each kernel arg in `arg_idxs` is
+    bound to, or -1.
+  """
+  device_id = int(device_id)
+  values = [np.asarray(v) for v in args[: len(arg_idxs)]]
+  sem_ids = args[len(arg_idxs) :]
+  shared_memory = _get_shared_memory()
+  bound = [-1] * len(arg_idxs)
+  with shared_memory.lock:
+    recorded = sorted({
+        buffer_key
+        for sem in sem_ids
+        for sem_id in np.asarray(sem).flat
+        for buffer_key in shared_memory.escaped_dma_dst_buffers.get(
+            (device_id, int(sem_id)), ()
+        )
+        if buffer_key[3] == 0
+    })
+    # The ids of the recorded buffers that each kernel arg can be.
+    candidates = []
+    for value, memory_space in zip(values, memory_spaces):
+      memory_space_name = TPU_MEMORY_SPACE_NAMES[memory_space]
+      candidates.append([])
+      for buffer_key in recorded:
+        buff = shared_memory.mem.get(buffer_key)
+        if (
+            buffer_key[0] == memory_space_name
+            and isinstance(buff, memory.Buffer)
+            and buff.logical_shape == value.shape
+            and buff.dtype == value.dtype
+            and _same_bits(
+                shared_memory.escaped_dma_dst_snapshots.get(buffer_key), value
+            )
+        ):
+          candidates[-1].append(buffer_key[1])
+
+    seq = shared_memory.pallas_call_seq[device_id]
+    log_binds = os.environ.get('JAX_INTERPRET_HBM_BIND_LOG') == '1'
+    for k, (i, memory_space, cands) in enumerate(
+        zip(arg_idxs, memory_spaces, candidates)
+    ):
+      memory_space_name = TPU_MEMORY_SPACE_NAMES[memory_space]
+      shared = sorted({
+          b for j, other in enumerate(candidates) if j != k for b in other
+      } & set(cands))
+      if len(cands) == 1 and not shared:
+        bound[k] = cands[0]
+        if log_binds:
+          print(
+              f'[VMEM_BIND] device={device_id} pallas_call={seq} input={i}'
+              f' memory_space={memory_space_name} buffer={bound[k]}',
+              flush=True,
+          )
+      elif cands:
+        print(
+            f'[VMEM_BIND_AMBIGUOUS] device={device_id} pallas_call={seq}'
+            f' input={i} memory_space={memory_space_name} candidates={cands}'
+            f' shared_with_other_inputs={shared} bound=None',
+            flush=True,
+        )
+      elif log_binds and any(
+          key[0] == memory_space_name for key in recorded
+      ):
+        print(
+            f'[VMEM_BIND_SKIP] device={device_id} pallas_call={seq} input={i}'
+            f' memory_space={memory_space_name}'
+            f' recorded={[key[1] for key in recorded]}',
+            flush=True,
+        )
+  return token, np.array(bound, dtype=np.int16)
+
+
+@fail_on_exception
+def _allocate_kernel_arg_unless_bound(
+    token, device_id, val, buffer_id, *, memory_space: int, logical_key: Any
+):
+  """Allocates the buffer for a kernel arg not bound to a DMA dst buffer."""
+  if int(buffer_id) >= 0:
+    _get_shared_memory().register_logical_buffer(
+        int(device_id), 0, int(buffer_id), logical_key
+    )
+    return token, np.int16(buffer_id)
+  return _allocate_buffer.__wrapped__(
+      token, device_id, None, memory_space, val, logical_key=logical_key
+  )
+
+
+def _write_escaped_dma_dst_mirror(shared_memory, dma) -> None:
+  """Writes the data of a DMA to the mirror of its dst buffer, if any.
+
+  See `_mirror_escaped_dma_dst`. `shared_memory.lock` must be held.
+  """
+  dst_key = (
+      TPU_MEMORY_SPACE_NAMES[dma.dst_memory_space],
+      dma.dst_buffer_id,
+      dma.dst_device_id,
+      dma.dst_local_core_id,
+  )
+  if dma.id not in shared_memory.escaped_dma_dst_pending.get(dst_key, {}):
+    return
+  mirror_id = shared_memory.escaped_dma_dst_mirrors.get(dst_key)
+  if mirror_id is None:
+    return
+  shared_memory.store_buffer_content(
+      ('hbm', mirror_id, dma.dst_device_id, 0),
+      interpret_utils.to_range(dma.dst_transforms),
+      dma.data,
+      (dma.dst_device_id, dma.dst_local_core_id),
+      increment_clock=False,
+  )
+
+
+@fail_on_exception
+def _bind_hbm_inputs_to_dma_dsts(
+    token, device_id, *args, input_idxs: tuple[int, ...]
+):
+  """Decides which aliased HBM inputs of a pallas_call are DMA dst buffers.
+
+  A remote DMA started in an earlier pallas_call, with a receive semaphore that
+  escaped that pallas_call, writes to the HBM buffer for one of its outputs. If
+  this pallas_call gets that output back as an aliased input, along with the
+  semaphore, then the input is the buffer (as on a TPU), so that the DMA writes
+  to the input even if the DMA only runs in this pallas_call.
+
+  An input can be such a buffer only if it still has the value that the earlier
+  pallas_call returned. An input is bound to a buffer only if it can be no
+  other buffer, and no other input can be that buffer. Otherwise which input is
+  which buffer is not known (e.g., buffers that no DMA has written to yet all
+  hold the same uninitialized value), so the inputs are not bound, and a DMA
+  that only runs in this pallas_call does not write to them.
+
+  Args:
+    token: The token.
+    device_id: The device id.
+    *args: The values of the inputs in `input_idxs`, then the ids of the
+      semaphores passed to the pallas_call.
+    input_idxs: The indices of the aliased inputs in HBM.
+
+  Returns:
+    The token, and the id of the buffer that each input in `input_idxs` is bound
+    to, or -1.
+  """
+  device_id = int(device_id)
+  values = [np.asarray(v) for v in args[: len(input_idxs)]]
+  sem_ids = args[len(input_idxs) :]
+  shared_memory = _get_shared_memory()
+  bound = [-1] * len(input_idxs)
+  with shared_memory.lock:
+    recorded = sorted({
+        buffer_id
+        for sem in sem_ids
+        for sem_id in np.asarray(sem).flat
+        for buffer_id in shared_memory.escaped_hbm_dma_dst_buffers.get(
+            (device_id, int(sem_id)), ()
+        )
+    })
+    # The recorded buffers that each input can be.
+    candidates = []
+    for value in values:
+      candidates.append([])
+      for buffer_id in recorded:
+        buff = shared_memory.mem.get(('hbm', buffer_id, device_id, 0))
+        if (
+            isinstance(buff, memory.Buffer)
+            and buff.logical_shape == value.shape
+            and buff.dtype == value.dtype
+            and _same_bits(
+                shared_memory.escaped_hbm_dma_dst_snapshots.get(
+                    (device_id, buffer_id)
+                ),
+                value,
+            )
+        ):
+          candidates[-1].append(buffer_id)
+
+    seq = shared_memory.pallas_call_seq[device_id]
+    log_binds = os.environ.get('JAX_INTERPRET_HBM_BIND_LOG') == '1'
+    for k, (i, cands) in enumerate(zip(input_idxs, candidates)):
+      shared = sorted({
+          b for j, other in enumerate(candidates) if j != k for b in other
+      } & set(cands))
+      if len(cands) == 1 and not shared:
+        bound[k] = cands[0]
+      elif cands:
+        print(
+            f'[HBM_BIND_AMBIGUOUS] device={device_id} pallas_call={seq}'
+            f' input={i} candidates={cands}'
+            f' shared_with_other_inputs={shared} bound=None',
+            flush=True,
+        )
+      if bound[k] >= 0:
+        if log_binds:
+          print(
+              f'[HBM_BIND] device={device_id} pallas_call={seq} input={i}'
+              f' buffer={bound[k]}',
+              flush=True,
+          )
+        logical_key = ('pallas_call', seq, 'input', i)
+        for local_core_id in range(shared_memory.num_cores_per_device):
+          shared_memory.register_logical_buffer(
+              device_id, local_core_id, bound[k], logical_key
+          )
+      elif not cands and recorded and log_binds:
+        print(
+            f'[HBM_BIND_SKIP] device={device_id} pallas_call={seq} input={i}'
+            f' recorded={recorded}',
+            flush=True,
+        )
+  return token, np.array(bound, dtype=np.int16)
+
+
+@fail_on_exception
+def _allocate_hbm_input_unless_bound(
+    token,
+    device_id,
+    val,
+    buffer_id,
+    *,
+    padded_shape: tuple[int, ...] | None,
+    operand_key: Any,
+):
+  """Allocates the HBM buffer for an input not bound to a DMA dst buffer."""
+  if int(buffer_id) >= 0:
+    return token, np.int16(buffer_id)
+  return _allocate_buffer.__wrapped__(
+      token,
+      device_id,
+      None,
+      TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM],
+      val,
+      padded_shape=padded_shape,
+      operand_key=operand_key,
   )
 
 
@@ -643,6 +1185,9 @@ def get(
     clock=None,
     source_info=None,
     input_name=None,
+    check_race: bool = True,
+    skip_if_escaped_dma_dst: bool = False,
+    boundary_copy: bool = False,
 ) -> tuple[Token, np.ndarray]:
   device_id = int(device_id)
   local_core_id = int(local_core_id)
@@ -690,8 +1235,7 @@ def get(
   full_read_shape: list[int] = []
   assert len(read_range) <= len(shape)
   for dim_size, idx_or_slice in itertools.zip_longest(
-      shape, read_range, fillvalue=None
-  ):
+      shape, read_range, fillvalue=None):
     assert isinstance(dim_size, int)
     if idx_or_slice is None:
       full_read_shape.append(dim_size)
@@ -740,7 +1284,15 @@ def get(
       uninit_array[tuple(slice(s) for s in ret.shape)] = ret
       ret = uninit_array
 
-  if shared_memory.detect_races:
+  if skip_if_escaped_dma_dst:
+    if (
+        memory_space,
+        int(buffer_id),
+        int(device_id),
+        int(local_core_id),
+    ) in shared_memory.escaped_dma_dst_buffer_keys:
+      return token, ret
+  if shared_memory.detect_races and check_race:
     if src_device_id is None:
       src_device_id = device_id
     if src_local_core_id is None:
@@ -753,6 +1305,7 @@ def get(
         (memory_space, buffer_id, device_id, local_core_id_for_buffer),
         read_range,
         source_info=source_info,
+        boundary_copy=boundary_copy,
     )
 
   return token, ret
@@ -775,7 +1328,9 @@ def store(
     clock=None,
     source_info=None,
     output_name=None,
-):
+    check_race: bool = True,
+    skip_if_escaped_dma_dst: bool = False,
+    cross_kernel_dma: bool = False):
   device_id = int(device_id)
   local_core_id = int(local_core_id)
   memory_space = TPU_MEMORY_SPACE_NAMES[int(memory_space)]
@@ -797,6 +1352,14 @@ def store(
     grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
   shared_memory = _get_shared_memory()
+  if skip_if_escaped_dma_dst:
+    if (
+        memory_space,
+        int(buffer_id),
+        int(device_id),
+        int(local_core_id),
+    ) in shared_memory.escaped_dma_dst_buffer_keys:
+      return token
 
   local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
       local_core_id, memory_space
@@ -834,7 +1397,7 @@ def store(
           f' reading [{write_range}] but output has shape {shape}.'
       )
 
-  if shared_memory.detect_races:
+  if shared_memory.detect_races and check_race:
     if src_device_id is None:
       src_device_id = device_id
     if src_local_core_id is None:
@@ -847,6 +1410,7 @@ def store(
         (memory_space, buffer_id, device_id, local_core_id_for_buffer),
         write_range,
         source_info=source_info,
+        cross_kernel_dma=cross_kernel_dma,
     )
   return token
 
@@ -954,6 +1518,8 @@ class DMA:
   clock: memory.SharedMemory.VectorClock
 
   source_info: source_info_util.SourceInfo | None = None
+  # True if `dst_sem` had escaped its pallas_call when the DMA started.
+  cross_kernel: bool = False
 
   state: DmaState = DmaState.STARTED
   data: np.ndarray | None = None
@@ -1043,19 +1609,30 @@ class DMA:
       if self.detect_races:
         self.clock.inc(self.virtual_device_id)
 
-      store.__wrapped__(
-          None,
-          self.dst_device_id,
-          self.dst_local_core_id,
-          self.dst_memory_space,
-          self.dst_buffer_id,
-          self.dst_transforms,
-          self.data,
-          clock=self.clock.copy() if self.clock is not None else None,
-          src_device_id=self.id,
-          src_local_core_id=0,
-          source_info=self.source_info,
-      )
+      # For a DMA whose receive semaphore escaped its pallas_call, the write to
+      # the dst buffer and to its mirror (see `_mirror_escaped_dma_dst`) are
+      # atomic. The lock on the shared memory is taken after the lock on
+      # `self`, as in `store`.
+      shared_memory = _get_shared_memory()
+      with (
+          shared_memory.lock if self.cross_kernel else contextlib.nullcontext()
+      ):
+        store.__wrapped__(
+            None,
+            self.dst_device_id,
+            self.dst_local_core_id,
+            self.dst_memory_space,
+            self.dst_buffer_id,
+            self.dst_transforms,
+            self.data,
+            clock=self.clock.copy() if self.clock is not None else None,
+            src_device_id=self.id,
+            src_local_core_id=0,
+            source_info=self.source_info,
+            cross_kernel_dma=self.cross_kernel,
+        )
+        if self.cross_kernel:
+          _write_escaped_dma_dst_mirror(shared_memory, self)
 
       if self.detect_races:
         self.clock.inc(self.virtual_device_id)
@@ -1126,6 +1703,14 @@ def dma_start(
   )
   assert dst_sem is not None
 
+  effective_dst_id = shared_memory.translate_remote_buffer_id(
+      src_device_id=device_id,
+      src_local_core_id=src_local_core_id,
+      src_buffer_id=dst_id,
+      dst_device_id=dst_device_id,
+      dst_local_core_id=dst_local_core_id,
+  )
+
   assert dma_id_counter is not None
   id = dma_id_counter.get_next()
 
@@ -1139,17 +1724,72 @@ def dma_start(
       dst_device_id,
       dst_local_core_id,
       dst_memory_space,
-      dst_id,
+      effective_dst_id,
       dst_transforms,
       src_sem,
       dst_sem,
       virtual_device_id = shared_memory.get_random_virtual_device_id(),
       clock=clock,  # pyrefly: ignore[bad-argument-type]
       source_info=source_info,
+      cross_kernel=dst_sem_id in shared_memory.escaped_semaphore_ids,
   )
 
+  shared_memory = _get_shared_memory()
+
+  if (
+      int(dst_sem_id) in shared_memory.escaped_semaphore_ids
+      or (src_sem_id is not None and int(src_sem_id) in shared_memory.escaped_semaphore_ids)
+  ):
+    shared_memory.active_cross_kernel_dmas.add(id)
+    shared_memory.cross_kernel_dma_sem_ids[id] = (
+        int(dst_sem_id),
+        int(src_sem_id) if src_sem_id is not None else None,
+    )
+  if (
+      int(dst_sem_id) in shared_memory.escaped_semaphore_ids
+      and dst_memory_space != TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM]
+  ):
+    buf_key = (
+        TPU_MEMORY_SPACE_NAMES[int(dst_memory_space)],
+        int(effective_dst_id),
+        int(dst_device_id),
+        int(dst_local_core_id),
+    )
+    with shared_memory.lock:
+      shared_memory.escaped_dma_dst_buffers.setdefault(
+          (int(dst_device_id), int(dst_sem_id)), set()
+      ).add(buf_key)
+      shared_memory.escaped_dma_dst_buffer_keys.add(buf_key)
+      shared_memory.escaped_dma_dst_pending.setdefault(buf_key, {})[id] = (
+          interpret_utils.to_range(dst_transforms),
+          int(dst_sem_id),
+      )
+  if (
+      int(dst_sem_id) in shared_memory.escaped_semaphore_ids
+      and dst_memory_space == TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM]
+  ):
+    with shared_memory.lock:
+      shared_memory.escaped_hbm_dma_dst_buffers.setdefault(
+          (int(dst_device_id), int(dst_sem_id)), set()
+      ).add(int(effective_dst_id))
+
   if shared_memory.dma_execution_mode == 'on_wait':
+    is_cross_kernel = (
+        int(dst_sem_id) in shared_memory.escaped_semaphore_ids
+        or (src_sem_id is not None and int(src_sem_id) in shared_memory.escaped_semaphore_ids)
+    )
     if src_sem_id is None:
+      shared_memory.append_semaphore_task(
+          dst_sem_id, dst_global_core_id, dma.execute_read_and_write
+      )
+    elif is_cross_kernel:
+      # For cross-kernel DMAs, the sender waits send in the first kernel while the
+      # receiver waits recv in a later kernel. Executing read-and-write when the sender
+      # waits send ensures the transferred data is materialized in the destination HBM buffer
+      # before the first kernel finishes, while semaphore signal/wait still tracks happens-before.
+      shared_memory.append_semaphore_task(
+          src_sem_id, src_global_core_id, dma.execute_read_and_write
+      )
       shared_memory.append_semaphore_task(
           dst_sem_id, dst_global_core_id, dma.execute_read_and_write
       )
@@ -1203,6 +1843,35 @@ def dma_wait(token, device_id, local_core_id, sem_id, size, source_info=None):
           source_info=source_info,
       ),
   )
+
+  # If this DMA was in active_cross_kernel_dmas and is now completed, remove it.
+  with shared_memory.lock:
+    for buf_key in shared_memory.escaped_dma_dst_buffers.pop(
+        (device_id, sem_id), ()
+    ):
+      shared_memory.escaped_dma_dst_buffer_keys.discard(buf_key)
+      pending = shared_memory.escaped_dma_dst_pending.get(buf_key, {})
+      for dma_id in [d for d, (_, s) in pending.items() if s == sem_id]:
+        del pending[dma_id]
+      if not pending:
+        shared_memory.escaped_dma_dst_pending.pop(buf_key, None)
+        _release_escaped_dma_dst(shared_memory, buf_key)
+    for buf_id in shared_memory.escaped_hbm_dma_dst_buffers.pop(
+        (device_id, sem_id), ()
+    ):
+      if not _is_escaped_hbm_dma_dst(shared_memory, device_id, buf_id):
+        shared_memory.escaped_hbm_dma_dst_snapshots.pop(
+            (device_id, buf_id), None
+        )
+    completed_dmas = {
+        dma_id
+        for dma_id in shared_memory.active_cross_kernel_dmas
+        if shared_memory.cross_kernel_dma_sem_ids.get(dma_id, (None,))[0]
+        == sem_id
+    }
+    shared_memory.active_cross_kernel_dmas.difference_update(completed_dmas)
+    for dma_id in completed_dmas:
+      shared_memory.cross_kernel_dma_sem_ids.pop(dma_id, None)
   return token
 
 
@@ -1524,7 +2193,7 @@ def _interpret_jaxpr(
         # eqn.params['jaxpr'].invars. It is assumed that each core
         # runs the same sequence of `run_scoped`s.
         allocs = []
-        for v in eqn.params['jaxpr'].invars:
+        for v_idx, v in enumerate(eqn.params['jaxpr'].invars):
           if v.aval.memory_space is _SEMAPHORE:
             token, alloc = callback.io_callback(
                 _allocate_semaphores,
@@ -1543,6 +2212,7 @@ def _interpret_jaxpr(
               )
             else:
               memory_space = _forward_any_to_hbm(v.aval.memory_space)
+            scoped_logical_key = ('scoped', eqn.source_info, v_idx, tuple(v.aval.shape), str(v.aval.dtype))
             token, alloc = _call_allocate_buffer(
                 token,
                 ctx.device_id,
@@ -1555,6 +2225,7 @@ def _interpret_jaxpr(
                 ),
                 ctx.interpret_params,
                 source_info=eqn.source_info,
+                logical_key=scoped_logical_key,
             )
             allocs.append(alloc)
 
@@ -1753,7 +2424,6 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is mosaic_primitives.get_barrier_semaphore_p:
-        # TODO(rdyro): Support barrier semaphore tags in interpret mode.
         token, out = callback.io_callback(
             get_barrier_semaphore,
             (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
@@ -1899,6 +2569,56 @@ def _get_parallel_subgrid_size(
   )
 
 _GridPointCoordinatesPerDim = tuple[Array, ...]
+
+def _barrier_semaphore_tags(jaxpr: jax_core.Jaxpr) -> frozenset[Any]:
+  tags = {
+      eqn.params["tag"]
+      for eqn in jaxpr.eqns
+      if eqn.primitive is mosaic_primitives.get_barrier_semaphore_p
+      and eqn.params.get("tag") is not None
+  }
+  for subjaxpr in jax_core.subjaxprs(jaxpr):
+    tags |= _barrier_semaphore_tags(subjaxpr)
+  return frozenset(tags)
+
+
+# Barrier semaphores for tagged barriers get collective ids from this range, in
+# order of first use. The range is above the explicit collective ids used in
+# practice and below the ids of internally allocated semaphores (see
+# `SharedMemory.next_semaphore_id`), so that a barrier semaphore never shares
+# its id with another semaphore.
+_TAG_COLLECTIVE_ID_RANGE = range(1000, 2000)
+_tag_collective_ids: dict[Any, int] = {}
+_tag_collective_ids_lock = threading.Lock()
+
+
+def _collective_id_for_tag(tag: Any) -> int:
+  """Returns the collective id for the barrier semaphore with tag `tag`."""
+  with _tag_collective_ids_lock:
+    if tag not in _tag_collective_ids:
+      if len(_tag_collective_ids) == len(_TAG_COLLECTIVE_ID_RANGE):
+        raise ValueError(
+            'Too many distinct barrier semaphore tags in TPU interpret mode:'
+            f' at most {len(_TAG_COLLECTIVE_ID_RANGE)} are supported.'
+        )
+      _tag_collective_ids[tag] = _TAG_COLLECTIVE_ID_RANGE[
+          len(_tag_collective_ids)
+      ]
+    return _tag_collective_ids[tag]
+
+
+def _extract_single_barrier_semaphore_tag(
+    jaxpr: jax_core.Jaxpr,
+) -> Any | None:
+  tags = set(_barrier_semaphore_tags(jaxpr))
+  if len(tags) > 1:
+    raise ValueError(
+        "Cannot specify multiple distinct barrier semaphore tags within a"
+        f" single kernel: {tags}. XLA only supports one collective_id per"
+        " kernel."
+    )
+  return next(iter(tags)) if tags else None
+
 
 def _get_randomized_grid_coordinates(
     grid: tuple[int, ...],
@@ -2067,17 +2787,6 @@ def interpret_pallas_call(
   token = callback.io_callback(
       ordering_barrier, TOKEN_SHAPE_DTYPE, token, ordered=True)
 
-  token = callback.io_callback(
-      functools.partial(
-          _initialize_shared_memory, interpret_params=interpret_params
-      ),
-      TOKEN_SHAPE_DTYPE,
-      token,
-      device_id,
-      num_devices,
-      interpret_params.num_cores_per_device,
-  )
-
   # Pad input arguments.
   is_squeeze_dim = [
       tuple(isinstance(b, pallas_core.Squeezed) for b in bm.block_shape)
@@ -2094,22 +2803,104 @@ def interpret_pallas_call(
       for a, bs in zip(input_args, block_shapes[:num_inputs])
   ]
 
+  # Check if a tag was extracted
+  tag = _extract_single_barrier_semaphore_tag(jaxpr)
+  if tag is not None and mosaic_params.collective_id is None:
+    mosaic_params = dataclasses.replace(
+        mosaic_params, collective_id=_collective_id_for_tag(tag)
+    )
+
+  token = callback.io_callback(
+      functools.partial(
+          _initialize_shared_memory, interpret_params=interpret_params
+      ),
+      TOKEN_SHAPE_DTYPE,
+      token,
+      device_id,
+      num_devices,
+      interpret_params.num_cores_per_device,
+  )
+
   # Allocate HBM buffers for pallas_call inputs.
   #
   # TODO(jburnim): As an optimization, skip allocating buffers for inputs that
   # are neither aliased nor passed to the kernel in HBM?
+  #
+  # An aliased input in HBM may instead be bound to the buffer that a pending
+  # remote DMA, received by one of the semaphores passed to the pallas_call,
+  # writes to (see `_bind_hbm_inputs_to_dma_dsts`).
+  sem_inputs = [
+      lax.convert_element_type(
+          lax.convert_element_type(input_args[j], jnp.int32), jnp.int16
+      )
+      if hasattr(input_args[j], 'dtype')
+      and jnp.issubdtype(input_args[j].dtype, pallas_core.semaphore_dtype)
+      else input_args[j]
+      for j in range(grid_mapping.num_inputs)
+      if _forward_any_to_hbm(
+          grid_mapping.block_mappings[j].block_aval.memory_space
+      )
+      is _SEMAPHORE
+  ]
+  aliased_input_idxs = {k - len(scalars) for k, _ in input_output_aliases}
+  bindable_input_idxs = tuple(
+      i
+      for i in range(grid_mapping.num_inputs)
+      if sem_inputs
+      and i in aliased_input_idxs
+      and _forward_any_to_hbm(
+          grid_mapping.block_mappings[i].block_aval.memory_space
+      )
+      is _HBM
+  )
+  bound_buffer_ids = None
+  if bindable_input_idxs:
+    token, bound_buffer_ids = callback.io_callback(
+        functools.partial(
+            _bind_hbm_inputs_to_dma_dsts, input_idxs=bindable_input_idxs
+        ),
+        (
+            TOKEN_SHAPE_DTYPE,
+            jax.ShapeDtypeStruct((len(bindable_input_idxs),), jnp.int16),
+        ),
+        token,
+        device_id,
+        *[input_args[i] for i in bindable_input_idxs],
+        *sem_inputs,
+    )
   input_buffer_ids = []
   for i, var in enumerate(
       jaxpr.invars[grid_mapping.num_index_operands:][:grid_mapping.num_inputs]):
     assert var.aval.dtype == input_args[i].dtype  # pyrefly: ignore[missing-attribute]
-    token, buffer_id = _call_allocate_buffer(
-        token,
-        device_id,
-        None,  # local_core_id
-        mosaic_core.MemorySpace.HBM,
-        input_args[i],
-        interpret_params,
-    )
+    if i in bindable_input_idxs:
+      assert bound_buffer_ids is not None
+      padded_shape = None
+      if interpret_params.buffer_bounds == 'padded':
+        padded_shape = _get_padded_shape(
+            input_args[i].shape, np.dtype(input_args[i].dtype)
+        )
+      token, buffer_id = callback.io_callback(
+          functools.partial(
+              _allocate_hbm_input_unless_bound,
+              padded_shape=padded_shape,
+              operand_key=('input', i),
+          ),
+          (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+          token,
+          device_id,
+          input_args[i],
+          bound_buffer_ids[bindable_input_idxs.index(i)],
+      )
+    else:
+      token, buffer_id = _call_allocate_buffer(
+          token,
+          device_id,
+          None,  # local_core_id
+          mosaic_core.MemorySpace.HBM,
+          input_args[i],
+          interpret_params,
+          operand_key=('input', i),
+      )
     input_buffer_ids.append(buffer_id)
 
   # Allocate buffers in HBM for pallas_call outputs.
@@ -2123,17 +2914,40 @@ def interpret_pallas_call(
   num_outputs = grid_mapping.num_outputs
   output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
   for i, bm in enumerate(grid_mapping.block_mappings_output):
-    if i in oi_alias_map:
+    is_semaphore_out = (
+        bm.block_aval.memory_space is _SEMAPHORE
+        or jnp.issubdtype(
+            bm.array_aval.dtype, pallas_core.semaphore_dtype
+        )
+    )
+    if is_semaphore_out:
+      out_val = (
+          input_args[oi_alias_map[i]]
+          if i in oi_alias_map
+          else interpret_utils.get_uninitialized_array(
+              bm.array_aval.shape,
+              bm.array_aval.dtype,
+              interpret_params.uninitialized_memory,
+          )
+      )
+      output_buffer_ids.append(None)
+      output_buffer_shapes.append(bm.array_aval.shape)
+      output_vals.append(out_val)
+    elif i in oi_alias_map:
       # Reuse the HBM buffer for the aliased pallas_call input.
       output_buffer_ids.append(input_buffer_ids[oi_alias_map[i]])
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
     else:
       out_val = interpret_utils.get_uninitialized_array(
-          bm.array_aval.shape, bm.array_aval.dtype,
-          interpret_params.uninitialized_memory)
+          bm.array_aval.shape,
+          bm.array_aval.dtype,
+          interpret_params.uninitialized_memory,
+      )
       padded_val = interpret_utils.pad_to_block_dimension(
-          out_val, output_block_shapes[i], interpret_params.uninitialized_memory
+          out_val,
+          output_block_shapes[i],
+          interpret_params.uninitialized_memory,
       )
       token, buf_id = _call_allocate_buffer(
           token,
@@ -2142,6 +2956,7 @@ def interpret_pallas_call(
           mosaic_core.MemorySpace.HBM,
           padded_val,
           interpret_params,
+          operand_key=('output', i),
       )
       output_buffer_ids.append(buf_id)
       output_buffer_shapes.append(padded_val.shape)
@@ -2150,7 +2965,9 @@ def interpret_pallas_call(
   # Allocate buffers for non-HBM kernel arguments (e.g., scalars, inputs,
   # outputs, scratch).
   scalar_buffer_ids = []
-  for var, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
+  for i, (var, val) in enumerate(
+      zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars)
+  ):
     assert var.aval.shape == val.shape
     assert var.aval.dtype == val.dtype
     token, buf_id = _call_allocate_buffer(
@@ -2160,10 +2977,48 @@ def interpret_pallas_call(
         mosaic_core.MemorySpace.SMEM,
         val,
         interpret_params,
+        operand_key=('scalar', i),
     )
     scalar_buffer_ids.append(buf_id)
 
   kernel_buffer_ids = scalar_buffer_ids.copy()
+  reused_escaped_input_indices = set()
+  # The inputs whose kernel args (not in HBM) may be bound to the kernel buffer
+  # that a pending DMA writes to (see `_bind_kernel_args_to_dma_dsts`). Only a
+  # kernel arg that holds its whole input can be such a buffer.
+  input_memory_spaces = [
+      _forward_any_to_hbm(bm.block_aval.memory_space)
+      for bm in grid_mapping.block_mappings[:num_inputs]
+  ]
+  bindable_arg_idxs = tuple(
+      i
+      for i, var in enumerate(
+          jaxpr.invars[grid_mapping.num_index_operands:][:num_inputs]
+      )
+      if sem_inputs
+      and input_memory_spaces[i] not in (_HBM, _SEMAPHORE)
+      and tuple(var.aval.shape) == tuple(input_args[i].shape)  # pyrefly: ignore[missing-attribute]
+  )
+  bound_kernel_arg_ids = None
+  if bindable_arg_idxs:
+    token, bound_kernel_arg_ids = callback.io_callback(
+        functools.partial(
+            _bind_kernel_args_to_dma_dsts,
+            arg_idxs=bindable_arg_idxs,
+            memory_spaces=tuple(
+                TPU_MEMORY_SPACE_IDXS[input_memory_spaces[i]]
+                for i in bindable_arg_idxs
+            ),
+        ),
+        (
+            TOKEN_SHAPE_DTYPE,
+            jax.ShapeDtypeStruct((len(bindable_arg_idxs),), jnp.int16),
+        ),
+        token,
+        device_id,
+        *[input_args[i] for i in bindable_arg_idxs],
+        *sem_inputs,
+    )
   for i, var in enumerate(jaxpr.invars[grid_mapping.num_index_operands:]):
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
@@ -2175,15 +3030,34 @@ def interpret_pallas_call(
     else:
       memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
     if memory_space is _SEMAPHORE:
-      token, sem_id = callback.io_callback(
-          _allocate_semaphores,
-          (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct(aval.shape, jnp.int16)),  # pyrefly: ignore[missing-attribute]
-          token,
-          device_id,
-          None,  # local_core_id
-          aval.shape,  # pyrefly: ignore[missing-attribute]
-      )
-      kernel_buffer_ids.append(sem_id)
+      if is_input:
+        # Input semaphore argument: bind to existing semaphore ID
+        sem_id = input_args[i]
+        if hasattr(sem_id, "dtype") and jnp.issubdtype(
+            sem_id.dtype, pallas_core.semaphore_dtype
+        ):
+          sem_id = lax.convert_element_type(sem_id, jnp.int32)
+          sem_id = lax.convert_element_type(sem_id, jnp.int16)
+        kernel_buffer_ids.append(sem_id)
+      elif is_output and output_idx in oi_alias_map:
+        # Output semaphore aliased to an input semaphore: reuse the input semaphore ID!
+        sem_id = input_args[oi_alias_map[output_idx]]
+        if hasattr(sem_id, "dtype") and jnp.issubdtype(
+            sem_id.dtype, pallas_core.semaphore_dtype
+        ):
+          sem_id = lax.convert_element_type(sem_id, jnp.int32)
+          sem_id = lax.convert_element_type(sem_id, jnp.int16)
+        kernel_buffer_ids.append(sem_id)
+      else:
+        token, sem_id = callback.io_callback(
+            _allocate_semaphores,
+            (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct(aval.shape, jnp.int16)),  # pyrefly: ignore[missing-attribute]
+            token,
+            device_id,
+            None,  # local_core_id
+            aval.shape,  # pyrefly: ignore[missing-attribute]
+        )
+        kernel_buffer_ids.append(sem_id)
     elif memory_space is _HBM:
       # Use the already-allocated HBM input or output buffer.
       #
@@ -2198,6 +3072,47 @@ def interpret_pallas_call(
           kernel_buffer_ids.append(input_buffer_ids[i])
       if is_output:
         kernel_buffer_ids.append(output_buffer_ids[output_idx])
+    elif is_input:
+      if sem_inputs:
+        reused_escaped_input_indices.add(i)
+        if i in bindable_arg_idxs:
+          assert bound_kernel_arg_ids is not None
+          bound_id = bound_kernel_arg_ids[bindable_arg_idxs.index(i)]
+        else:
+          bound_id = np.int16(-1)
+        token, buf_id = callback.io_callback(
+            functools.partial(
+                _allocate_kernel_arg_unless_bound,
+                memory_space=TPU_MEMORY_SPACE_IDXS[memory_space],
+                logical_key=('kernel_arg', i),
+            ),
+            (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
+            token,
+            device_id,
+            interpret_utils.get_uninitialized_array(
+                var.aval.shape,  # pyrefly: ignore[missing-attribute]
+                var.aval.dtype,  # pyrefly: ignore[missing-attribute]
+                interpret_params.uninitialized_memory,
+            ),
+            bound_id,
+        )
+      else:
+        token, buf_id = _call_allocate_buffer(
+            token,
+            device_id,
+            None,  # local_core_id,
+            memory_space,
+            interpret_utils.get_uninitialized_array(
+                var.aval.shape,  # pyrefly: ignore[missing-attribute]
+                var.aval.dtype,  # pyrefly: ignore[missing-attribute]
+                interpret_params.uninitialized_memory,
+            ),
+            interpret_params,
+            logical_key=('kernel_arg', i),
+        )
+      kernel_buffer_ids.append(buf_id)
+    elif is_output and output_idx in oi_alias_map and oi_alias_map[output_idx] in reused_escaped_input_indices:
+      kernel_buffer_ids.append(kernel_buffer_ids[len(scalar_buffer_ids) + oi_alias_map[output_idx]])
     else:
       token, buf_id = _call_allocate_buffer(
           token,
@@ -2210,23 +3125,56 @@ def interpret_pallas_call(
               interpret_params.uninitialized_memory,
           ),
           interpret_params,
+          logical_key=('kernel_output', output_idx),
       )
       kernel_buffer_ids.append(buf_id)
+
+  _, input_ids, kernel_output_ids, _ = split_list(
+      kernel_buffer_ids,
+      [grid_mapping.num_index_operands, num_inputs, grid_mapping.num_outputs],
+  )
+  input_vars, output_vars = split_list(
+      jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs]
+  )
+  input_var_memory_spaces, output_var_memory_spaces = split_list(
+      [
+          _forward_any_to_hbm(bm.block_aval.memory_space)
+          for bm in grid_mapping.block_mappings
+      ],
+      [num_inputs],
+  )
+
+  # If this kernel produces escaped semaphores, register them in SharedMemory so they persist
+  # and are not treated as leftovers at this kernel's exit.
+  if any(b is None for b in output_buffer_ids):
+    def _register_escaped(token, *sem_vals):
+      shared_mem = _get_shared_memory()
+      for sem_val in sem_vals:
+        ids = np.array(sem_val, dtype=np.int32).flatten()
+        for sid in ids:
+          shared_mem.register_escaped_semaphore_id(int(sid))
+      return token
+
+    escaped_sem_vals = [
+        kernel_output_ids[idx]
+        for idx, b_id in enumerate(output_buffer_ids)
+        if b_id is None
+    ]
+    token = callback.io_callback(
+        _register_escaped, TOKEN_SHAPE_DTYPE, token, *escaped_sem_vals
+    )
 
   if mosaic_params.collective_id is None:
     # The kernel doesn't specify its own barrier semaphore, so we do a global
     # barrier before running the first iteration of the kernel.
     token = callback.io_callback(_barrier, TOKEN_SHAPE_DTYPE, token, device_id)
-
-  _, input_ids, kernel_output_ids, _  = split_list(
-      kernel_buffer_ids,
-      [grid_mapping.num_index_operands, num_inputs, grid_mapping.num_outputs])
-  input_vars, output_vars = split_list(
-      jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
-  input_var_memory_spaces, output_var_memory_spaces = split_list(
-      [_forward_any_to_hbm(bm.block_aval.memory_space)
-       for bm in grid_mapping.block_mappings],
-      [num_inputs])
+  else:
+    # The kernel synchronizes devices itself (possibly with a tagged barrier
+    # that is split across kernels, or with no barrier at all). Wait until all
+    # devices have allocated and bound their buffers for this kernel, so that a
+    # remote DMA can translate its destination buffer id, without updating
+    # vector clocks.
+    token = callback.io_callback(_allocation_barrier, TOKEN_SHAPE_DTYPE, token, device_id)
   if grid:
     num_iterations = functools.reduce(jnp.multiply, grid)
   else:
@@ -2376,6 +3324,8 @@ def interpret_pallas_call(
 
         # Copy slices of the input to the kernel buffers.
         def _store_slice_to_kernel_input(index, input_var, memory_space, token):
+          if memory_space is _SEMAPHORE:
+            return token
           # Copy from the HBM buffer for the pallas_call input to the kernel
           # input buffer.
           # TODO(jburnim): Just use input_args[j] when the input is not aliased?
@@ -2394,7 +3344,11 @@ def interpret_pallas_call(
           token, sliced_val = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # read is involved in a data race.
-              functools.partial(get, input_name=input_names[index]),
+              functools.partial(
+                  get,
+                  input_name=input_names[index],
+                  skip_if_escaped_dma_dst=True,
+              ),
               (
                   TOKEN_SHAPE_DTYPE,
                   jax.ShapeDtypeStruct(
@@ -2413,7 +3367,11 @@ def interpret_pallas_call(
           token = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # store is involved in a data race.
-              store,
+              functools.partial(
+                  store,
+                  check_race=False,
+                  skip_if_escaped_dma_dst=True,
+              ),
               TOKEN_SHAPE_DTYPE,
               token,
               device_id,
@@ -2428,8 +3386,8 @@ def interpret_pallas_call(
         for j, var in enumerate(input_vars):
           if not isinstance(var.aval, state.AbstractRef):
             continue
-          if input_var_memory_spaces[j] is _HBM:
-            if var.aval.shape != block_shapes[j]:
+          if input_var_memory_spaces[j] in (_HBM, _SEMAPHORE):
+            if input_var_memory_spaces[j] is _HBM and var.aval.shape != block_shapes[j]:
               raise ValueError(
                   f'Kernel input {j} in HBM but does not have trivial'
                   ' BlockSpec.'
@@ -2461,10 +3419,16 @@ def interpret_pallas_call(
         def _store_to_output_buffer(
             index, output_var, transform, memory_space, token
         ):
+          if memory_space is _SEMAPHORE or output_buffer_ids[index] is None:
+            return token
           token, kernel_output_val = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # get is involved in a data race.
-              get,
+              functools.partial(
+                  get,
+                  skip_if_escaped_dma_dst=True,
+                  boundary_copy=True,
+              ),
               (TOKEN_SHAPE_DTYPE, output_var.aval),
               token,
               device_id,
@@ -2476,7 +3440,11 @@ def interpret_pallas_call(
           token = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # store is involved in a data race.
-              functools.partial(store, output_name=output_names[index]),
+              functools.partial(
+                  store,
+                  output_name=output_names[index],
+                  skip_if_escaped_dma_dst=True,
+              ),
               TOKEN_SHAPE_DTYPE,
               token,
               device_id,
@@ -2492,8 +3460,8 @@ def interpret_pallas_call(
 
         output_slices : list[Any] = []
         for j, var in enumerate(output_vars):
-          if output_var_memory_spaces[j] is _HBM:
-            if var.aval.shape != block_shapes[num_inputs + j]:
+          if output_var_memory_spaces[j] in (_HBM, _SEMAPHORE):
+            if output_var_memory_spaces[j] is _HBM and var.aval.shape != block_shapes[num_inputs + j]:
               raise ValueError(
                   f'Kernel output {j} in HBM but does not have trivial'
                   ' BlockSpec.'
@@ -2610,29 +3578,61 @@ def interpret_pallas_call(
       _update_clocks_for_device_barrier, TOKEN_SHAPE_DTYPE, token, device_id
   )
 
-  # Read the output from the allocated output buffers.
+  # Wait until all devices have finished running the kernel, so that DMAs
+  # executed by other devices during the kernel have written to this device's
+  # output buffers before they are read. Does not update vector clocks.
+  token = callback.io_callback(
+      _allocation_barrier, TOKEN_SHAPE_DTYPE, token, device_id
+  )
+
+  # Read the output from the allocated output buffers or semaphore IDs.
   ret = []
-  for val, output_buffer_id, output_buffer_shape in zip(
-      output_vals, output_buffer_ids, output_buffer_shapes
+  for i, (val, output_buffer_id, output_buffer_shape) in enumerate(
+      zip(output_vals, output_buffer_ids, output_buffer_shapes)
   ):
-    token, r = callback.io_callback(
-        # TODO(jburnim): Pass source_info from the pallas_call, in case this
-        # get is involved in a data race.
-        get,
-        (TOKEN_SHAPE_DTYPE, val),
-        token,
-        device_id,
-        0,  # local_core_id
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM],
-        output_buffer_id,
-        (
-            indexing.NDIndexer.from_indices_shape(
-                tuple(indexing.ds(0, s) for s in val.shape),
-                output_buffer_shape,
-            ),
-        ),
-    )
-    ret.append(r)
+    if output_buffer_id is None:
+      # Semaphore output: returned as values carrying their semaphore ids.
+      sem_val = kernel_output_ids[i]
+      if hasattr(val, "dtype") and jnp.issubdtype(
+          val.dtype, pallas_core.semaphore_dtype
+      ):
+        # Physical representation of semaphore extended dtype is int32.
+        # sem_val has dtype int16 from _allocate_semaphores.
+        sem_val = lax.convert_element_type(sem_val, jnp.int32)
+        sem_val = lax.convert_element_type(sem_val, val.dtype)
+      ret.append(sem_val)
+    else:
+      # The kernel buffer that the output is copied from, if it holds the
+      # whole output and is not in HBM (see `_get_output`).
+      kernel_memory_space = output_var_memory_spaces[i]
+      whole_kernel_buffer = (
+          kernel_memory_space not in (_HBM, _SEMAPHORE)
+          and tuple(output_vars[i].aval.shape) == tuple(val.shape)  # pyrefly: ignore[missing-attribute]
+      )
+      token, r = callback.io_callback(
+          # TODO(jburnim): Pass source_info from the pallas_call, in case this
+          # get is involved in a data race.
+          functools.partial(
+              _get_output,
+              kernel_memory_space=TPU_MEMORY_SPACE_IDXS[kernel_memory_space]
+              if whole_kernel_buffer
+              else None,
+          ),
+          (TOKEN_SHAPE_DTYPE, val),
+          token,
+          device_id,
+          0,  # local_core_id
+          TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.HBM],
+          output_buffer_id,
+          (
+              indexing.NDIndexer.from_indices_shape(
+                  tuple(indexing.ds(0, s) for s in val.shape),
+                  output_buffer_shape,
+              ),
+          ),
+          kernel_output_ids[i] if whole_kernel_buffer else np.int16(-1),
+      )
+      ret.append(r)
 
   token = callback.io_callback(_validate, TOKEN_SHAPE_DTYPE, token, device_id)
 

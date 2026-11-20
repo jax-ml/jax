@@ -22,6 +22,7 @@ from typing import Any, Literal
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import source_info_util
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.state import indexing
 from jax._src.state import types as state_types
@@ -33,6 +34,8 @@ import numpy as np
 def get_uninitialized_value(
     dtype, uninitialized_memory: Literal["nan", "zero"]
 ):
+  if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    return 0
   if uninitialized_memory == "nan":
     if jnp.issubdtype(dtype, jnp.floating):
       return np.nan
@@ -48,6 +51,9 @@ def get_uninitialized_value(
 def get_uninitialized_array(
     shape, dtype, uninitialized_memory: Literal["nan", "zero"]
 ):
+  if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    val = jnp.zeros(shape, dtype=jnp.int32)
+    return lax.convert_element_type(val, dtype)
   return jnp.full(
       shape,
       get_uninitialized_value(dtype, uninitialized_memory),
@@ -253,7 +259,7 @@ def is_int(dtype):
 
 
 def is_float(dtype):
-  return jnp.issubdtype(dtype, jnp.floating)
+  return dtype is not None and jnp.issubdtype(dtype, jnp.floating)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,8 +307,10 @@ class JaxprEnv:
     return safe_map(self.read, vars)
 
   def write(self, var, value):
-    if self._sentinel_for_floating_point_values and is_float(value.dtype):
-      value = Placeholder(value.shape, value.dtype)
+    dtype = getattr(value, 'dtype', None)
+    if self._sentinel_for_floating_point_values and dtype is not None and is_float(dtype):
+      shape = getattr(value, 'shape', ())
+      value = Placeholder(shape, dtype)
     self._env[var] = value
 
   def write_many(self, vars, values):
