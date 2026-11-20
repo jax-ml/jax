@@ -219,5 +219,32 @@ def test_custom_root_grad_eager(state):
     jax.block_until_ready(fn(arg))
 
 
+def _trace_grad(state, loss, *args):
+  fn = jax.jit(jax.grad(loss))
+  while state:
+    _ = fn.trace(*args).lojax
+    clear_caches(state)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(1)
+@google_benchmark.option.arg(64)
+@google_benchmark.option.arg(512)
+def test_tree_stack_grad_trace(state):
+  leaf = lambda *shape: jax.ShapeDtypeStruct(shape, np.float32)
+  tree = {
+      "mass": leaf(),
+      "state": {"position": leaf(3), "velocity": leaf(3),
+                "modes": (leaf(8, 3), leaf(8, 3))},
+      "fields": [leaf(), leaf(), leaf(4)],
+  }
+
+  def loss(trees):
+    stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *trees)
+    return sum(jnp.sum(x**2) for x in jax.tree.leaves(stacked))
+  _trace_grad(state, loss, [tree] * state.range(0))
+
+
 if __name__ == "__main__":
   google_benchmark.main()
