@@ -30,6 +30,8 @@ float_dtypes = jtu.dtypes.floating
 real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean
 all_dtypes = real_dtypes + jtu.dtypes.complex
 
+_DCTN_FUNCS = ('idctn', 'dctn', 'idstn', 'dstn')
+
 def _get_dctn_test_axes(shape):
   axes = [[]]
   ndims = len(shape)
@@ -60,14 +62,16 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
   def testDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda a: jsp_fft.dct(a, n=n, axis=axis, norm=norm)
-    np_fn = lambda a: osp_fft.dct(a, n=n, axis=axis, norm=norm)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
-    # The result has the same precision as jnp.fft.fft of the same input.
-    x, = args_maker()
-    self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
+    for func in ('dct', 'dst'):
+      with self.subTest(func=func):
+        jnp_fn = lambda a: getattr(jsp_fft, func)(a, n=n, axis=axis, norm=norm)
+        np_fn = lambda a: getattr(osp_fft, func)(a, n=n, axis=axis, norm=norm)
+        self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                                tol=1e-4)
+        self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+        # The result has the same precision as jnp.fft.fft of the same input.
+        x, = args_maker()
+        self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
 
   @jtu.sample_product(
     [dict(shape=shape, axes=axes, s=s)
@@ -80,11 +84,13 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
   def testDctn(self, shape, dtype, s, axes, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda a: jsp_fft.dctn(a, s=s, axes=axes, norm=norm)
-    np_fn = lambda a: osp_fft.dctn(a, s=s, axes=axes, norm=norm)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+    for func in ('dctn', 'dstn'):
+      with self.subTest(func=func):
+        jnp_fn = lambda a: getattr(jsp_fft, func)(a, s=s, axes=axes, norm=norm)
+        np_fn = lambda a: getattr(osp_fft, func)(a, s=s, axes=axes, norm=norm)
+        self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                                tol=1e-4)
+        self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
     dtype=all_dtypes,
@@ -96,13 +102,15 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
   def testiDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda a: jsp_fft.idct(a, n=n, axis=axis, norm=norm)
-    np_fn = lambda a: osp_fft.idct(a, n=n, axis=axis, norm=norm)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
-    x, = args_maker()
-    self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
+    for func in ('idct', 'idst'):
+      with self.subTest(func=func):
+        jnp_fn = lambda a: getattr(jsp_fft, func)(a, n=n, axis=axis, norm=norm)
+        np_fn = lambda a: getattr(osp_fft, func)(a, n=n, axis=axis, norm=norm)
+        self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                                tol=1e-4)
+        self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+        x, = args_maker()
+        self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
 
   @jtu.sample_product(
     [dict(shape=shape, axes=axes, s=s)
@@ -115,11 +123,13 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
   def testiDctn(self, shape, dtype, s, axes, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda a: jsp_fft.idctn(a, s=s, axes=axes, norm=norm)
-    np_fn = lambda a: osp_fft.idctn(a, s=s, axes=axes, norm=norm)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+    for func in ('idctn', 'idstn'):
+      with self.subTest(func=func):
+        jnp_fn = lambda a: getattr(jsp_fft, func)(a, s=s, axes=axes, norm=norm)
+        np_fn = lambda a: getattr(osp_fft, func)(a, s=s, axes=axes, norm=norm)
+        self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                                tol=1e-4)
+        self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   def testIdctNormalizationPrecision(self):
     # reported in https://github.com/jax-ml/jax/issues/23895
@@ -131,41 +141,36 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     actual = jsp_fft.idct(x, n=n, type=2)
     self.assertArraysAllClose(actual, expected, atol=1e-14)
 
-  @jtu.sample_product(func=['idctn', 'dctn'])
-  def testDctnShape(self, func):
+  def testDctnShape(self):
     # Regression test for https://github.com/jax-ml/jax/issues/31836
     x = np.arange(10.0).reshape(5, 2)
     kwds = dict(type=2, s=(12, 7), axes=(-2, -1))
-
-    osp_func = getattr(osp_fft, func)
-    jsp_func = getattr(jsp_fft, func)
-
-    expected = osp_func(x, **kwds)
-    actual = jsp_func(x, **kwds)
     rtol = {np.float64: 1E-12, np.float32: 1E-4}
-    self.assertArraysAllClose(actual, expected, rtol=rtol)
 
-  @jtu.sample_product(func=['idctn', 'dctn'])
-  def testDctnAxesNoneSSpecified(self, func):
+    for func in _DCTN_FUNCS:
+      with self.subTest(func=func):
+        expected = getattr(osp_fft, func)(x, **kwds)
+        actual = getattr(jsp_fft, func)(x, **kwds)
+        self.assertArraysAllClose(actual, expected, rtol=rtol)
+
+  def testDctnAxesNoneSSpecified(self):
     # Regression test for https://github.com/jax-ml/jax/issues/29426
     x = np.arange(3.0).reshape(1, 3)
     kwds = dict(type=2, s=(5,), axes=None)
 
-    osp_func = getattr(osp_fft, func)
-    jsp_func = getattr(jsp_fft, func)
+    for func in _DCTN_FUNCS:
+      with self.subTest(func=func):
+        expected = getattr(osp_fft, func)(x, **kwds)
+        actual = getattr(jsp_fft, func)(x, **kwds)
+        self.assertArraysAllClose(actual, expected, atol=1e-4)
 
-    expected = osp_func(x, **kwds)
-    actual = jsp_func(x, **kwds)
-    self.assertArraysAllClose(actual, expected, atol=1e-4)
-
-
-  @jtu.sample_product(func=['idctn', 'dctn'])
-  def testDctnSShapeTooLargeError(self, func):
+  def testDctnSShapeTooLargeError(self):
     x = np.arange(3.0).reshape(1, 3)
-    jsp_func = getattr(jsp_fft, func)
-    with self.assertRaisesRegex(
-        ValueError, r"s must have at most x.ndim \(2\) elements, got 3"):
-      jsp_func(x, s=(2, 3, 4))
+    for func in _DCTN_FUNCS:
+      with self.subTest(func=func):
+        with self.assertRaisesRegex(
+            ValueError, r"s must have at most x.ndim \(2\) elements, got 3"):
+          getattr(jsp_fft, func)(x, s=(2, 3, 4))
 
 
 if __name__ == "__main__":

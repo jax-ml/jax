@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.fft.dst`, {func}`jax.scipy.fft.dstn`,
+    {func}`jax.scipy.fft.idst`, and {func}`jax.scipy.fft.idstn`, the type 2
+    discrete sine transform and its inverse.
 * Breaking changes
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations

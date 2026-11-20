@@ -21,8 +21,12 @@ jax.scipy.fft
 
    dct
    dctn
+   dst
+   dstn
    idct
    idctn
+   idst
+   idstn
 
 jax.scipy.integrate
 -------------------
