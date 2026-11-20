@@ -15,6 +15,7 @@
 
 import google_benchmark
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 
 
@@ -121,6 +122,33 @@ def custom_container_typed_key(state):
   key = jax.random.key(0)
   _assert_typed_key(key)
   _bench_custom_container(state, key)
+
+
+def _bench_poisson_rejection_float32(state, rate):
+  """Measure compiled Poisson rejection without timing JIT compilation.
+
+  The barrier is deliberately inside the timing loop: otherwise queued
+  asynchronous device work would make a slower acceptance test look faster.
+  """
+  key = jax.random.key(0)
+  f = jax.jit(
+      lambda key: jax.random.poisson(
+          key, jnp.float32(rate), shape=(8192,)))
+  f(key).block_until_ready()  # Compile and warm up outside benchmark timing.
+  while state:
+    f(key).block_until_ready()
+
+
+@google_benchmark.register
+def poisson_rejection_standard_rate_float32(state):
+  # Controls for regressions in the ordinary-parameter rejection path.
+  _bench_poisson_rejection_float32(state, 1e4)
+
+
+@google_benchmark.register
+def poisson_rejection_large_rate_float32(state):
+  # Stresses the cancellation-prone region with k approximately lambda.
+  _bench_poisson_rejection_float32(state, 1e8)
 
 
 if __name__ == "__main__":
