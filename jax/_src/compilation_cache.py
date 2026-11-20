@@ -21,8 +21,6 @@ from typing import Any
 import warnings
 import zlib
 
-import numpy as np
-
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
@@ -324,7 +322,10 @@ def is_executable_in_cache(backend, cache_key: str) -> bool:
 
 
 def get_executable_and_time(
-    cache_key: str, compile_options, backend, executable_devices,
+    cache_key: str,
+    compile_options: xla_client.CompileOptions,
+    backend: xla_client.Client,
+    executable_devices: xla_client.DeviceList,
     host_callbacks: Sequence[Any] = (),
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
@@ -410,7 +411,7 @@ def put_executable_and_time(
 
 def get_cache_key(
     module: ir.Module,
-    devices: np.ndarray,
+    devices: xla_client.DeviceList,
     compile_options,
     backend,
     ignore_custom_partitioning: bool = False,

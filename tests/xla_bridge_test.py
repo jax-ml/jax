@@ -134,6 +134,20 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(compile_options.device_assignment.replica_count(), 2)
     self.assertEqual(compile_options.device_assignment.computation_count(), 2)
 
+  def test_set_device_assignment_device_list(self):
+    devices = xb.devices()
+    da = xc.DeviceList(tuple(devices))
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=len(da), device_assignment=da)
+    self.assertEqual(compile_options.device_assignment.replica_count(), 1)
+    self.assertEqual(
+        compile_options.device_assignment.computation_count(), len(da))
+    with self.assertRaisesRegex(
+        ValueError, "device_assignment length.*does not match"
+    ):
+      compiler.get_compile_options(
+          num_replicas=1, num_partitions=len(da) + 1, device_assignment=da)
+
   def test_set_fdo_profile(self):
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"

@@ -7943,7 +7943,6 @@ def _get_cache_key(lowered: jax.stages.Lowered) -> str:
       out_shardings=out_shardings,
       num_ordered_effects=len(lowering.compile_args['ordered_effects']),
   )
-  dev = np.array(device_list)
   backend = lowering.compile_args['backend']
   compile_options = pxla.create_compile_options(
       computation=lowering._hlo,
@@ -7951,11 +7950,11 @@ def _get_cache_key(lowered: jax.stages.Lowered) -> str:
       allow_prop_to_inputs=allow_prop_to_inputs,
       allow_prop_to_outputs=allow_prop_to_outputs,
       backend=backend,
-      np_dev=dev,
+      device_assignment=device_list,
       compiler_options=dict(lowering._compiler_options_kvs),
   )
   return compilation_cache.get_cache_key(
-      lowering._hlo, dev, compile_options, backend
+      lowering._hlo, device_list, compile_options, backend
   )
 
 

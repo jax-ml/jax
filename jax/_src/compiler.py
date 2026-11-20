@@ -198,10 +198,10 @@ def get_compile_options(
   Args:
     num_replicas: Number of replicas for which to compile.
     num_partitions: Number of partitions for which to compile.
-    device_assignment: Optional ndarray of jax devices indicating the assignment
-      of logical replicas to physical devices (default inherited from
-      xla_client.CompileOptions). Must be consistent with `num_replicas` and
-      `num_partitions`.
+    device_assignment: Optional DeviceList or ndarray of jax devices indicating
+      the assignment of logical replicas to physical devices (default inherited
+      from xla_client.CompileOptions). Must be consistent with `num_replicas`
+      and `num_partitions`.
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
@@ -221,23 +221,36 @@ def get_compile_options(
     logger.debug(
         'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
         num_replicas, num_partitions, device_assignment)
-    device_assignment = np.array(device_assignment)
+    if isinstance(device_assignment, xc.DeviceList):
+      if len(device_assignment) != num_replicas * num_partitions:
+        raise ValueError(
+            f'device_assignment length ({len(device_assignment)}) does not'
+            f' match num_replicas ({num_replicas}) * num_partitions'
+            f' ({num_partitions}).'
+        )
+      device_assignment = np.fromiter(
+          (d.id for d in device_assignment),
+          dtype=np.int32,
+          count=len(device_assignment),
+      ).reshape((num_replicas, num_partitions))
+    else:
+      device_assignment = np.array(device_assignment)
 
-    # Allow 1D device assignment if num_partitions is 1.
-    if (device_assignment.ndim == 1) and (num_partitions == 1):
-      device_assignment = device_assignment[:, None]
+      # Allow 1D device assignment if num_partitions is 1.
+      if (device_assignment.ndim == 1) and (num_partitions == 1):
+        device_assignment = device_assignment[:, None]
 
-    if num_replicas != device_assignment.shape[0]:
-      msg = 'device_assignment does not match num_replicas: {} vs {}.'
-      raise ValueError(msg.format(device_assignment, num_replicas))
+      if num_replicas != device_assignment.shape[0]:
+        msg = 'device_assignment does not match num_replicas: {} vs {}.'
+        raise ValueError(msg.format(device_assignment, num_replicas))
 
-    if num_partitions != device_assignment.shape[1]:
-      msg = 'device_assignment does not match num_partitions: {} vs {}.'
-      raise ValueError(msg.format(device_assignment, num_partitions))
+      if num_partitions != device_assignment.shape[1]:
+        msg = 'device_assignment does not match num_partitions: {} vs {}.'
+        raise ValueError(msg.format(device_assignment, num_partitions))
 
-    if device_assignment.dtype == object:
-      device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
-          device_assignment)
+      if device_assignment.dtype == object:
+        device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
+            device_assignment)
     device_assignment = xc.DeviceAssignment.create(device_assignment)
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
@@ -436,7 +449,6 @@ def register_xla_runtime_error_handler(
 def compile_or_get_cached(
     backend: xc.Client,
     computation: ir.Module,
-    devices: np.ndarray,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     executable_devices: xc.DeviceList,
@@ -448,17 +460,15 @@ def compile_or_get_cached(
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logger.info("Dumped the module to %s.", dumped_to)
 
-  is_multi_process = (
-      len({device.process_index for device in devices.flatten()}) > 1
-  )
+  is_multi_process = len(executable_devices.process_indices) > 1
   min_device_process_id = min(
-      devices.flatten(), key=lambda device: device.id
+      executable_devices, key=lambda device: device.id
   ).process_index
 
   # cache_key: may be None if compilation caching is disabled
   cache_key, compile_options = _resolve_compilation_strategy(
     computation,
-    devices,
+    executable_devices,
     compile_options,
     backend,
     pgle_profiler,
@@ -548,7 +558,7 @@ def compile_or_get_cached(
 # contention for CUPTI resources.
 def _resolve_compilation_strategy(
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     backend: xc.Client,
     pgle_profiler: profiler.PGLEProfiler | None,
@@ -629,7 +639,7 @@ def _get_cache_key(
     options: xc.CompileOptions,
     backend: xc.Client,
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: xc.DeviceList,
     override_fdo_profile: bytes | None = None) -> str | None:
   if not compilation_cache.is_cache_used(backend):
     return None
@@ -653,7 +663,7 @@ def _get_cache_key(
 # compilation with other processes.
 def _share_fdo_profiles(
     computation: ir.Module,
-    devices: np.ndarray,
+    devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     backend: xc.Client,
     global_client: lib._jax.DistributedRuntimeClient,
