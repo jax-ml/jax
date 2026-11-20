@@ -46,6 +46,11 @@ TC = pltpu.CoreType.TC
 SCV = pltpu.CoreType.SC_VECTOR_SUBCORE
 SCS = pltpu.CoreType.SC_SCALAR_SUBCORE
 
+# TODO(phui): Update to the first libtpu release in which TensorCore memory
+# space assignment (MSA) places the VMEM operands and results of SparseCore
+# kernels. Older releases need MSA disabled for `MpmdAsyncTest`.
+_MIN_LIBTPU_VERSION_FOR_MPMD_ASYNC_MSA = "0.0.53"
+
 
 def from_core_type(core_type):
   match core_type:
@@ -109,15 +114,23 @@ class PallasSCTest(jtu.JaxTestCase):
 # TODO(rdyro): A temporary workaround to avoid flakiness.
 @jtu.thread_unsafe_test_class()
 class MpmdAsyncTest(jtu.JaxTestCase):
+  # MSA is left at its default (enabled) here; the generated variants below
+  # also run every test with MSA explicitly enabled and disabled, as well as
+  # with the explicit prefetch scheduler enabled.
   sc_mpmd_compiler_options = dict(
       xla_mosaic_unsafe_allow_multicore_remote_dma=True,
-      xla_msa_enable=False,
-      xla_tpu_vmem_scavenging_mode="NONE",
   )
 
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
+    if self.sc_mpmd_compiler_options.get(
+        "xla_msa_enable", True
+    ) and not jtu.is_libtpu_at_least(_MIN_LIBTPU_VERSION_FOR_MPMD_ASYNC_MSA):
+      self.skipTest(
+          "MSA with SparseCore VMEM operands requires libtpu >="
+          f" {_MIN_LIBTPU_VERSION_FOR_MPMD_ASYNC_MSA}"
+      )
     super().setUp()
     self.enter_context(
         jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
@@ -304,13 +317,78 @@ class MpmdAsyncTest(jtu.JaxTestCase):
         lambda s, d: pltpu.async_copy(s, d, _unsafe_no_write_effect=True).wait()
     )(jax.new_ref(x), jax.new_ref(x))
     self.assertTrue(all("Read" in str(e) for e in jaxpr.effects))
-    out = pl.kernel(
-        body,
-        mesh=mesh,
-        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        scratch_types=[mem(x.shape, x.dtype), pltpu.SemaphoreType.DMA(())],
+    out = jax.jit(
+        pl.kernel(
+            body,
+            mesh=mesh,
+            out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+            scratch_types=[mem(x.shape, x.dtype), pltpu.SemaphoreType.DMA(())],
+        ),
+        compiler_options=self.sc_mpmd_compiler_options,
     )(x)
     np.testing.assert_array_equal(out, x)
+
+
+def _make_mpmd_async_variant(
+    enable_msa: bool,
+    enable_explicit_prefetch: bool,
+    scavenging_mode: str,
+):
+  """Returns an MpmdAsyncTest subclass with the given memory options."""
+  if enable_msa and enable_explicit_prefetch:
+    raise ValueError(
+        "xla_msa_enable and xla_tpu_enable_explicit_prefetch_scheduler cannot"
+        " both be enabled together."
+    )
+  if enable_msa:
+    msa_or_explicit_prefetch = "MSA"
+  elif enable_explicit_prefetch:
+    msa_or_explicit_prefetch = "ExplicitPrefetch"
+  mode = scavenging_mode.title().replace("_", "")
+  cls = type(
+      f"MpmdAsync_{msa_or_explicit_prefetch}_Scavenging{mode}Test",
+      (MpmdAsyncTest,),
+      dict(
+          __doc__=(
+              f"Runs MpmdAsyncTest with xla_msa_enable={enable_msa}, "
+              "xla_tpu_enable_explicit_prefetch_scheduler="
+              f"{enable_explicit_prefetch}, and "
+              f"xla_tpu_vmem_scavenging_mode={scavenging_mode}."
+          ),
+          sc_mpmd_compiler_options=dict(
+              MpmdAsyncTest.sc_mpmd_compiler_options,
+              xla_msa_enable=enable_msa,
+              xla_tpu_enable_explicit_prefetch_scheduler=enable_explicit_prefetch,
+              xla_tpu_vmem_scavenging_mode=scavenging_mode,
+          ),
+      ),
+  )
+  # TODO(rdyro): A temporary workaround to avoid flakiness.
+  return jtu.thread_unsafe_test_class()(cls)
+
+
+# Runs MpmdAsyncTest with MSA enabled, explicit prefetch scheduler enabled, and
+# both disabled, each combined with every explicit VMEM scavenging mode.
+# Note: xla_msa_enable and xla_tpu_enable_explicit_prefetch_scheduler cannot be
+# enabled together.
+_MEMORY_SCHEDULER_CONFIGS = (
+    (True, False),
+    (False, True),
+    (False, False),
+)
+
+for _enable_msa, _enable_prefetch in _MEMORY_SCHEDULER_CONFIGS:
+  for _scavenging_mode in (
+      "NONE",
+      "SAFE_IFF_KERNEL_REQUIRED",
+      "SAFE",
+      "AGGRESSIVE",
+  ):
+    _variant = _make_mpmd_async_variant(
+        _enable_msa, _enable_prefetch, _scavenging_mode
+    )
+    globals()[_variant.__name__] = _variant
+del _enable_msa, _enable_prefetch, _scavenging_mode, _variant
 
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
