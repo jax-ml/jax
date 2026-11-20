@@ -2753,6 +2753,64 @@ class PallasCallTest(ptu.PallasTPUTest):
     out, expected = matmul_then_pallas(a, b)
     np.testing.assert_array_equal(out, expected)
 
+  @parameterized.product(
+      block_rows=[1, 2, 4],
+      dtype=[jnp.float32, jnp.bfloat16],
+      small_blocks=['input', 'output'],
+  )
+  def test_blocks_smaller_than_sublane_tiling(
+      self, block_rows, dtype, small_blocks
+  ):
+    if not jtu.is_libtpu_at_least('0.0.54'):
+      self.skipTest('Requires libtpu >= 0.0.54')
+
+    # The smallest 2nd minor tiling covers one sublane, or two before TPU v4.
+    min_rows = 4 // jnp.dtype(dtype).itemsize
+    if not jtu.is_device_tpu_at_least(4):
+      min_rows *= 2
+    if block_rows < min_rows:
+      self.skipTest(f'Blocks need at least {min_rows} rows')
+
+    sublane_count = pltpu.get_tpu_info().num_sublanes
+    lane_count = pltpu.get_tpu_info().num_lanes
+    # The array is tiled with (sublane_count, lane_count). Its last tile of rows
+    # is only partially used, and the last block is padded along the lanes.
+    shape = (2, 2 * sublane_count + 4, 3 * lane_count)
+    bn = 2 * lane_count
+    grid = (shape[0], shape[1] // block_rows, 2)
+    # The same array with one row block per index of an extra dimension. Its
+    # blocks span the whole 2nd minor dimension, so they are not retiled.
+    split_shape = (shape[0], grid[1], block_rows, shape[2])
+    small_spec = pl.BlockSpec((1, block_rows, bn), lambda l, i, j: (l, i, j))
+    split_spec = pl.BlockSpec(
+        (1, 1, block_rows, bn), lambda l, i, j: (l, i, 0, j)
+    )
+
+    def kernel(x_ref, o_ref):
+      if small_blocks == 'input':
+        o_ref[0] = x_ref[...]
+      else:
+        o_ref[...] = x_ref[0]
+
+    x = (jnp.arange(math.prod(shape)) % 251).astype(dtype).reshape(shape)
+    if small_blocks == 'input':
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(split_shape, dtype),
+          in_specs=[small_spec],
+          out_specs=split_spec,
+          grid=grid,
+      )(x)
+    else:
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+          in_specs=[split_spec],
+          out_specs=small_spec,
+          grid=grid,
+      )(x.reshape(split_shape))
+    np.testing.assert_array_equal(out.reshape(shape), x)
+
   def test_jitted_kernel_with_program_id(self):
     @jax.jit
     def body(x_ref, o_ref):
@@ -7885,7 +7943,6 @@ def _get_cache_key(lowered: jax.stages.Lowered) -> str:
       out_shardings=out_shardings,
       num_ordered_effects=len(lowering.compile_args['ordered_effects']),
   )
-  dev = np.array(device_list)
   backend = lowering.compile_args['backend']
   compile_options = pxla.create_compile_options(
       computation=lowering._hlo,
@@ -7893,11 +7950,11 @@ def _get_cache_key(lowered: jax.stages.Lowered) -> str:
       allow_prop_to_inputs=allow_prop_to_inputs,
       allow_prop_to_outputs=allow_prop_to_outputs,
       backend=backend,
-      np_dev=dev,
+      device_assignment=device_list,
       compiler_options=dict(lowering._compiler_options_kvs),
   )
   return compilation_cache.get_cache_key(
-      lowering._hlo, dev, compile_options, backend
+      lowering._hlo, device_list, compile_options, backend
   )
 
 

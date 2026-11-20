@@ -648,8 +648,7 @@ def mma(
       and not isinstance(a, TMEMRef)
       # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
       and a_swizzle == b_swizzle == 128
-      # TODO(allanrenucci): Support A scales in `scales_128_lane_layout()`.
-      and a_scale.layout == b_scale.layout == scales_layout()
+      and b_scale.layout == scales_layout()
       # Because of how `scales_layout()` lays out scales in TMEM, K=96 only
       # works if B scales are padded along N to exactly 128 rows (for an
       # instruction N of at most 128) or 256 rows (otherwise).

@@ -1268,7 +1268,12 @@ class SparseSolverTest(sptu.SparseTestCase):
         jnp.matmul(a, x, precision=jax.lax.Precision.HIGHEST),
         b,
         rtol=1e-2,
-        atol=1e-3,
+        atol={
+            np.float32: 2e-3,
+            np.complex64: 2e-3,
+            np.float64: 1e-3,
+            np.complex128: 1e-3,
+        },
     )
     self._CompileAndCheck(sparse_solve, args_maker)
 

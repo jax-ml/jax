@@ -29,6 +29,7 @@ import jaxlib._hlo
 
 from . import (
     config as config,
+    donation_recovery as donation_recovery,
     ffi as ffi,
     guard_lib as guard_lib,
     hlo_sharding_util as hlo_sharding_util,
@@ -62,10 +63,17 @@ def hlo_module_cost_analysis(
 ) -> dict: ...
 
 class DeviceAssignment:
+  @overload
   @staticmethod
   def create(
       arg: Annotated[NDArray[numpy.int32], dict(shape=(None, None))], /
   ) -> DeviceAssignment: ...
+  @overload
+  @staticmethod
+  def create(
+      device_list: DeviceList, num_replicas: int, num_partitions: int
+  ) -> DeviceAssignment: ...
+
   def replica_count(self) -> int: ...
   def computation_count(self) -> int: ...
   def __repr__(self) -> str: ...

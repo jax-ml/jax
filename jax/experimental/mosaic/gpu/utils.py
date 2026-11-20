@@ -2658,6 +2658,11 @@ class Arch:
   major: int
   minor: int
 
+  @property
+  def is_sm107f(self) -> bool:
+    """Whether this is "sm_107f or higher in the same family"."""
+    return self.major == 10 and self.minor >= 7
+
 
 HOPPER = Arch(9, 0)
 BLACKWELL = Arch(10, 0)

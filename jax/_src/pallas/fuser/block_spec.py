@@ -2609,9 +2609,14 @@ def _iota_eval_rule(
   iota_shape = _ref_block_shape(block_spec.block_shape)
   dim_ = _ref_block_axis(block_spec.block_shape, dimension)
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * pallas_core.get_block_size(
-      block_spec.block_shape[dimension]
-  )
+  match pallas_core._canonicalize_block_dim(block_spec.block_shape[dimension]):
+    case pallas_core.Blocked(bs):
+      offset = block_idx[dimension] * bs
+    case pallas_core.Element(_, padding=(0, 0)):
+      offset = block_idx[dimension]
+    case bd:
+      raise NotImplementedError(f'iota not supported yet for block shape {bd}')
+  return local_iota + offset
 
 
 @register_pull_block_spec_rule(lax.iota_p)
@@ -2625,12 +2630,15 @@ def _iota_pull_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, sharding, dtype, shape
-  if _is_squeezed(block_transform.block_shape[dimension]):
-    raise ValueError(
-        f'Cannot pull iota along dimension {dimension} with squeezed block'
-        ' size.'
-    )
-  return []
+  match pallas_core._canonicalize_block_dim(
+      block_transform.block_shape[dimension]):
+    case pallas_core.Squeezed():
+      raise ValueError(f'Cannot pull iota along dimension {dimension} with'
+                       ' squeezed block size.')
+    case pallas_core.Blocked() | pallas_core.Element(_, padding=(0, 0)):
+      return []
+    case bd:
+      raise NotImplementedError(f'iota not supported yet for block type {bd}')
 
 
 def _pattern_match_lanes_to_sublanes_reshape(

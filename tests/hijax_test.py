@@ -2315,6 +2315,103 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(logsj['pos'].branches[int(logsj['pos'].index)], 3.0)
     self.assertAllClose(jax.grad(f)(3.0), 6.0)
 
+  def test_backward_pass_logging_cond_matching_shapes(self):
+    from jax._src.lax.control_flow.conditionals import CondSum
+
+    class LogVal(HiPrim):
+      def __init__(self, in_aval, key, log_fn):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(key=key, log_fn=log_fn)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.key: self.log_fn(res, t)}
+
+    def log_val(x, key, log_fn=lambda res, t: res):
+      return LogVal(jax.typeof(x), key, log_fn)(x)
+
+    # Matching scalar/array logs across both branches avoid CondSum.
+    def f(x):
+      return jax.lax.cond(
+          x > 0,
+          lambda x: log_val(x, 'shared') * 1.0,
+          lambda x: log_val(x, 'shared') * 2.0,
+          x)
+
+    _, f_vjp_pos = jax.vjp(f, 3.0)
+    cts_pos, logs_pos = f_vjp_pos.with_logs(1.0)
+    self.assertAllClose(cts_pos[0], 6.0)
+    self.assertNotIsInstance(logs_pos['shared'], CondSum)
+    self.assertAllClose(logs_pos['shared'], 3.0)
+
+    _, f_vjp_neg = jax.vjp(f, -3.0)
+    cts_neg, logs_neg = f_vjp_neg.with_logs(1.0)
+    self.assertAllClose(cts_neg[0], -12.0)
+    self.assertNotIsInstance(logs_neg['shared'], CondSum)
+    self.assertAllClose(logs_neg['shared'], -3.0)
+
+    # Works under jit as well.
+    _, fj_vjp = jax.vjp(jax.jit(f), 3.0)
+    _, logsj = fj_vjp.with_logs(1.0)
+    self.assertNotIsInstance(logsj['shared'], CondSum)
+    self.assertAllClose(logsj['shared'], 3.0)
+
+    # Matching pytree logs avoid CondSum, while non-matching keys in the same
+    # cond still use CondSum.
+    def g(x):
+      return jax.lax.cond(
+          x > 0,
+          lambda x: log_val(x, 'same', lambda r, t: (r, r * t)) + log_val(x, 'only_pos'),
+          lambda x: log_val(x, 'same', lambda r, t: (r * 2., r + t)) * 3.0,
+          x)
+
+    _, g_vjp = jax.vjp(g, -4.0)
+    _, glogs = g_vjp.with_logs(1.0)
+    self.assertNotIsInstance(glogs['same'], CondSum)
+    self.assertAllClose(glogs['same'], (-8.0, -1.0))
+    self.assertIsInstance(glogs['only_pos'], CondSum)
+
+    # Nested conds where all branches match avoid CondSum at every level.
+    def nested(x):
+      inner = lambda x: jax.lax.cond(
+          x > 1,
+          lambda x: log_val(x, 'deep'),
+          lambda x: log_val(x, 'deep') * 5.0,
+          x)
+      return jax.lax.cond(x > 0, inner, lambda x: log_val(x, 'deep') * 7.0, x)
+
+    _, n_vjp = jax.vjp(nested, 2.0)
+    _, nlogs = n_vjp.with_logs(1.0)
+    self.assertNotIsInstance(nlogs['deep'], CondSum)
+    self.assertAllClose(nlogs['deep'], 2.0)
+
+    # 3-branch lax.switch: matching across all branches avoids CondSum;
+    # mismatch in one branch still wraps in CondSum.
+    def sw(idx, x):
+      return jax.lax.switch(
+          idx,
+          [
+              lambda x: log_val(x, 'all') + log_val(x, 'mismatch'),
+              lambda x: log_val(x, 'all') + log_val(x, 'mismatch') * 2.0,
+              lambda x: log_val(x, 'all') + log_val(jnp.stack([x, x]), 'mismatch').sum(),
+          ],
+          x)
+
+    _, sw_vjp = jax.vjp(lambda x: sw(1, x), 5.0)
+    _, sw_logs = sw_vjp.with_logs(1.0)
+    self.assertNotIsInstance(sw_logs['all'], CondSum)
+    self.assertAllClose(sw_logs['all'], 5.0)
+    self.assertIsInstance(sw_logs['mismatch'], CondSum)
+
   def test_backward_pass_logging_shard_map(self):
     # Logs from inside a transposed shard_map come out mesh-stacked along
     # their leading axis (per-shard scalars come out with shape (num_shards,)).

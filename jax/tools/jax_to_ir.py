@@ -250,17 +250,12 @@ def parse_shape_str(s):
 
 _DT = {
     'pred': jnp.bool_,
-    'u2': jnp.uint2, 'u4': jnp.uint4, 'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
-    's2': jnp.int2, 's4': jnp.int4, 's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
+    'u1': jnp.uint1, 'u2': jnp.uint2, 'u4': jnp.uint4, 'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
+    's1': jnp.int1, 's2': jnp.int2, 's4': jnp.int4, 's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
     'bf16': jnp.bfloat16,
     'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
     'c64': jnp.complex64, 'c128': jnp.complex128
 }
-
-if hasattr(jnp, 'int1'):
-  _DT['s1'] = jnp.int1
-if hasattr(jnp, 'uint1'):
-  _DT['u1'] = jnp.uint1
 
 _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 

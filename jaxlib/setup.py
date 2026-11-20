@@ -62,7 +62,7 @@ setup(
     python_requires='>=3.12',
     install_requires=[
         'numpy>=2.0',
-        'ml_dtypes>=0.5.0',
+        'ml_dtypes>=0.7.0',
     ],
     url='https://github.com/jax-ml/jax',
     license='Apache-2.0',

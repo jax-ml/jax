@@ -245,7 +245,8 @@ shard_arg_handlers[core.Ref] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
-                       devices: Sequence[xc.Device], committed: bool = True,
+                       devices: Sequence[xc.Device] | xc.DeviceList,
+                       committed: bool = True,
                        enable_x64: bool | None = None):
   util.test_event("batched_device_put_start")
   try:
@@ -521,7 +522,7 @@ def get_default_device() -> xc.Device:
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     ctx_mesh: Mesh | AbstractMesh,
-) -> tuple[xc.Client, tuple[xc.Device, ...] | None, int]:
+) -> tuple[xc.Client, xc.DeviceList | None, int]:
   first_sharding_info = None
   abstract_mesh = (
       ctx_mesh if not ctx_mesh.empty and isinstance(ctx_mesh, AbstractMesh)
@@ -557,20 +558,20 @@ def _get_and_check_device_assignment(
               stages.DeviceAssignmentMismatch(
                   arr_device_assignment, s_type, source_info)])
       else:
-        if ctx_mesh._flat_devices_tuple != arr_device_assignment:
+        if ctx_mesh._internal_device_list != arr_device_assignment:
           raise stages.DeviceAssignmentMismatchError([
               stages.DeviceAssignmentMismatch(
-                  ctx_mesh._flat_devices_tuple,
+                  ctx_mesh._internal_device_list,
                   stages.MismatchType.CONTEXT_DEVICES, None),
               stages.DeviceAssignmentMismatch(
                   arr_device_assignment, s_type, source_info)])
 
-  device_assignment: tuple[xc.Device, ...]
+  device_assignment: xc.DeviceList
   if (first_sharding_info is None and not ctx_mesh.empty and
       isinstance(ctx_mesh, Mesh)):
-    device_assignment = ctx_mesh._flat_devices_tuple
+    device_assignment = ctx_mesh._internal_device_list
   elif first_sharding_info is None:
-    device_assignment = (get_default_device(),)
+    device_assignment = _create_device_list_cached((get_default_device(),))
   else:
     device_assignment = first_sharding_info[0]  # pyrefly: ignore[bad-assignment]
 
@@ -1486,9 +1487,14 @@ def _get_layouts_from_executable(
 
 def create_compile_options(
     computation, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
-    backend, np_dev, compiler_options):
-  num_replicas, num_partitions = 1, np_dev.size
-  xla_device_assignment = np_dev.reshape((num_replicas, num_partitions))
+    backend, device_assignment, compiler_options):
+  if isinstance(device_assignment, xc.DeviceList):
+    num_replicas, num_partitions = 1, len(device_assignment)
+    xla_device_assignment = device_assignment
+  else:
+    np_dev = np.asarray(device_assignment)
+    num_replicas, num_partitions = 1, np_dev.size
+    xla_device_assignment = np_dev.reshape((num_replicas, num_partitions))
   fdo_profile = compiler_options.pop("fdo_profile", None)
   compile_options = compiler.get_compile_options(
       num_replicas=num_replicas,
@@ -1511,20 +1517,17 @@ def _cached_compilation(computation, name,
                         tuple_args, allow_prop_to_inputs,
                         allow_prop_to_outputs, host_callbacks, backend,
                         da, compiler_options_kvs, pgle_profiler):
-  # One would normally just write: dev = np.array(device_assignment)
-  # The formulation below is substantially faster if there are many devices.
-  dev = np.vectorize(lambda i: da[i], otypes=[object])(np.arange(len(da)))
   compiler_options = dict(compiler_options_kvs)
 
   compile_options = create_compile_options(
       computation, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
-      backend, dev, compiler_options)
+      backend, da, compiler_options)
 
   with dispatch.log_elapsed_time(
       "Finished XLA compilation of {fun_name} in {elapsed_time:.9f} sec",
       fun_name=name, event=dispatch.BACKEND_COMPILE_EVENT):
     xla_executable = compiler.compile_or_get_cached(
-        backend, computation, dev, compile_options, host_callbacks,
+        backend, computation, compile_options, host_callbacks,
         da, pgle_profiler)
   return xla_executable
 

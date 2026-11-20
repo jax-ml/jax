@@ -163,8 +163,8 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   ):
     if hasattr(y.sharding, "mesh"):
       devices = list(y.sharding.mesh.devices.flat)
-    elif hasattr(y.sharding, "_internal_device_list"):
-      devices = list(y.sharding._internal_device_list)
+    elif hasattr(y.sharding, "_device_assignment"):
+      devices = list(y.sharding._device_assignment)
     else:
       devices = list(y.sharding.device_set)
     self.assertNotEmpty(y.addressable_shards)

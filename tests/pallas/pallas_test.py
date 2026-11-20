@@ -551,9 +551,16 @@ class PallasCallTest(ptu.PallasTPUTest):
             shape[-1],
             shape[-2],
         )
-        evenly_divisible = (
-            (bs0 == as0 or bs0 % 128 == 0) and
-            (bs1 == as1 or bs1 % 8 == 0))
+        # Blocks with 1, 2 or 4 rows are retiled by the pipeline DMAs, if they
+        # have at least as many rows as are packed into a sublane.
+        retiled = (
+            bs1 in (1, 2, 4)
+            and bs1 >= 4 // np.dtype(dtype).itemsize
+            and jtu.is_libtpu_at_least("0.0.54")
+        )
+        evenly_divisible = (bs0 == as0 or bs0 % 128 == 0) and (
+            bs1 == as1 or bs1 % 8 == 0 or retiled
+        )
         if not evenly_divisible:
           test_context = self.assertRaisesRegex(
               ValueError,
@@ -694,6 +701,29 @@ class PallasCallTest(ptu.PallasTPUTest):
     with jax.disable_jit():
       result = add_one(x)
       np.testing.assert_array_equal(result, x + 1.)
+
+  def test_pallas_call_fori_loop_over_refs_under_disable_jit(self):
+    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: error on TPU")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+    )
+    def sum_range(n_ref, o_ref):
+      o_ref[...] = 0
+      def body(i, o_ref):
+        o_ref[...] += i
+        return o_ref
+      lax.fori_loop(0, n_ref[...], body, o_ref)
+
+    n = jnp.array(5, dtype=jnp.int32)
+
+    result = sum_range(n)
+    self.assertEqual(result, 10)
+
+    with jax.disable_jit():
+      result = sum_range(n)
+      self.assertEqual(result, 10)
 
   @parameterized.parameters(
       ("float32", None),

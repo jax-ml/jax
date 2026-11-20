@@ -931,6 +931,18 @@ class CondSum:
 
 
 
+def _matching_log_specs(branch_specs):
+  spec0 = branch_specs[0]
+  if spec0 is None:
+    return False
+  treedef0, avals0 = spec0
+  return all(
+      s is not None and s[0] == treedef0 and len(s[1]) == len(avals0)
+      and all(map(core.typematch, avals0, s[1]))
+      for s in branch_specs[1:]
+  )
+
+
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
@@ -945,8 +957,9 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   branch_cts, branch_logs = unzip2(outs)
   out_nzs = [[not isinstance(x, ad.Zero) for x in cts] for cts in branch_cts]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
-  # Each key logged by any branch gets one slot per branch (see CondSum), so
-  # the branches needn't agree about keys or types.
+  # Each key logged by any branch gets one slot per branch (see CondSum) unless
+  # all branches log it with matching pytree structure and types, in which case
+  # we return the logged value directly without wrapping in CondSum.
   log_spec = []
   for k in sorted({k for logs in branch_logs for k in logs}):
     branch_specs = []
@@ -956,7 +969,9 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
         branch_specs.append((treedef, tuple(avals)))
       else:
         branch_specs.append(None)  # type: ignore
-    log_spec.append((k, tuple(branch_specs)))
+    log_spec.append(
+        (k, None if _matching_log_specs(branch_specs) else tuple(branch_specs))
+    )
   log_spec = tuple(log_spec)
   trans_branches, out_trees = unzip2(
       _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz, log_spec, b)
@@ -966,7 +981,8 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   cts_out, logs = tree_unflatten(out_tree, outs)
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
-  return {k: CondSum(index, slots) for k, slots in logs.items()}
+  return {k: logs[k] if branch_specs is None else CondSum(index, logs[k])
+          for k, branch_specs in log_spec}
 
 @util.weakref_lru_cache
 def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
@@ -980,10 +996,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
                else None for x, inst in zip(args, inst_out)]
     if log_spec is None:
       return cts_out, raw_logs
-    # If this jaxpr runs, this branch was the one taken: its slot holds its
-    # live values, other branches' slots hold zeros (or None for keys they
-    # don't log).
-    logs = {k: [raw_logs.get(k) if b == which_branch else
+    # If this jaxpr runs, this branch was the one taken: when branches disagree
+    # on a key's presence or type, its slot holds its live values and other
+    # branches' slots hold zeros (or None for keys they don't log). When all
+    # branches agree, we emit the value directly without CondSum wrapping.
+    logs = {k: raw_logs[k] if branch_specs is None else
+               [raw_logs.get(k) if b == which_branch else
                 None if spec is None else
                 tree_unflatten(spec[0], map(ad_util.zeros_like_aval, spec[1]))
                 for b, spec in enumerate(branch_specs)]

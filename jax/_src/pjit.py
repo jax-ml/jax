@@ -1551,7 +1551,7 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    new_gs = GSPMDSharding(s._internal_device_list, new_op)
+    new_gs = GSPMDSharding(s._device_assignment, new_op)
     return pxla._get_out_sharding_from_orig_sharding(
         [new_gs], [None], s, None, None)[0]
   else:
@@ -3229,7 +3229,11 @@ relayout_p.def_impl(_relayout_impl)
 def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
-mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+mlir.register_lowering(
+    relayout_p,
+    _relayout_hlo_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule(),
+)
 
 def _relayout_jvp_rule(primals, tangents, *, dst_layout):
   (p,), (t,) = primals, tangents

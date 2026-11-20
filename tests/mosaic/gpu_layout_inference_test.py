@@ -71,10 +71,7 @@ def layout_cast(
   """Convenience wrapper around `mgpu.dialect.layout_cast`."""
   if isinstance(layout, mgpu.FragmentedLayout):
     layout = layouts.to_layout_attr(layout)
-  # TODO(bchetioui): pass `strict` unconditionally once minimum jaxlib version
-  # is 0.12.0.
-  kwargs = {} if strict is None else {"strict": strict}
-  return mgpu.dialect.layout_cast(x, layout, **kwargs)  # pyrefly: ignore[unexpected-keyword]
+  return mgpu.dialect.layout_cast(x, layout, strict=strict)
 
 
 def undefs(*tys: ir.Type) -> list[ir.Value]:
@@ -963,9 +960,6 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(False, True)
   def test_constraint_extraction_works_correctly(self, strict):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
-    if strict and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
-      self.skipTest("Test requires jaxlib >= 0.12.0")
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
@@ -1007,7 +1001,9 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     constraints = [transfer_constraint, relayout_constraint]
     assignments = layout_inference.conjure_assignment(
-        [v1, v2], cs.ConstraintSystem(constraints=constraints), arch=(9, 0)
+        [v1, v2],
+        cs.ConstraintSystem(constraints=constraints),
+        arch=mgpu.utils.HOPPER,
     )
     self.assertEqual(next(assignments), (v1, layout))
 
@@ -1061,7 +1057,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         {v0},
         cs.ConstraintSystem(constraints=[constraint]),
         fuel=1000,
-        arch=(10, 0),
+        arch=mgpu.utils.BLACKWELL,
     )
     # Another valid layout is TMEM_NATIVE_LAYOUT but TCGEN05_LAYOUT is tried
     # first. This may require updating if we decide to change the traversal
@@ -1116,7 +1112,7 @@ class LayoutInferenceTest(parameterized.TestCase):
             ]
         ),
         fuel=1000,
-        arch=(9, 0)
+        arch=mgpu.utils.HOPPER
     )
     self.assertIsInstance(assignments, cs.Unsatisfiable)
 
@@ -1124,9 +1120,6 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_scavenge_diagnoses_unsupported_smem_registers_transfer(
       self, is_store, optimized
   ):
-    # TODO(bchetioui): remove this check once minimum jaxlib version is 0.12.0.
-    if not is_store and not hasattr(mgpu.dialect.LayoutCastOp, "strict"):
-      self.skipTest("Test requires jaxlib >= 0.12.0")
     shape = (128, 128)
     f32 = ir.F32Type.get()
     with ir.InsertionPoint(self.module.body):
@@ -1755,7 +1748,9 @@ class LayoutInferenceTest(parameterized.TestCase):
         optimized=False,
     )
     [(_, tiling)] = list(layout_inference.conjure_assignment(
-        {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
+        {var},
+        cs.ConstraintSystem(constraints=[is_transferable]),
+        arch=mgpu.utils.HOPPER,
     ))
     self.assertEqual(tiling, cs.SMEMTransforms(None, None))
 
@@ -1781,7 +1776,9 @@ class LayoutInferenceTest(parameterized.TestCase):
         optimized=False,
     )
     assignments = list(layout_inference.conjure_assignment(
-        {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
+        {var},
+        cs.ConstraintSystem(constraints=[is_transferable]),
+        arch=mgpu.utils.HOPPER,
     ))
     # Empty tiling is always a possible assignment.
     self.assertIn((var, cs.SMEMTransforms(None, None)), assignments)
@@ -1810,7 +1807,9 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     def conjure(constraints) -> list[tuple[cs.Variable, cs.Constant]]:
       system = cs.ConstraintSystem(constraints=constraints)
-      return list(layout_inference.conjure_assignment({var}, system, arch=(9, 0)))
+      return list(layout_inference.conjure_assignment(
+          {var}, system, arch=mgpu.utils.HOPPER
+      ))
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
@@ -1899,7 +1898,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     ]
 
     system = cs.ConstraintSystem(constraints=constraints)
-    ordered = list(layout_inference.conjure_assignment({var}, system, arch=(9, 0)))
+    ordered = list(layout_inference.conjure_assignment(
+        {var}, system, arch=mgpu.utils.HOPPER
+    ))
     expected = [
         (var, cs.RegisterLayout(fa.WGMMA_LAYOUT)),
         (var, cs.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
@@ -2225,7 +2226,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_tmem_layout_for_tcgen05_mma_with_128_lane_a_scales(self):
     store, mma = self._build_tcgen05_mma_with_128_lane_a_scales()
 
-    mgpu.infer_layout(self.module, arch=(10, 7))
+    mgpu.infer_layout(self.module, arch=mgpu.utils.RUBIN)
 
     a_scale_layout = tcgen05.scales_128_lane_layout()
     self.checkInLayouts(store, [a_scale_layout.as_tiled_layout()])
@@ -2241,7 +2242,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(
         ValueError, "Failed to infer a possible set of layouts."
     ):
-      mgpu.infer_layout(self.module, arch=(10, 0))
+      mgpu.infer_layout(self.module, arch=mgpu.utils.BLACKWELL)
 
   def test_infer_layout_infers_pre_vr_scales_layout_for_collective_m64(self):
     m, n, k = 64, 128, 128
@@ -2269,7 +2270,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           collective=True,
       )
 
-    mgpu.infer_layout(self.module, arch=(10, 7))
+    mgpu.infer_layout(self.module, arch=mgpu.utils.RUBIN)
 
     acc_layout = tcgen05._infer_tmem_layout((m, n), collective=True, packing=1)
     a_scales_layout = tcgen05.scales_layout()
@@ -4182,11 +4183,14 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(in_transforms, [transforms] * 2)
 
   @parameterized.product(
-      arch=((9, 0), (10, 0),),
+      arch=(mgpu.utils.HOPPER, mgpu.utils.BLACKWELL),
       shape=((128, 128), (64, 64),),
   )
   def test_conjure_mma_layout_for_tiled_ref_transfer(self, arch, shape):
-    layout = fa.WGMMA_LAYOUT if arch == (9, 0) or shape[0] < 128 else fa.TCGEN05_LAYOUT
+    if arch == mgpu.utils.HOPPER or shape[0] < 128:
+      layout = fa.WGMMA_LAYOUT
+    else:
+      layout = fa.TCGEN05_LAYOUT
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       [ref] = undefs(ref_ty)

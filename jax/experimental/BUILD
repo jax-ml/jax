@@ -714,6 +714,16 @@ py_library_providing_imports_info(
     ],
 )
 
+pytype_strict_library(
+    name = "donation_recovery",
+    srcs = ["donation_recovery.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:tree_util",
+        "//jax/_src/lib",
+    ],
+)
+
 # TODO(dsuo): Remove these filegroups once experimental aliases from jax/BUILD
 # are removed.
 filegroup(
@@ -724,6 +734,7 @@ filegroup(
         "compilation_cache/**/*.py",
     ]) + [
         "checkify.py",
+        "donation_recovery.py",
         "fused.py",
         "multihost_utils.py",
         "pjit.py",

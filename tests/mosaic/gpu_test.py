@@ -1144,12 +1144,11 @@ _FP8_DTYPE_INFO = {
 }
 
 
-class WGMMATest(TestCase):
+class WGMMATest(TestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_cuda_compute_capability_equal("9.0"):
-      self.skipTest("Only works on GPU with capability sm90a")
+    self.skip_unless_sm90a()
 
   @parameterized.product(
       lhs_transpose=(False, True),
@@ -2538,7 +2537,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       scale_jax_dtype=(
           jnp.float8_e8m0fnu,
           jnp.float8_e4m3fn,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
@@ -2572,25 +2571,19 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       n=(64, 128, 192, 256),
-      scale_jax_dtype_and_block_size=(
-          (jnp.float8_e8m0fnu, 16),
-          (jnp.float8_e8m0fnu, 32),
-          (jnp.float8_e4m3fn, 16),
-          (jnp.float8_e4m3fn, 32),
-          *(
-              [(jnp.float8_e5m3fnu, 16), (jnp.float8_e5m3fnu, 32)]
-              if dtypes.float8_e5m3fnu is not None
-              else []
-          ),
+      scale_jax_dtype=(
+          jnp.float8_e8m0fnu,
+          jnp.float8_e4m3fn,
+          jnp.float8_e5m3fnu,
       ),
+      block_size=(16, 32),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_fp4_k_steps(
-      self, n, scale_jax_dtype_and_block_size, k_steps
+      self, n, scale_jax_dtype, block_size, k_steps
   ):
     # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
     # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
-    scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
     self._run_mma_block_scaled(
         m=128,
         n=n,
@@ -2620,14 +2613,10 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
 
   def test_mma_block_scaled_128_lane_a_scales(self):
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
-      self.skipTest("128-lane A scales are only supported on sm_107f.")
+    self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
     # With f4 inputs and swizzle=128, K=512, so A has 16 scales per row. That's
     # exactly the 16 bytes per row that tcgen05.cp needs, so no padding is
-    # required.
+    # required. K=512 also mixes K=96 and K=64 instructions (see `_do_mma`).
     self._run_mma_block_scaled(
         m=128,
         n=128,
@@ -2992,12 +2981,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_collective(
       self, m, n, scale_jax_dtype, block_size, lhs_in_tmem
   ):
-    if (
-        scale_jax_dtype == jnp.float8_e4m3fn
-        and block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
-    ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
+      self.skip_unless_sm107f()
     self._run_mma_block_scaled_collective(
         m=m,
         n=n,
@@ -3010,26 +2995,17 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       n=(64, 128, 192, 256),
-      scale_jax_dtype_and_block_size=(
-          (jnp.float8_e8m0fnu, 16),
-          (jnp.float8_e8m0fnu, 32),
-          (jnp.float8_e4m3fn, 16),
-          (jnp.float8_e4m3fn, 32),
-      ),
+      scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      block_size=(16, 32),
       k_steps=(1, 2, 3),
   )
   def test_mma_block_scaled_collective_fp4_k_steps(
-      self, n, scale_jax_dtype_and_block_size, k_steps
+      self, n, scale_jax_dtype, block_size, k_steps
   ):
     # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
     # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
-    scale_jax_dtype, block_size = scale_jax_dtype_and_block_size
-    if (
-        scale_jax_dtype == jnp.float8_e4m3fn
-        and block_size != 16
-        and not jtu.is_sm107f()
-    ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm_107f.")
+    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
+      self.skip_unless_sm107f()
     self._run_mma_block_scaled_collective(
         m=256,
         n=n,
@@ -3048,17 +3024,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_collective_128_lane_a_scales(
       self, scale_jax_dtype, block_size, lhs_in_tmem
   ):
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
-      self.skipTest("128-lane A scales are only supported on sm_107f.")
-    if (
-        scale_jax_dtype == jnp.float8_e4m3fn
-        and block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
-    ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+    self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
+    # With k_steps=2, K=512, which mixes K=96 and K=64 instructions when A is in
+    # SMEM (see `_do_mma`).
     self._run_mma_block_scaled_collective(
         m=256,
         n=128,
@@ -3755,12 +3723,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_sparse_f4(
       self, m, n, in_jax_dtype, scale_jax_dtype, base_block_size, swizzle
   ):
-    if (
-        scale_jax_dtype == jnp.float8_e4m3fn
-        and base_block_size != 16
-        and not jtu.is_cuda_compute_capability_equal("10.7")
-    ):
-      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+    if scale_jax_dtype == jnp.float8_e4m3fn and base_block_size != 16:
+      self.skip_unless_sm107f()
     self._run_mma_block_scaled_sparse_f4(
         m=m,
         n=n,
@@ -3772,11 +3736,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
 
   def test_mma_block_scaled_sparse_128_lane_a_scales(self):
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
-      self.skipTest("128-lane A scales are only supported on sm_107f.")
+    self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
     self._run_mma_block_scaled_sparse_f4(
         m=128,
         n=128,
@@ -4831,7 +4791,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       dtype=(
           jnp.float32,
           jnp.float16,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.int4
       ),
   )
@@ -5985,7 +5945,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.bfloat16,
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.float4_e2m1fn,
       ),
   )
@@ -6132,7 +6092,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.float8_e5m2,
           jnp.float8_e4m3fn,
           jnp.float8_e8m0fnu,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       jax_dtype_to=(
           jnp.float32,
@@ -6141,7 +6101,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
           jnp.float8_e5m2,
           jnp.float8_e4m3fn,
           jnp.float8_e8m0fnu,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
       ),
       vec_len=(1, 2, 4, 8),
   )
@@ -6338,7 +6298,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
       dst_dtype=(
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
           jnp.float4_e2m1fn,
       ),
   )
@@ -6403,10 +6363,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
 
     # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rz) support added in PTX ISA
     # 9.4 (CUDA 13.4) on sm_107f. f8e5m3fnu supports .rz and .rp on sm_107f.
-    if (
-        jtu.is_cuda_compute_capability_equal("10.7")
-        and jtu.is_cuda_version_at_least(13, 4)
-    ):
+    if jtu.is_sm107f() and jtu.is_cuda_version_at_least(13, 4):
       uint_dtype = jnp.uint4 if dst_dtype == jnp.float4_e2m1fn else jnp.uint8
       rn_bits = expected_rn.view(uint_dtype)
       rounded_away = np.abs(expected_rn.astype(np.float32)) > np.abs(
@@ -7446,7 +7403,7 @@ class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
     shape = (elems_per_thread * 128,)
     x = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
     y = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
-    if not jtu.is_cuda_compute_capability_equal("10.7"):
+    if not jtu.is_sm107f():
       with self.assertRaisesRegex(
           NotImplementedError,
           "Packed 8-bit integer ALU instructions require sm_107f",
@@ -10908,11 +10865,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       ab_type=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn),
   )
   def test_scaled_matmul_with_128_lane_a_scales(self, scale_type, ab_type):
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
-      self.skipTest("128-lane A scales are only supported on sm_107f.")
+    self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
     block_size = 32
     if scale_type == jnp.float8_e4m3fn:
       if ab_type != jnp.float4_e2m1fn:

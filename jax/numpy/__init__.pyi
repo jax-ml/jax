@@ -597,6 +597,7 @@ def inner(
     preferred_element_type: _DTypeLike | None = ...) -> _Array: ...
 def insert(arr: _ArrayLike, obj: _ArrayLike | slice, values: _ArrayLike,
            axis: int | None = ...) -> _Array: ...
+int1: _ScalarType
 int16: _ScalarType
 int2: _ScalarType
 int32: _ScalarType
@@ -1016,6 +1017,7 @@ def triu_indices_from(arr: _ArrayLike | _SupportsShape, k: int = ...) -> tuple[_
 def true_divide(x: _ArrayLike, y: _ArrayLike, /) -> _Array: ...
 def trunc(x: _ArrayLike, /) -> _Array: ...
 uint: _ScalarType
+uint1: _ScalarType
 uint16: _ScalarType
 uint2: _ScalarType
 uint32: _ScalarType

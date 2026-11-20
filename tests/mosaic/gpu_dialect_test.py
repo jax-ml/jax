@@ -3332,6 +3332,7 @@ class DialectLoweringTest(MosaicGpuTest):
 
   @parameterized.product(
       arch_minor=(3, 7),
+      a_scale_128_lane=(False, True),
       k_and_num_instrs=(
           # (K, number of K=96 instructions, number of K=64 instructions)
           (256, 2, 1),
@@ -3346,8 +3347,15 @@ class DialectLoweringTest(MosaicGpuTest):
       ),
   )
   def test_tcgen05_mma_k96_decomposition(
-      self, arch_minor, k_and_num_instrs, collective, scale_block_and_type
+      self,
+      arch_minor,
+      a_scale_128_lane,
+      k_and_num_instrs,
+      collective,
+      scale_block_and_type,
   ):
+    if a_scale_128_lane and arch_minor < 7:
+      self.skipTest("128-lane A scales are only supported on sm_107f.")
     k, num_k96, num_k64 = k_and_num_instrs
     scale_block, scale_ty_fn = scale_block_and_type
     m = n = 128
@@ -3385,7 +3393,11 @@ class DialectLoweringTest(MosaicGpuTest):
               tmem_addr,
               (m, k // scale_block),
               scale_ty,
-              tcgen05.scales_layout(),
+              (
+                  tcgen05.scales_128_lane_layout()
+                  if a_scale_128_lane
+                  else tcgen05.scales_layout()
+              ),
           ),
           b_scale=tcgen05.TMEMRef(
               tmem_addr,

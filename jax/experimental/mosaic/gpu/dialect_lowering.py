@@ -2610,8 +2610,7 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   ctx.check_collective(op)
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
   predicate = ctx.single_lane_predicate
-  # TODO(cjfj): simplify when minimum jaxlib version is 0.12.
-  if (pred := getattr(op, "predicate", None)) is not None:
+  if (pred := op.predicate) is not None:
     predicate = arith.andi(predicate, pred)
   # TODO(bchetioui): remove `getattr` once minimum jaxlib version is >= 0.12.1.
   commit_a_read_only = bool(getattr(op, "commit_a_read_only", False))

@@ -351,7 +351,7 @@ async def combine_kvstores(combined_kvstore: dict[str, Any],
   combined, opened_kvstores = await asyncio.gather(
       combined_fut, asyncio.gather(*kvstores_futs)
   )
-  tx = ts.Transaction()
+  tx = ts.Transaction(atomic=True)
   await asyncio.gather(*(
       kvstore.experimental_copy_range_to(combined.with_transaction(tx))
       for kvstore in opened_kvstores

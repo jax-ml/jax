@@ -92,10 +92,7 @@ def _generate_quantized_tensors(
 
   return a, b, a_q, b_q, a_scales, b_scales
 
-def create_mx_configs_if_available(mode):
-  if _dtypes.float8_e8m0fnu is None:
-    raise unittest.SkipTest("float8_e8m0fnu is not available.")
-
+def create_mx_configs(mode):
   return [nn.get_scaled_dot_general_config(mode) for _ in range(3)]
 
 
@@ -116,8 +113,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     if jtu.is_device_rocm() and mode == "nvfp4":
       raise unittest.SkipTest("nvfp4 is not supported on ROCm")
-    # Check if float8_e8m0fnu is available
-    configs = create_mx_configs_if_available(mode)
+    configs = create_mx_configs(mode)
     batch, rhs_non_contract = 4, 256
     a, b, a_q, b_q, a_scales, b_scales = _generate_quantized_tensors(
         batch, lhs_non_contract, contract, rhs_non_contract,
@@ -147,7 +143,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
 
-    configs = create_mx_configs_if_available(mode)
+    configs = create_mx_configs(mode)
     cast_to_representable = partial(
         quantize_dequantize,
         scale=jnp.ones((1,)),
@@ -210,7 +206,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testMxQuantize(self, mode, dtype):
     if not jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test requires GPU.")
-    config = create_mx_configs_if_available(mode)[0]
+    config = create_mx_configs(mode)[0]
     max_value = float(jnp.finfo(config.data_type).max)
 
     # A block maximum of exactly `max_value * 2**k` selects the scale 2**k and
@@ -236,7 +232,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # quantization; `quantize` guards its outputs with a barrier.
     if not jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test requires GPU.")
-    configs = create_mx_configs_if_available(mode)
+    configs = create_mx_configs(mode)
     k1, k2 = jax.random.split(jax.random.key(1), 2)
     a = jax.random.normal(k1, (2, 64, 128), jnp.float32)
     b = jax.random.normal(k2, (2, 96, 128), jnp.float32)
@@ -269,8 +265,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # The mixed mxfp4/mxfp8 configs from the scaled_dot_general docstring.
     if not jtu.test_device_matches(["gpu", "cpu"]):
       raise unittest.SkipTest("Test requires GPU or CPU.")
-    mxfp4 = create_mx_configs_if_available("mxfp4")[0]
-    mxfp8 = create_mx_configs_if_available("mxfp8")[0]
+    mxfp4 = create_mx_configs("mxfp4")[0]
+    mxfp8 = create_mx_configs("mxfp8")[0]
     configs = [mxfp4, mxfp4, mxfp8]
 
     # Inputs on the e2m1 grid are quantized losslessly, so the results must

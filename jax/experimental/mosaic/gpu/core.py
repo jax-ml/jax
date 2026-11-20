@@ -1172,7 +1172,9 @@ def lower_mgpu_module(
           dump_options.dump_path
       )
 
-    layout_inference.infer_layout(module, arch=utils._infer_arch())
+    with ir.InsertionPoint(module.body):
+      arch = utils.get_arch()
+    layout_inference.infer_layout(module, arch=arch)
 
     if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(

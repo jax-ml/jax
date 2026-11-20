@@ -71,6 +71,7 @@ def mpmd_map_tracing_context(
       mesh.tracing_context(),
       jax_core.extend_axis_env_nd(super_mesh_shape.items()),
       config._check_vma(False),
+      config.disable_jit(False),
       xla_metadata.clear_xla_metadata(),
   ):
     yield

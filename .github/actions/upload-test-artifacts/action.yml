@@ -98,8 +98,12 @@ runs:
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         PADDED_ATTEMPT: ${{ steps.check-artifacts.outputs.padded_attempt }}
         GITHUB_WORKFLOW: ${{ github.workflow }}
+        GITHUB_JOB_ID: ${{ job.check_run_id }}
       run: |
         artifact_name="$INPUT_ARTIFACT_NAME-$PADDED_ATTEMPT"
+        if [[ -n "${GITHUB_JOB_ID:-}" ]]; then
+          artifact_name="${artifact_name}-${GITHUB_JOB_ID}"
+        fi
         WF_NAME="$GITHUB_WORKFLOW"
         SAFE_WF_NAME="${WF_NAME//\//-}"
         REAL_URI="${GCS_UPLOAD_URI//$WF_NAME/$SAFE_WF_NAME}"

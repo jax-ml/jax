@@ -1640,7 +1640,9 @@ Each logged key gets its own `CondSum`: `index` records which branch ran
 one slot per branch: the live value for the branch that ran, zeros for a
 branch that logs the key but wasn't taken (here `'neg'`), and `None` for a
 branch that doesn't log the key at all. Branches needn't agree on keys or
-types, and nested `cond`s nest their `CondSum`s.
+types, and nested `cond`s nest their `CondSum`s. When all branches log the
+same key with matching pytree structure and types, the `CondSum` wrapper is
+omitted and the logged value is returned directly.
 
 `jax.custom_vjp` backward rules can log too, with no hijax rewrite needed:
 register the rules with `defvjp_with_logs` instead of `defvjp`. The only
