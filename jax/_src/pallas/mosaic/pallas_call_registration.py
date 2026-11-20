@@ -382,6 +382,7 @@ def _lower_to_custom_call(
       input_memory_spaces=input_memory_spaces,
       metadata=dict_metadata,
       skip_device_barrier=mosaic_params.skip_device_barrier,
+      has_communication=mosaic_params.has_communication,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
       needs_layout_passes=mosaic_params.needs_layout_passes,
