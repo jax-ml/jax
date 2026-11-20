@@ -38,9 +38,11 @@ JAX has built-in GPU support through XLA, but sometimes you need to go beyond wh
 
 [CuTe DSL](https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/cute_dsl.html) is the Python-native interface to [CUTLASS](https://docs.nvidia.com/cutlass/latest/) 4.4+, NVIDIA's open-source library of high-performance CUDA kernels. It exposes the same CuTe abstractions (layouts, tensors, thread-to-data mappings) that power CUTLASS's C++ template library, but authored entirely in Python.
 
-Writing custom GPU kernels has traditionally meant working in C++ or CUDA, a steep learning curve for Python-focused ML engineers. With CuTe DSL, you define per-thread logic with `@cute.kernel`, configure launch parameters with `@cute.jit`, and the CUTLASS JIT compiler generates optimized CUDA code. The `cutlass.jax` integration module then lets you call these kernels from JAX as if they were native operations, with full support for `@jax.jit`, automatic differentiation plumbing, and multi-device sharding.
+Writing custom GPU kernels has traditionally meant working in C++ or CUDA, a steep learning curve for Python-focused ML engineers. With CuTe DSL, you define per-thread logic with `@cute.kernel`, configure launch parameters with `@cute.jit`, and the CUTLASS JIT compiler generates optimized CUDA code. The `cutlass.jax` integration module lets you call these kernels from JAX under `@jax.jit` and use `jax.shard_map` for multi-device execution.
 
-This notebook walks through progressively more complex kernels showing the patterns you'll reuse in your own custom operations.
+`cutlass_call` does not provide automatic differentiation rules. To differentiate an operation implemented with a CuTe DSL kernel, wrap it with `jax.custom_jvp` or `jax.custom_vjp` and supply the corresponding derivative rule; see {ref}`jax-301-custom-jvp-vjp`. The examples below implement forward computations only.
+
+This guide walks through progressively more complex kernels showing the patterns you'll reuse in your own custom operations. NVIDIA also maintains [JAX integration examples in CUTLASS](https://github.com/NVIDIA/cutlass/tree/main/examples/python/CuTeDSL/dsl_tutorials/jax).
 
 +++
 
@@ -418,22 +420,25 @@ def launch_saxpy(
   )
 ```
 
-The keyword-only convention matters for `cutlass_call`: positional arguments correspond to JAX tensors (managed by XLA), while keyword arguments are scalar values passed directly to the kernel. In the JAX wrapper below, `alpha=alpha` routes through `cutlass_call` as a kernel kwarg:
+`cutlass_call` separates runtime array inputs from compile-time configuration: the returned callable accepts JAX arrays, while extra keyword arguments supplied to `cutlass_call` configure the CuTe launcher during lowering. Here, `alpha=alpha` supplies a concrete scalar to `launch_saxpy`:
 
 ```python
 call = cjax.cutlass_call(
     launch_saxpy,
     ...,
-    alpha=alpha,    # scalar kwarg → passed to the kernel
+    alpha=alpha,    # compile-time configuration for launch_saxpy
 )
 out_3d = call(x_3d, y_3d)  # tensor args → managed by XLA
 ```
 
-> **Concept: Static vs dynamic integers**
+> **Concept: JAX-static arguments and CuTe kernel parameters**
 >
-> CUTLASS distinguishes between values known at **compile time** (static) and values known only at **runtime** (dynamic). Static integers, such as tensor shapes passed with `use_static_tensors=True` or constants like `BLOCK_SIZE`, are baked into the generated CUDA code, letting the compiler unroll loops, optimize memory access patterns, and eliminate branches. Dynamic values like `alpha` are passed as regular kernel arguments and read at runtime. In general, make shapes and tile sizes static and keep data-dependent values dynamic.
+> There are two compilation boundaries here:
+>
+> - **JAX tracing and lowering:** `static_argnums=(2,)` makes `alpha` a concrete Python value when the wrapper is traced, as required for a `cutlass_call` keyword argument. JAX compiles a separate specialization for each new value of `alpha`, and `cutlass_call` captures that value in the compiled host launcher.
+> - **CuTe kernel compilation:** `saxpy_kernel` declares `alpha: float`, an ordinary scalar kernel parameter passed by value. A `cutlass.Constexpr` annotation would instead explicitly specialize the device kernel on that argument. Host specialization may allow compiler constant propagation, but marking a JAX argument static does not itself make the device parameter a `Constexpr`.
 
-Note that `jax_saxpy` uses `@jax.jit(static_argnums=(2,))` to mark `alpha` as a static argument to JAX. This means JAX will recompile the function whenever `alpha` changes. That is fine for a value that rarely varies, and it lets the CUTLASS JIT bake the exact `alpha` value into the generated CUDA code.
+This pattern suits a scalar that rarely changes. For a data-dependent scalar that should vary without recompiling, pass its value in a JAX array to the returned callable and adapt the launcher and kernel to read that array, rather than passing it as a `cutlass_call` keyword argument. `use_static_tensors=True` specializes tensor shapes and strides; it does not make array contents static.
 
 ```{code-cell}
 BLOCK = 256
@@ -640,7 +645,7 @@ def launch_fused_bias_relu(
   )
 ```
 
-Note that `width` is marked as a static argument in the JAX wrapper via `static_argnums=(2,)`. This means JAX recompiles when the feature dimension changes, allowing CUTLASS to generate specialized code for each width.
+As with `alpha` in SAXPY, `static_argnums=(2,)` makes `width` concrete during JAX tracing so it can be passed as a `cutlass_call` keyword argument. JAX and the host launcher specialize on its value; the device kernel still declares an ordinary `width: int` parameter.
 
 ```python
 call = cjax.cutlass_call(
@@ -659,7 +664,7 @@ def jax_fused_bias_relu(x, bias, width):
   Args:
       x: Input matrix of shape (batch, width), flattened to 1-D for the kernel.
       bias: Bias vector of shape (width,).
-      width: Number of columns (static, passed as constexpr to the kernel).
+      width: Number of columns (JAX-static configuration for the launcher).
   """
   N = x.size
   x_flat = x.reshape(-1)
@@ -778,7 +783,7 @@ The launcher sets up a 2-D grid matching the tile decomposition:
 
 - `grid=[grid_m, grid_n, 1]` — one block per output tile, arranged in a 2-D grid
 - `block=[256, 1, 1]` — 256 threads per block, each handling multiple elements via the stride loop
-- `M, N, K, BLOCK_M, BLOCK_N` are all passed as compile-time constants to the kernel
+- `M, N, K` come from the concrete JAX input shapes, and `BLOCK_M, BLOCK_N` are defined in the launcher. Their values are known when compiling the host launcher; the device kernel declares them as ordinary `int` parameters, not `cutlass.Constexpr` parameters.
 
 ```{code-cell}
 @cute.jit
@@ -1163,7 +1168,7 @@ print(f"  Max error: {float(jnp.max(jnp.abs(c - c_ref))):.2e}")
 
 With concrete shapes, the exported artifact only works for the exact dimensions it was traced with. **Symbolic shapes** lift this restriction: you export once and call with any compatible dimensions, without re-exporting.
 
-`export.symbolic_shape("a, b")` creates symbolic dimension variables. The exported function is parameterized over these variables, so the same serialized blob works for `(512, 256)`, `(1024, 1024)`, or any other shape.
+`export.symbolic_shape("a, b")` creates positive symbolic dimension variables. Both inputs must have the same `(a, b)` shape and `float32` dtype declared below. Within that signature, this example does not require `a * b` to be a multiple of 256: the launcher uses ceiling division to cover the final partial block, and `elementwise_add_kernel` checks `thread_idx < m * n` before accessing memory.
 
 ```{code-cell}
 # --- Export with symbolic shapes ---
@@ -1184,10 +1189,8 @@ print(f"Serialized computation: {len(blob_sym):,} bytes")
 
 rehydrated_sym = export.deserialize(blob_sym)
 
-# Call with different shapes, all from the same serialized blob.
-# The same serialized blob works for any (M, N) where M*N is a
-# multiple of the kernel's block size (256).
-for shape in [(512, 256), (1024, 512), (2048, 1024)]:
+# Include a partial final block: 17 * 19 is not divisible by 256.
+for shape in [(17, 19), (512, 256), (1024, 512), (2048, 1024)]:
   a = jax.random.normal(next(keys), shape, dtype=jnp.float32)
   b = jax.random.normal(next(keys), shape, dtype=jnp.float32)
   c = rehydrated_sym.call(a, b)
