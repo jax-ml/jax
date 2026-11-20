@@ -20,7 +20,7 @@ import numpy as np
 import jax
 from jax._src import test_util as jtu
 import jax.numpy as jnp
-from jax.experimental.ode import odeint
+from jax.experimental.ode import odeint, optimal_step_size
 
 import scipy.integrate as osp_integrate
 
@@ -250,6 +250,28 @@ class ODETest(jtu.JaxTestCase):
 
     self.assertTrue(jnp.abs(ys[1] - 2.) < 1e-4)
     self.assertTrue(jnp.abs(ys[2]) < 1e-4)
+
+  def test_nan_error_ratio_shrinks_step(self):
+    # https://github.com/jax-ml/jax/issues/14612
+    dt = jnp.array(0.1)
+    self.assertAllClose(optimal_step_size(dt, jnp.array(jnp.nan)),
+                        optimal_step_size(dt, jnp.array(jnp.inf)))
+
+  def test_nan_trial_step_is_rejected(self):
+    # https://github.com/jax-ml/jax/issues/14612
+    # Exactly y' = y for y < 20, but NaN beyond it. A trial step large enough to
+    # push an intermediate Runge-Kutta stage past y = 20 yields a NaN error
+    # estimate, which must reject and shrink the step rather than propagate into
+    # the step size, where it would silently end the integration and leave the
+    # remaining outputs to be extrapolated.
+    def rhs(y, t):
+      return y + 0. * jnp.sqrt(20. - y)
+
+    ts = np.linspace(0., np.log(19.9), 5)
+    tol = 1e-4
+    ys = odeint(rhs, jnp.array(1.), jnp.array(ts), rtol=tol, atol=tol)
+    self.assertAllClose(ys, np.exp(ts), check_dtypes=False,
+                        rtol=5 * tol, atol=5 * tol)
 
 
 if __name__ == '__main__':
