@@ -931,6 +931,18 @@ class CondSum:
 
 
 
+def _matching_log_specs(branch_specs):
+  spec0 = branch_specs[0]
+  if spec0 is None:
+    return False
+  treedef0, avals0 = spec0
+  return all(
+      s is not None and s[0] == treedef0 and len(s[1]) == len(avals0)
+      and all(map(core.typematch, avals0, s[1]))
+      for s in branch_specs[1:]
+  )
+
+
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
@@ -945,8 +957,9 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   branch_cts, branch_logs = unzip2(outs)
   out_nzs = [[not isinstance(x, ad.Zero) for x in cts] for cts in branch_cts]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
-  # Each key logged by any branch gets one slot per branch (see CondSum), so
-  # the branches needn't agree about keys or types.
+  # Each key logged by any branch gets one slot per branch (see CondSum) unless
+  # all branches log it with matching pytree structure and types, in which case
+  # we return the logged value directly without wrapping in CondSum.
   log_spec = []
   for k in sorted({k for logs in branch_logs for k in logs}):
     branch_specs = []
@@ -956,7 +969,9 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
         branch_specs.append((treedef, tuple(avals)))
       else:
         branch_specs.append(None)  # type: ignore
-    log_spec.append((k, tuple(branch_specs)))
+    log_spec.append(
+        (k, None if _matching_log_specs(branch_specs) else tuple(branch_specs))
+    )
   log_spec = tuple(log_spec)
   trans_branches, out_trees = unzip2(
       _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz, log_spec, b)
@@ -966,7 +981,8 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   cts_out, logs = tree_unflatten(out_tree, outs)
   for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
-  return {k: CondSum(index, slots) for k, slots in logs.items()}
+  return {k: logs[k] if branch_specs is None else CondSum(index, logs[k])
+          for k, branch_specs in log_spec}
 
 @util.weakref_lru_cache
 def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
@@ -980,10 +996,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
                else None for x, inst in zip(args, inst_out)]
     if log_spec is None:
       return cts_out, raw_logs
-    # If this jaxpr runs, this branch was the one taken: its slot holds its
-    # live values, other branches' slots hold zeros (or None for keys they
-    # don't log).
-    logs = {k: [raw_logs.get(k) if b == which_branch else
+    # If this jaxpr runs, this branch was the one taken: when branches disagree
+    # on a key's presence or type, its slot holds its live values and other
+    # branches' slots hold zeros (or None for keys they don't log). When all
+    # branches agree, we emit the value directly without CondSum wrapping.
+    logs = {k: raw_logs[k] if branch_specs is None else
+               [raw_logs.get(k) if b == which_branch else
                 None if spec is None else
                 tree_unflatten(spec[0], map(ad_util.zeros_like_aval, spec[1]))
                 for b, spec in enumerate(branch_specs)]
@@ -1140,9 +1158,13 @@ def _platform_branch_lowering(ctx, jaxpr, args):
 
 
 def _cond_lowering(ctx, index, *args, branches, **params):
+  # The lowering platforms of each branch, if this is a multi-platform
+  # lowering of a `platform_dependent` conditional.
+  branches_lowering_platforms: list[tuple[str, ...]] | None = None
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.Jaxpr] = []
     index_to_kept_index: dict[int, int] = {}
+    kept_platforms: list[list[str]] = []
     for p in mlir._platforms_for_eqn(ctx):
       # Each `p` must appear in exactly one branches_platforms, or in the
       # last default branch. Otherwise, platform_index lowering would have
@@ -1152,6 +1174,8 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           if b_idx not in index_to_kept_index:
             index_to_kept_index[b_idx] = len(branches_kept)
             branches_kept.append(branches[b_idx])
+            kept_platforms.append([])
+          kept_platforms[index_to_kept_index[b_idx]].append(p)
           break
       else:
         assert False, p
@@ -1174,6 +1198,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
 
     index = kept_index_case_op
     branches = branches_kept
+    branches_lowering_platforms = [tuple(ps) for ps in kept_platforms]
     assert branches, "platform_index lowering should have failed first"
 
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
@@ -1193,12 +1218,20 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   name_stack = ctx.name_stack.extend('cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
+    # Lower each branch of a multi-platform `platform_dependent` only for the
+    # platforms it runs on, e.g. so that a TPU-only kernel in the 'tpu' branch
+    # is not lowered for CPU.
+    branch_module_context = (
+        ctx.module_context.replace(platforms=branches_lowering_platforms[i])
+        if branches_lowering_platforms is not None
+        else ctx.module_context
+    )
     with ir.InsertionPoint(branch):
       consts = mlir.ir_consts(
           jaxpr.consts, [v.aval for v in jaxpr.constvars],
           const_lowering=ctx.const_lowering)
       out_vals, tokens_out = mlir.jaxpr_subcomp(
-          ctx.module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
+          branch_module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
@@ -1214,7 +1247,8 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   ctx.set_tokens_out(mlir.TokenSet(dict(zip(ordered_effects, tokens))))
   return outputs
 
-mlir.register_lowering(cond_p, _cond_lowering, shard_map_passthrough=True)
+mlir.register_lowering(
+    cond_p, _cond_lowering, shard_map_collective_rule=lambda *_, **__: None)
 
 @register_discharge_rule(cond_p)
 def _cond_state_discharge_rule(ctx, index, *args,

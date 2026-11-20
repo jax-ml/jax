@@ -84,15 +84,10 @@ extra_dlpack_dtypes = [
     jnp.float8_e4m3fnuz,
     jnp.float8_e5m2,
     jnp.float8_e5m2fnuz,
-] + [
-    dtype
-    for name in [
-        "float4_e2m1fn",
-        "float8_e3m4",
-        "float8_e4m3",
-        "float8_e8m0fnu",
-    ]
-    if (dtype := getattr(jnp, name, None))
+    jnp.float4_e2m1fn,
+    jnp.float8_e3m4,
+    jnp.float8_e4m3,
+    jnp.float8_e8m0fnu,
 ]
 
 numpy_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]

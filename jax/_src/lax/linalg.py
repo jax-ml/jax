@@ -2122,7 +2122,12 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
                        use_magma=use_magma)
   *_, m, n = x.shape
   if pivoting:
-    dx = dx[..., p[0]]
+    # With pivoting, Q R = X P: work with the column-permuted X and dX.
+    permute = lambda a, perm: a[:, perm]
+    for _ in range(x.ndim - 2):
+      permute = api.vmap(permute)
+    x = permute(x, p[0])
+    dx = permute(dx, p[0])
 
   if m < n:
     # Wide matrix case (m < n)

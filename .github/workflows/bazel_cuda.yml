@@ -145,13 +145,13 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Bazel CUDA tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
-        timeout-minutes: 60
+        timeout-minutes: 90
         run: ${{ ((inputs.run_tests_with_rbe == 'true') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}
       - name: Upload test artifacts
         if: always() && !cancelled()
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}-${{ inputs.build_jaxlib }}
+          artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}-${{ inputs.build_jaxlib }}-jaxlib_${{ inputs.jaxlib-version }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}

@@ -61,7 +61,7 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.sharding._internal_device_list
+  devices = a.sharding._device_assignment
   if len(devices) != 1:
     raise ValueError(
         "When making an array from single-device arrays the input arrays must "
@@ -792,7 +792,7 @@ def make_array_from_callback(
     return r
 
   if sharding.is_fully_replicated:
-    devices = list(sharding._internal_device_list.addressable_device_list)
+    devices = list(sharding._device_assignment.addressable_device_list)
     # Only compute data once.
     per_device_values = [get_data((slice(None),) * len(shape))] * len(devices)
   else:
@@ -821,7 +821,8 @@ def make_array_from_callback(
         and first_value._committed
         and sharding.is_fully_replicated
         and first_value.is_fully_replicated
-        and first_value.sharding._device_assignment == tuple(devices)
+        and (first_value.sharding._device_assignment ==
+             pxla._create_device_list_cached(tuple(devices)))
         and first_value.format.layout == dll):
       return first_value
 
@@ -1355,8 +1356,8 @@ def _fallback_check_via_indices(src_sharding, dst_sharding, shape):
 def _sharding_indices_and_eq(src_sharding, dst_sharding, ndim):
   hlos_eq = are_hlo_shardings_equal(src_sharding._to_xla_hlo_sharding(ndim),
                                     dst_sharding._to_xla_hlo_sharding(ndim))
-  len_eq = (len(src_sharding._internal_device_list.addressable_device_list) ==
-            len(dst_sharding._internal_device_list.addressable_device_list))
+  len_eq = (len(src_sharding._device_assignment.addressable_device_list) ==
+            len(dst_sharding._device_assignment.addressable_device_list))
   return hlos_eq and len_eq
 
 
@@ -1382,7 +1383,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         raise NotImplementedError(
             "Cannot reshard an input that is not fully addressable")
     else:
-      devices = sharding._internal_device_list.addressable_device_list
+      devices = sharding._device_assignment.addressable_device_list
       if same_sharding and same_layout:
         # Add a placeholder result that will be filled in later.
         results.append(None)

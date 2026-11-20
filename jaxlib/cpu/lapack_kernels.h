@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <type_traits>
 
+#include "absl/base/attributes.h"
 #include "absl/status/statusor.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -90,6 +91,14 @@ void AssignKernelFn(typename KernelType::FnType* func) {
   KernelType::fn = func;
 }
 
+// Calls a LAPACK or BLAS kernel through its function pointer without a CFI
+// type check.  The pointers may come from SciPy or Fortran code without CFI
+// type hashes.
+template <typename Fn, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI inline void CallLapackFn(Fn* fn, Args... args) {
+  fn(args...);
+}
+
 }  // namespace jax
 
 namespace jax {
@@ -108,9 +117,10 @@ inline constexpr auto LapackIntDtypeFor =
 template <::xla::ffi::DataType dtype, typename IntType>
 struct TriMatrixEquationSolver {
   using ValueType = ::xla::ffi::NativeType<dtype>;
-  using FnType = void(char* side, char* uplo, char* transa, char* diag,
-                      IntType* m, IntType* n, ValueType* alpha, ValueType* a,
-                      IntType* lda, ValueType* b, IntType* ldb);
+  using FnType = void(const char* side, const char* uplo, const char* transa,
+                      const char* diag, const IntType* m, const IntType* n,
+                      const ValueType* alpha, const ValueType* a,
+                      const IntType* lda, ValueType* b, const IntType* ldb);
 
   inline static FnType* fn = nullptr;
 

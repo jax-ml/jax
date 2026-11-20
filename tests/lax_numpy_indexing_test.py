@@ -842,7 +842,10 @@ class IndexingTest(jtu.JaxTestCase):
     primitives = [eqn.primitive for eqn in jaxpr.eqns]
     if np.issubdtype(dtype, np.unsignedinteger):
       # Unsigned integers should not require lt, add, and select.
-      self.assertEqual(primitives, [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p])
+      expected = [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p]
+      if np.iinfo(dtypes.canonicalize_dtype(dtype)).max > np.iinfo(np.int32).max:
+        expected = [lax.min_p, *expected]
+      self.assertEqual(primitives, expected)
     else:
       # May or may not contain convert_element_type.
       self.assertIn(len(primitives), [5, 6])
@@ -1197,6 +1200,49 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaises(IndexError) as cm:
       jax.jit(lambda x, i: x.at[i:i + 2].set(0))(x, 2)
     self.assertIn("jax.ds(start, size)", str(cm.exception))
+
+  @parameterized.parameters(
+      (np.uint32, [2**31, 2**32 - 1]),
+      (np.uint64, [2**31, 2**32, 2**32 + 3, 2**63, 2**64 - 1]),
+  )
+  def testUnsignedOutOfBoundsIndexing(self, idx_dtype, values):
+    # Regression test for https://github.com/jax-ml/jax/issues/42657
+    if idx_dtype == np.uint64 and not config.enable_x64.value:
+      self.skipTest("uint64 requires x64 mode")
+    x = jnp.arange(10.0)
+    idx = jnp.array(values, dtype=idx_dtype)
+    expected_clip = jnp.full(len(values), 9.0)
+    expected_fill = jnp.full(len(values), jnp.nan)
+    expected_set_clip = x.at[-1].set(-1.0)
+
+    self.assertArraysEqual(x[idx], expected_clip)
+    self.assertArraysEqual(x.at[idx].get(mode="clip"), expected_clip)
+    self.assertArraysEqual(x.at[idx].get(mode="fill"), expected_fill)
+    self.assertArraysEqual(x.at[idx].set(-1.0, mode="clip"), expected_set_clip)
+    self.assertArraysEqual(x.at[idx].set(-1.0, mode="drop"), x)
+    self.assertArraysEqual(jnp.take_along_axis(x, idx, axis=0), expected_fill)
+    self.assertArraysEqual(
+        jnp.take_along_axis(x, idx, axis=0, mode="clip"), expected_clip
+    )
+    self.assertArraysEqual(
+        jnp.put_along_axis(x, idx, -1.0, axis=0, inplace=False, mode="clip"),
+        expected_set_clip,
+    )
+    self.assertArraysEqual(
+        jnp.put_along_axis(x, idx, -1.0, axis=0, inplace=False, mode="drop"), x
+    )
+    self.assertArraysEqual(jnp.take(x, idx, mode="fill"), expected_fill)
+    self.assertArraysEqual(jnp.take(x, idx, mode="clip"), expected_clip)
+
+    # Scalar unsigned index in 1D gather and 2D dynamic_slice
+    x2d = jnp.arange(20.0).reshape(10, 2)
+    for v in values:
+      self.assertArraysEqual(x[idx_dtype(v)], jnp.array(9.0))
+      self.assertArraysEqual(x[jnp.array(v, dtype=idx_dtype)], jnp.array(9.0))
+      self.assertArraysEqual(x2d[idx_dtype(v), 0], jnp.array(18.0))
+      self.assertArraysEqual(
+          x2d[jnp.array(v, dtype=idx_dtype), 0], jnp.array(18.0)
+      )
 
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
@@ -2119,6 +2165,24 @@ class IndexedUpdateTest(jtu.JaxTestCase):
         jnp.int32(40000 - 32768),
     )
 
+  @parameterized.parameters(
+      (4, 237_501, 237_500),
+      (16, 200_001, 6_641),
+      (16, 200_001, 20_000),
+  )
+  def testFloat64ColumnScatterSet(self, rows, width, count):
+    # Regression test for https://github.com/jax-ml/jax/issues/41888
+    if jaxlib_extension_version < 524:
+      self.skipTest("Requires jaxlib_extension_version >= 524")
+    if not config.enable_x64.value:
+      self.skipTest("Requires jax_enable_x64=True")
+    out = np.zeros((rows, width), dtype=np.float64)
+    upd = np.arange(rows * count, dtype=np.float64).reshape(rows, count) + 1.0
+    idx = np.arange(1, count + 1, dtype=np.int32)
+    got = jax.jit(lambda o, u, i: o.at[:rows, i].set(u))(out, upd, idx)
+    want = out.copy()
+    want[:rows, idx] = upd
+    self.assertArraysEqual(got, want)
 
 @jtu.with_config(jax_check_static_indices=True)
 class ValidateIndicesTest(jtu.JaxTestCase):

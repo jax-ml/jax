@@ -15,7 +15,7 @@ on:
         default: "linux-x86-n4-16"
         options:
         - "linux-x86-n4-16"
-        - "linux-arm64-t2a-48"
+        - "linux-arm64-c4a-48"
         - "linux-arm64-c4a-16"
         - "windows-x86-n2-16"
       artifact:

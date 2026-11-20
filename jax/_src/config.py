@@ -1954,7 +1954,8 @@ allow_f16_reductions = bool_state(
     help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
           'Defaults to True.'),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
 
 
 traceback_filtering = enum_state(
@@ -2529,7 +2530,7 @@ distributed_verify_secure_credentials = bool_state(
 
 jax_accurate_erf_inv = bool_state(
     name='jax_accurate_erf_inv',
-    default=False,
+    default=True,
     help=(
         'Temporary flag enabling more accurate erf_inv lowering near'
         ' ``|x| = 1``.'
@@ -2562,7 +2563,7 @@ jax_accurate_logistic = bool_state(
 
 jax_accurate_default_erfc = bool_state(
     name='jax_accurate_default_erfc',
-    default=False,
+    default=True,
     help=(
         'Temporary flag enabling single-branch polynomial default lowering'
         ' for ``lax.erfc`` with subnormal support.'
@@ -2571,8 +2572,8 @@ jax_accurate_default_erfc = bool_state(
     include_in_trace_context=True,
 )
 
-shard_map_partitioning = bool_state(
-    name='jax_shard_map_partitioning',
+jax_partitioning = bool_state(
+    name='jax_partitioning',
     default=False,
     help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
     include_in_jit_key=True,

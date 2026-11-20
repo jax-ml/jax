@@ -1466,6 +1466,54 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 3, 0), scalar_prefetch_values, ()), x + 128 * 3
     )
 
+  def test_iota_element_block_spec(self):
+    def f():
+      return jax.lax.broadcasted_iota(jnp.int32, (2, 2, 512, 512), 2)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    handler = block_spec_lib.make_scalar_prefetch_handler()
+    block_spec = pl.BlockSpec(
+        (None, pl.Squeezed(), pl.Element(64), 128),
+        lambda i, j, k, l: (i, j, k, l),
+    )
+    kernel_fn, ((),), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=4, scalar_prefetch_handler=handler
+    )(new_values)
+
+    x = jax.lax.broadcasted_iota(jnp.int32, (64, 128), 0)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0, 0), scalar_prefetch_values, ()), x
+    )
+    np.testing.assert_array_equal(
+        kernel_fn((1, 1, 5, 1), scalar_prefetch_values, ()), x + 5
+    )
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 96, 0), scalar_prefetch_values, ()), x + 96
+    )
+    np.testing.assert_array_equal(
+        jax.jit(lambda k: kernel_fn((0, 0, k, 0), scalar_prefetch_values, ()))(
+            jnp.int32(133)
+        ),
+        x + 133,
+    )
+
+    for bad_dim in (
+        pl.Element(64, padding=(1, 0)),
+        pl.Element(64, padding=(0, 1)),
+        pl.BoundedSlice(64),
+    ):
+      with self.subTest(bad_dim=bad_dim):
+        bad_bs = pl.BlockSpec(
+            (None, None, bad_dim, 128), lambda i, j, k, l: (i, j, k, l)
+        )
+        with self.assertRaises(NotImplementedError):
+          block_spec_lib.pull_block_spec(
+              f2, bad_bs, grid_len=4, scalar_prefetch_handler=handler
+          )(new_values)
+
   @parameterized.parameters(None, pl.Squeezed())
   def test_broadcast_size_one_dim_to_squeezed_dim(self, squeezed):
     x = jnp.arange(512, dtype=jnp.float32).reshape((1, 512))

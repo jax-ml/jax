@@ -163,10 +163,11 @@ ffi::Error TriMatrixEquationSolver<dtype, IntType>::Kernel(
         auto* local_y_out_data = y_out_data + i * y_out_step;
         const auto* local_x_data = x_data + i * x_step;
         for (int64_t j = 0; j < count; ++j) {
-          TriMatrixEquationSolver<dtype, IntType>::fn(
-              &side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
-              &alpha, const_cast<ffi::NativeType<dtype>*>(local_x_data),
-              &x_leading_dim_v, local_y_out_data, &y_leading_dim_v);
+          CallLapackFn(TriMatrixEquationSolver<dtype, IntType>::fn, &side_v,
+                       &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
+                       &alpha,
+                       const_cast<ffi::NativeType<dtype>*>(local_x_data),
+                       &x_leading_dim_v, local_y_out_data, &y_leading_dim_v);
           local_y_out_data += y_out_step;
           local_x_data += x_step;
         }
@@ -238,13 +239,13 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
           if constexpr (std::is_same_v<IntType, int32_t>) {
-            LuDecomposition<dtype, IntType>::fn(
-                &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                local_ipiv_data, &info_v);
+            CallLapackFn(LuDecomposition<dtype, IntType>::fn, &x_rows_v,
+                         &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                         local_ipiv_data, &info_v);
           } else {
-            LuDecomposition<dtype, IntType>::fn(
-                &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                ipiv_tmp.get(), &info_v);
+            CallLapackFn(LuDecomposition<dtype, IntType>::fn, &x_rows_v,
+                         &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                         ipiv_tmp.get(), &info_v);
             for (int64_t k = 0; k < ipiv_step; ++k) {
               local_ipiv_data[k] = static_cast<int32_t>(ipiv_tmp[k]);
             }
@@ -335,9 +336,10 @@ ffi::Error QrFactorization<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info;
-          QrFactorization<dtype, IntType>::fn(
-              &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-              local_tau_data, work_data.get(), &workspace_dim_v, &info);
+          CallLapackFn(QrFactorization<dtype, IntType>::fn, &x_rows_v,
+                       &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                       local_tau_data, work_data.get(), &workspace_dim_v,
+                       &info);
           using T = ffi::NativeType<dtype>;
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_x_out_data,
                                               x_rows * x_cols * sizeof(T));
@@ -367,8 +369,8 @@ int64_t QrFactorization<dtype, IntType>::GetWorkspaceSize(IntType x_rows,
   IntType x_leading_dim_v = x_rows;
   IntType info = 0;
   IntType workspace_query = -1;
-  fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, &optimal_size,
-     &workspace_query, &info);
+  CallLapackFn(fn, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr,
+               &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
@@ -442,15 +444,17 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
           IntType info_v;
           if constexpr (std::is_same_v<IntType, int32_t>) {
             if constexpr (is_complex_dtype) {
-              PivotingQrFactorization<dtype, IntType>::fn(
-                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                  local_jpvt_out_data, local_tau_data, work_data.get(),
-                  &workspace_dim_v, rwork_data.get(), &info_v);
+              CallLapackFn(PivotingQrFactorization<dtype, IntType>::fn,
+                           &x_rows_v, &x_cols_v, local_x_out_data,
+                           &x_leading_dim_v, local_jpvt_out_data,
+                           local_tau_data, work_data.get(), &workspace_dim_v,
+                           rwork_data.get(), &info_v);
             } else {
-              PivotingQrFactorization<dtype, IntType>::fn(
-                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                  local_jpvt_out_data, local_tau_data, work_data.get(),
-                  &workspace_dim_v, &info_v);
+              CallLapackFn(PivotingQrFactorization<dtype, IntType>::fn,
+                           &x_rows_v, &x_cols_v, local_x_out_data,
+                           &x_leading_dim_v, local_jpvt_out_data,
+                           local_tau_data, work_data.get(), &workspace_dim_v,
+                           &info_v);
             }
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_jpvt_out_data,
                                                 jpvt_step * sizeof(int32_t));
@@ -464,15 +468,16 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
               jpvt_tmp[k] = static_cast<IntType>(local_jpvt_out_data[k]);
             }
             if constexpr (is_complex_dtype) {
-              PivotingQrFactorization<dtype, IntType>::fn(
-                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                  jpvt_tmp.get(), local_tau_data, work_data.get(),
-                  &workspace_dim_v, rwork_data.get(), &info_v);
+              CallLapackFn(PivotingQrFactorization<dtype, IntType>::fn,
+                           &x_rows_v, &x_cols_v, local_x_out_data,
+                           &x_leading_dim_v, jpvt_tmp.get(), local_tau_data,
+                           work_data.get(), &workspace_dim_v, rwork_data.get(),
+                           &info_v);
             } else {
-              PivotingQrFactorization<dtype, IntType>::fn(
-                  &x_rows_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-                  jpvt_tmp.get(), local_tau_data, work_data.get(),
-                  &workspace_dim_v, &info_v);
+              CallLapackFn(PivotingQrFactorization<dtype, IntType>::fn,
+                           &x_rows_v, &x_cols_v, local_x_out_data,
+                           &x_leading_dim_v, jpvt_tmp.get(), local_tau_data,
+                           work_data.get(), &workspace_dim_v, &info_v);
             }
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(jpvt_tmp.get(),
                                                 jpvt_step * sizeof(IntType));
@@ -513,11 +518,11 @@ int64_t PivotingQrFactorization<dtype, IntType>::GetWorkspaceSize(
   IntType info = 0;
   IntType workspace_query = -1;
   if constexpr (ffi::IsComplexType<dtype>()) {
-    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
-       &optimal_size, &workspace_query, nullptr, &info);
+    CallLapackFn(fn, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr,
+                 nullptr, &optimal_size, &workspace_query, nullptr, &info);
   } else {
-    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
-       &optimal_size, &workspace_query, &info);
+    CallLapackFn(fn, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr,
+                 nullptr, &optimal_size, &workspace_query, &info);
   }
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
@@ -578,10 +583,9 @@ ffi::Error OrthogonalQr<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info;
-          OrthogonalQr<dtype, IntType>::fn(&x_rows_v, &x_cols_v, &tau_size_v,
-                                           local_x_out_data, &x_leading_dim_v,
-                                           local_tau_data, work_data.get(),
-                                           &work_size_v, &info);
+          CallLapackFn(OrthogonalQr<dtype, IntType>::fn, &x_rows_v, &x_cols_v,
+                       &tau_size_v, local_x_out_data, &x_leading_dim_v,
+                       local_tau_data, work_data.get(), &work_size_v, &info);
           local_x_out_data += x_out_step;
           local_tau_data += tau_step;
         }
@@ -606,8 +610,8 @@ int64_t OrthogonalQr<dtype, IntType>::GetWorkspaceSize(IntType x_rows,
   IntType x_leading_dim_v = x_rows;
   IntType info = 0;
   IntType workspace_query = -1;
-  fn(&x_rows, &x_cols, &tau_size, nullptr, &x_leading_dim_v, nullptr,
-     &optimal_size, &workspace_query, &info);
+  CallLapackFn(fn, &x_rows, &x_cols, &tau_size, nullptr, &x_leading_dim_v,
+               nullptr, &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
@@ -686,10 +690,10 @@ ffi::Error OrthogonalQrMultiply<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info;
-          fn(&side_v, &trans_v, &c_rows_v, &c_cols_v, &k_v,
-             const_cast<ValueType*>(local_a_data), &lda_v,
-             const_cast<ValueType*>(local_tau_data), local_c_out_data,
-             &c_leading_dim_v, work_data.get(), &work_size_v, &info);
+          CallLapackFn(fn, &side_v, &trans_v, &c_rows_v, &c_cols_v, &k_v,
+                       const_cast<ValueType*>(local_a_data), &lda_v,
+                       const_cast<ValueType*>(local_tau_data), local_c_out_data,
+                       &c_leading_dim_v, work_data.get(), &work_size_v, &info);
           local_c_out_data += c_out_step;
           local_a_data += a_step;
           local_tau_data += tau_step;
@@ -704,8 +708,8 @@ int64_t OrthogonalQrMultiply<dtype, IntType>::GetWorkspaceSize(
   IntType c_leading_dim = m;
   IntType info = 0;
   IntType workspace_query = -1;
-  fn(&side, &trans, &m, &n, &k, nullptr, &lda, nullptr, nullptr, &c_leading_dim,
-     &optimal_size, &workspace_query, &info);
+  CallLapackFn(fn, &side, &trans, &m, &n, &k, nullptr, &lda, nullptr, nullptr,
+               &c_leading_dim, &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
@@ -764,8 +768,8 @@ ffi::Error CholeskyFactorization<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          CholeskyFactorization<dtype, IntType>::fn(
-              &uplo_v, &n_v, local_x_out_data, &lda_v, &info_v);
+          CallLapackFn(CholeskyFactorization<dtype, IntType>::fn, &uplo_v, &n_v,
+                       local_x_out_data, &lda_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
 
@@ -896,18 +900,19 @@ static ffi::Error SvdKernel(
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
           if constexpr (ffi::IsComplexType<dtype>()) {
-            svd::SVDType<dtype, IntType>::fn(
-                &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
-                &x_leading_dim_v, local_singular_values_data, local_u_data,
-                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
-                work_data.get(), &workspace_dim_v, rwork.get(),
-                iwork_data.get(), &info_v);
+            CallLapackFn(svd::SVDType<dtype, IntType>::fn, &mode_v, &x_rows_v,
+                         &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                         local_singular_values_data, local_u_data,
+                         &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                         work_data.get(), &workspace_dim_v, rwork.get(),
+                         iwork_data.get(), &info_v);
           } else {
-            svd::SVDType<dtype, IntType>::fn(
-                &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
-                &x_leading_dim_v, local_singular_values_data, local_u_data,
-                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
-                work_data.get(), &workspace_dim_v, iwork_data.get(), &info_v);
+            CallLapackFn(svd::SVDType<dtype, IntType>::fn, &mode_v, &x_rows_v,
+                         &x_cols_v, local_x_out_data, &x_leading_dim_v,
+                         local_singular_values_data, local_u_data,
+                         &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
+                         work_data.get(), &workspace_dim_v, iwork_data.get(),
+                         &info_v);
           }
 
           // Suppress MSAN warnings when using a copy of LAPACK uninstrumented
@@ -966,15 +971,15 @@ static int64_t SvdGetWorkspaceSize(IntType x_rows, IntType x_cols,
                               ? x_cols
                               : std::min(x_rows, x_cols);
   if constexpr (ffi::IsComplexType<dtype>()) {
-    svd::SVDType<dtype, IntType>::fn(
-        &mode_v, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
-        &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
-        &workspace_query, nullptr, nullptr, &info);
+    CallLapackFn(svd::SVDType<dtype, IntType>::fn, &mode_v, &x_rows, &x_cols,
+                 nullptr, &x_leading_dim_v, nullptr, nullptr, &u_leading_dim_v,
+                 nullptr, &vt_leading_dim_v, &optimal_size, &workspace_query,
+                 nullptr, nullptr, &info);
   } else {
-    svd::SVDType<dtype, IntType>::fn(
-        &mode_v, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
-        &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
-        &workspace_query, nullptr, &info);
+    CallLapackFn(svd::SVDType<dtype, IntType>::fn, &mode_v, &x_rows, &x_cols,
+                 nullptr, &x_leading_dim_v, nullptr, nullptr, &u_leading_dim_v,
+                 nullptr, &vt_leading_dim_v, &optimal_size, &workspace_query,
+                 nullptr, &info);
   }
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
@@ -1049,17 +1054,19 @@ static ffi::Error SvdQRKernel(
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
           if constexpr (ffi::IsComplexType<dtype>()) {
-            svd::SVDQRType<dtype, IntType>::fn(
-                &mode_v, &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
-                &x_leading_dim_v, local_singular_values_data, local_u_data,
-                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
-                work_data.get(), &workspace_dim_v, rwork.get(), &info_v);
+            CallLapackFn(svd::SVDQRType<dtype, IntType>::fn, &mode_v, &mode_v,
+                         &x_rows_v, &x_cols_v, local_x_out_data,
+                         &x_leading_dim_v, local_singular_values_data,
+                         local_u_data, &u_leading_dim_v, local_vt_data,
+                         &vt_leading_dim_v, work_data.get(), &workspace_dim_v,
+                         rwork.get(), &info_v);
           } else {
-            svd::SVDQRType<dtype, IntType>::fn(
-                &mode_v, &mode_v, &x_rows_v, &x_cols_v, local_x_out_data,
-                &x_leading_dim_v, local_singular_values_data, local_u_data,
-                &u_leading_dim_v, local_vt_data, &vt_leading_dim_v,
-                work_data.get(), &workspace_dim_v, &info_v);
+            CallLapackFn(svd::SVDQRType<dtype, IntType>::fn, &mode_v, &mode_v,
+                         &x_rows_v, &x_cols_v, local_x_out_data,
+                         &x_leading_dim_v, local_singular_values_data,
+                         local_u_data, &u_leading_dim_v, local_vt_data,
+                         &vt_leading_dim_v, work_data.get(), &workspace_dim_v,
+                         &info_v);
           }
 
           using T [[maybe_unused]] =
@@ -1116,15 +1123,15 @@ static absl::StatusOr<IntType> SvdQRGetWorkspaceSize(
                               ? x_cols
                               : std::min(x_rows, x_cols);
   if constexpr (ffi::IsComplexType<dtype>()) {
-    svd::SVDQRType<dtype, IntType>::fn(
-        &mode_v, &mode_v, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr,
-        nullptr, &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
-        &workspace_query, nullptr, &info);
+    CallLapackFn(svd::SVDQRType<dtype, IntType>::fn, &mode_v, &mode_v, &x_rows,
+                 &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+                 &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
+                 &workspace_query, nullptr, &info);
   } else {
-    svd::SVDQRType<dtype, IntType>::fn(
-        &mode_v, &mode_v, &x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr,
-        nullptr, &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
-        &workspace_query, &info);
+    CallLapackFn(svd::SVDQRType<dtype, IntType>::fn, &mode_v, &mode_v, &x_rows,
+                 &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+                 &u_leading_dim_v, nullptr, &vt_leading_dim_v, &optimal_size,
+                 &workspace_query, &info);
   }
   return info == 0 ? MaybeCastNoOverflow<IntType>(std::real(optimal_size)) : -1;
 }
@@ -1323,10 +1330,11 @@ ffi::Error EigenvalueDecompositionSymmetric<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          EigenvalueDecompositionSymmetric<dtype, IntType>::fn(
-              &mode_v, &uplo_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-              local_eigenvalues_data, work_data.get(), &work_size_v,
-              iwork_data.get(), &iwork_size_v, &info_v);
+          CallLapackFn(EigenvalueDecompositionSymmetric<dtype, IntType>::fn,
+                       &mode_v, &uplo_v, &x_cols_v, local_x_out_data,
+                       &x_leading_dim_v, local_eigenvalues_data,
+                       work_data.get(), &work_size_v, iwork_data.get(),
+                       &iwork_size_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
@@ -1429,11 +1437,11 @@ ffi::Error EigenvalueDecompositionHermitian<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          EigenvalueDecompositionHermitian<dtype, IntType>::fn(
-              &mode_v, &uplo_v, &x_cols_v, local_x_out_data, &x_leading_dim_v,
-              local_eigenvalues_data, work_data.get(), &work_size_v,
-              rwork_data.get(), &rwork_size_v, iwork_data.get(), &iwork_size_v,
-              &info_v);
+          CallLapackFn(EigenvalueDecompositionHermitian<dtype, IntType>::fn,
+                       &mode_v, &uplo_v, &x_cols_v, local_x_out_data,
+                       &x_leading_dim_v, local_eigenvalues_data,
+                       work_data.get(), &work_size_v, rwork_data.get(),
+                       &rwork_size_v, iwork_data.get(), &iwork_size_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
@@ -1533,11 +1541,12 @@ ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
           std::copy_n(local_x_data, x_size, x_copy.get());
           if (is_finite(x_copy.get(), x_size)) {
             IntType info_v;
-            EigenvalueDecomposition<dtype, IntType>::fn(
-                &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(),
-                &x_cols_v, local_eigvals_real_data, local_eigvals_imag_data,
-                work_eigvecs_left.get(), &x_cols_v, work_eigvecs_right.get(),
-                &x_cols_v, work_data.get(), &work_size_v, &info_v);
+            CallLapackFn(EigenvalueDecomposition<dtype, IntType>::fn,
+                         &compute_left_v, &compute_right_v, &x_cols_v,
+                         x_copy.get(), &x_cols_v, local_eigvals_real_data,
+                         local_eigvals_imag_data, work_eigvecs_left.get(),
+                         &x_cols_v, work_eigvecs_right.get(), &x_cols_v,
+                         work_data.get(), &work_size_v, &info_v);
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
             *local_info_data = static_cast<int32_t>(info_v);
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
@@ -1648,11 +1657,12 @@ ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
           std::copy_n(local_x_data, x_size, x_copy.get());
           if (is_finite(x_copy.get(), x_size)) {
             IntType info_v;
-            EigenvalueDecompositionComplex<dtype, IntType>::fn(
-                &compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(),
-                &x_cols_v, local_eigvals_data, local_eigvecs_left_data,
-                &x_cols_v, local_eigvecs_right_data, &x_cols_v, work_data.get(),
-                &work_size_v, rwork_data.get(), &info_v);
+            CallLapackFn(EigenvalueDecompositionComplex<dtype, IntType>::fn,
+                         &compute_left_v, &compute_right_v, &x_cols_v,
+                         x_copy.get(), &x_cols_v, local_eigvals_data,
+                         local_eigvecs_left_data, &x_cols_v,
+                         local_eigvecs_right_data, &x_cols_v, work_data.get(),
+                         &work_size_v, rwork_data.get(), &info_v);
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
             *local_info_data = static_cast<int32_t>(info_v);
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
@@ -1701,9 +1711,9 @@ int64_t EigenvalueDecomposition<dtype, IntType>::GetWorkspaceSize(
 
   auto compute_left_v = static_cast<char>(compute_left);
   auto compute_right_v = static_cast<char>(compute_right);
-  fn(&compute_left_v, &compute_right_v, &x_cols, nullptr, &x_cols, nullptr,
-     nullptr, nullptr, &x_cols, nullptr, &x_cols, &optimal_size,
-     &workspace_query, &info);
+  CallLapackFn(fn, &compute_left_v, &compute_right_v, &x_cols, nullptr, &x_cols,
+               nullptr, nullptr, nullptr, &x_cols, nullptr, &x_cols,
+               &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 };
 
@@ -1718,9 +1728,9 @@ int64_t EigenvalueDecompositionComplex<dtype, IntType>::GetWorkspaceSize(
   RealType rwork[1];
   auto compute_left_v = static_cast<char>(compute_left);
   auto compute_right_v = static_cast<char>(compute_right);
-  fn(&compute_left_v, &compute_right_v, &x_cols, nullptr, &x_cols, nullptr,
-     nullptr, &x_cols, nullptr, &x_cols, &optimal_size, &workspace_query, rwork,
-     &info);
+  CallLapackFn(fn, &compute_left_v, &compute_right_v, &x_cols, nullptr, &x_cols,
+               nullptr, nullptr, &x_cols, nullptr, &x_cols, &optimal_size,
+               &workspace_query, rwork, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 };
 
@@ -1802,11 +1812,12 @@ ffi::Error SchurDecomposition<dtype, IntType>::Kernel(
         for (int64_t j = 0; j < count; ++j) {
           IntType selected_v;
           IntType info_v;
-          SchurDecomposition<dtype, IntType>::fn(
-              &mode_v, &sort_v, select, &x_cols_v, local_x_out_data, &x_cols_v,
-              &selected_v, local_eigvals_real_data, local_eigvals_imag_data,
-              local_schur_vectors_data, &x_cols_v, work_data.get(),
-              &work_size_v, bwork.get(), &info_v);
+          CallLapackFn(SchurDecomposition<dtype, IntType>::fn, &mode_v, &sort_v,
+                       select, &x_cols_v, local_x_out_data, &x_cols_v,
+                       &selected_v, local_eigvals_real_data,
+                       local_eigvals_imag_data, local_schur_vectors_data,
+                       &x_cols_v, work_data.get(), &work_size_v, bwork.get(),
+                       &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(IntType));
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(IntType));
           *local_selected_data = static_cast<int32_t>(selected_v);
@@ -1914,11 +1925,11 @@ ffi::Error SchurDecompositionComplex<dtype, IntType>::Kernel(
         for (int64_t j = 0; j < count; ++j) {
           IntType selected_v;
           IntType info_v;
-          SchurDecompositionComplex<dtype, IntType>::fn(
-              &mode_v, &sort_v, select, &x_cols_v, local_x_out_data, &x_cols_v,
-              &selected_v, local_eigvals_data, local_schur_vectors_data,
-              &x_cols_v, work_data.get(), &work_size_v, rwork_data.get(),
-              bwork.get(), &info_v);
+          CallLapackFn(SchurDecompositionComplex<dtype, IntType>::fn, &mode_v,
+                       &sort_v, select, &x_cols_v, local_x_out_data, &x_cols_v,
+                       &selected_v, local_eigvals_data,
+                       local_schur_vectors_data, &x_cols_v, work_data.get(),
+                       &work_size_v, rwork_data.get(), bwork.get(), &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&selected_v, sizeof(IntType));
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(IntType));
           *local_selected_data = static_cast<int32_t>(selected_v);
@@ -1963,9 +1974,9 @@ int64_t SchurDecomposition<dtype, IntType>::GetWorkspaceSize(
 
   auto mode_v = static_cast<char>(mode);
   auto sort_v = static_cast<char>(sort);
-  fn(&mode_v, &sort_v, nullptr, &x_cols, nullptr, &x_cols, nullptr, nullptr,
-     nullptr, nullptr, &x_cols, &optimal_size, &workspace_query, nullptr,
-     &info);
+  CallLapackFn(fn, &mode_v, &sort_v, nullptr, &x_cols, nullptr, &x_cols,
+               nullptr, nullptr, nullptr, nullptr, &x_cols, &optimal_size,
+               &workspace_query, nullptr, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 };
 
@@ -1978,9 +1989,9 @@ int64_t SchurDecompositionComplex<dtype, IntType>::GetWorkspaceSize(
 
   auto mode_v = static_cast<char>(mode);
   auto sort_v = static_cast<char>(sort);
-  fn(&mode_v, &sort_v, nullptr, &x_cols, nullptr, &x_cols, nullptr, nullptr,
-     nullptr, &x_cols, &optimal_size, &workspace_query, nullptr, nullptr,
-     &info);
+  CallLapackFn(fn, &mode_v, &sort_v, nullptr, &x_cols, nullptr, &x_cols,
+               nullptr, nullptr, nullptr, &x_cols, &optimal_size,
+               &workspace_query, nullptr, nullptr, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 };
 
@@ -2037,9 +2048,9 @@ ffi::Error HessenbergDecomposition<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          HessenbergDecomposition<dtype, IntType>::fn(
-              &x_cols_v, &low_v, &high_v, local_x_out_data, &x_leading_dim_v,
-              local_tau_data, work_data.get(), &work_size_v, &info_v);
+          CallLapackFn(HessenbergDecomposition<dtype, IntType>::fn, &x_cols_v,
+                       &low_v, &high_v, local_x_out_data, &x_leading_dim_v,
+                       local_tau_data, work_data.get(), &work_size_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
           local_x_out_data += x_size;
@@ -2068,8 +2079,8 @@ int64_t HessenbergDecomposition<dtype, IntType>::GetWorkspaceSize(
   ValueType optimal_size = {};
   IntType workspace_query = -1;
   IntType info = 0;
-  fn(&x_cols, &low, &high, nullptr, &x_rows, nullptr, &optimal_size,
-     &workspace_query, &info);
+  CallLapackFn(fn, &x_cols, &low, &high, nullptr, &x_rows, nullptr,
+               &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
@@ -2134,10 +2145,10 @@ ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          TridiagonalReduction<dtype, IntType>::fn(
-              &uplo_v, &x_order_v, local_x_out_data, &x_leading_dim_v,
-              local_diagonal_data, local_off_diagonal_data, local_tau_data,
-              work_data.get(), &work_size_v, &info_v);
+          CallLapackFn(TridiagonalReduction<dtype, IntType>::fn, &uplo_v,
+                       &x_order_v, local_x_out_data, &x_leading_dim_v,
+                       local_diagonal_data, local_off_diagonal_data,
+                       local_tau_data, work_data.get(), &work_size_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
           local_x_out_data += x_size;
@@ -2171,8 +2182,8 @@ int64_t TridiagonalReduction<dtype, IntType>::GetWorkspaceSize(IntType x_rows,
   IntType workspace_query = -1;
   IntType info = 0;
   char uplo_v = 'L';
-  fn(&uplo_v, &x_cols, nullptr, &x_rows, nullptr, nullptr, nullptr,
-     &optimal_size, &workspace_query, &info);
+  CallLapackFn(fn, &uplo_v, &x_cols, nullptr, &x_rows, nullptr, nullptr,
+               nullptr, &optimal_size, &workspace_query, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
@@ -2232,9 +2243,9 @@ ffi::Error TridiagonalSolver<dtype, IntType>::Kernel(
 
         for (int64_t j = 0; j < count; ++j) {
           IntType info_v;
-          TridiagonalSolver<dtype, IntType>::fn(
-              &b_rows_v, &b_cols_v, local_dl_out_data + 1, local_d_out_data,
-              local_du_out_data, local_b_out_data, &b_rows_v, &info_v);
+          CallLapackFn(TridiagonalSolver<dtype, IntType>::fn, &b_rows_v,
+                       &b_cols_v, local_dl_out_data + 1, local_d_out_data,
+                       local_du_out_data, local_b_out_data, &b_rows_v, &info_v);
           ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&info_v, sizeof(info_v));
           *local_info_data = static_cast<int32_t>(info_v);
           local_b_out_data += b_out_step;

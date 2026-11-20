@@ -201,6 +201,7 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/mosaic:pass_boilerplate",
         "@xla//xla/service/gpu/llvm_gpu_backend:load_ir_module",
+        "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor/cuda:compilation_options",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",

@@ -588,7 +588,7 @@ class NDIndexer:
       # We must be careful with dtypes because dynamic_slice requires all
       # start indices to have matching types.
       dt = lax_utils.int_dtype_for_shape(self.shape, signed=True)
-      start_indices = [lax.convert_element_type(i, dt) for i in start_indices]
+      start_indices = [lax._clamp_and_cast_index(i, dt) for i in start_indices]
 
     return _DynamicSliceIndexer(
       start_indices=start_indices,
@@ -827,9 +827,8 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@api.jit(
-    static_argnames=("axis", "mode", "fill_value", "wrap_negative_indices")
-)
+@api.jit(static_argnames=(
+    "axis", "mode", "fill_value", "wrap_negative_indices", "out_sharding"))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
@@ -838,6 +837,7 @@ def take_along_axis(
     fill_value: StaticScalar | None = None,
     *,
     wrap_negative_indices: bool = True,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -861,6 +861,8 @@ def take_along_axis(
       ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
       Numpy.
+    out_sharding: Optional :class:`~jax.sharding.NamedSharding` or
+      :class:`~jax.sharding.PartitionSpec` specifying the output sharding.
 
   Returns:
     Array of values extracted from ``arr``.
@@ -918,6 +920,7 @@ def take_along_axis(
            [2]], dtype=int32)
   """
   a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
+  sharding = canonicalize_sharding(out_sharding, "take_along_axis")
   index_dtype = indices.dtype
   idx_shape = np.shape(indices)
   if not dtypes.issubdtype(index_dtype, np.integer):
@@ -944,7 +947,7 @@ def take_along_axis(
   arr_shape = replace(a.shape, 1)
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
-    return lax.full(out_shape, 0, a.dtype)
+    return lax.full(out_shape, 0, a.dtype, sharding=sharding)
 
   index_dtype = lax_utils.index_dtype_for_axis_size(
       dtypes.dtype(indices), axis_size, wrap_negative_indices
@@ -959,7 +962,9 @@ def take_along_axis(
 
     hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:
-      return einsum.einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
+      return einsum.einsum(
+          "...b,b->...", hot, a, preferred_element_type=a.dtype,
+          out_sharding=sharding)
     if axis_int > len(string.ascii_letters) - 2:
       raise ValueError(
           "One Hot indexing is only supported for up to 50 leading dimensions."
@@ -972,6 +977,7 @@ def take_along_axis(
         a,
         precision=lax.Precision.HIGHEST,
         preferred_element_type=a.dtype,
+        out_sharding=sharding,
     )
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
@@ -1029,8 +1035,10 @@ def take_along_axis(
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return slicing.gather(a, gather_indices, dnums, tuple(slice_sizes),
-                        mode="fill" if mode is None else mode, fill_value=fill_value)
+  return slicing.gather(
+      a, gather_indices, dnums, tuple(slice_sizes),
+      mode="fill" if mode is None else mode, fill_value=fill_value,
+      out_sharding=sharding)
 
 
 def _make_along_axis_idx(shape, indices, axis):
@@ -1478,7 +1486,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
 
       start_dim = len(gather_indices_shape)
       gather_indices.extend(
-          (lax.convert_element_type(a, index_dtype), start_dim)
+          (lax._clamp_and_cast_index(a, index_dtype), start_dim)
           for a in advanced_index_arrs
       )
       gather_indices_shape += shape
@@ -1502,7 +1510,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(indexer.shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i_converted = lax.convert_element_type(index.index, index_dtype)  # pyrefly: ignore[bad-argument-type]
+      i_converted = lax._clamp_and_cast_index(index.index, index_dtype)  # pyrefly: ignore[bad-argument-type]
       gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
@@ -1530,7 +1538,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(step, 1):
         # Optimization: avoid generating trivial gather.
         if not core.definitely_equal(slice_size, indexer.shape[x_axis]):
-          gather_indices.append((lax.convert_element_type(start, index_dtype),
+          gather_indices.append((lax._clamp_and_cast_index(start, index_dtype),
                                 len(gather_indices_shape)))
           start_index_map.append(x_axis)
         gather_slice_shape.append(slice_size)

@@ -21,6 +21,7 @@ import random
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import jit
 from jax import lax
@@ -1366,7 +1367,8 @@ class BCOOTest(sptu.SparseTestCase):
       ],
       [
           dict(dense_shapes=shapes, dense_perm=perm)
-          for shapes in [[(), ()]]  # TODO(jakevdp) add support for dense shapes
+          # Dense layouts are covered by test_bcoo_reshape_dense_dimensions.
+          for shapes in [[(), ()]]
           for perm in itertools.permutations(range(len(shapes[0])))
       ],
       dtype=jtu.dtypes.numeric,
@@ -1403,6 +1405,29 @@ class BCOOTest(sptu.SparseTestCase):
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
+  @parameterized.named_parameters(
+      ("unit_dimensions", (2, 2), (1, 2, 1, 2), 0, 1, None),
+      ("batch_and_dense", (2, 6, 4), (2, 2, 3, 4), 1, 1, None),
+      ("split_dense", (2, 3, 4), (2, 3, 2, 2), 1, 1, None),
+      ("merge_dense", (2, 3, 2, 2), (2, 3, 4), 1, 2, None),
+      ("permute_dense", (2, 3, 2, 4), (2, 3, 4, 2), 1, 2,
+       (0, 1, 3, 2)),
+  )
+  def test_bcoo_reshape_dense_dimensions(
+      self, shape, new_sizes, n_batch, n_dense, dimensions):
+    # Regression test for https://github.com/jax-ml/jax/issues/24795.
+    rng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [rng(shape, np.float32)]
+    dense_func = partial(lax.reshape, new_sizes=new_sizes, dimensions=dimensions)
+    if dimensions is None:
+      sparse_func = lambda x: x.reshape(new_sizes)
+    else:
+      sparse_func = partial(
+          sparse.bcoo_reshape, new_sizes=new_sizes, dimensions=dimensions)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CheckGradsSparse(dense_func, sparse_func, args_maker)
+
   def test_bcoo_reshape_error(self):
     x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)
     with self.assertRaisesRegex(ValueError, ".*cannot mix batch and sparse dimensions.*"):
@@ -1410,6 +1435,9 @@ class BCOOTest(sptu.SparseTestCase):
     y = sparse.BCOO((x.data[:1], x.indices), shape=x.shape)
     with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadcasted batch dimensions."):
       y.reshape(2, 3, 2)
+    z = sparse.BCOO.fromdense(jnp.ones((2, 3, 4)), n_batch=1, n_dense=1)
+    with self.assertRaisesRegex(ValueError, ".*cannot mix sparse and dense dimensions.*"):
+      z.reshape(2, 2, 6)
 
   @jtu.sample_product(
       [

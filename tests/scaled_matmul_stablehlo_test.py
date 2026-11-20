@@ -24,7 +24,6 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
-from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import check_cudnn_version
 from jax._src.cudnn.scaled_matmul_stablehlo import (
@@ -486,9 +485,6 @@ def shard_and_device_put(
   return a, b, in_shardings
 
 def create_nvfp4_configs(tensors, enable_grad_clip=False):
-  if _dtypes.float4_e2m1fn is None:
-    return None
-
   DATA_TYPE = jnp.float4_e2m1fn
   SCALE_TYPE = jnp.float8_e4m3fn
 
@@ -556,9 +552,6 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type, enable_grad_clip=F
   )
 
 def create_mxfp8_configs():
-  if _dtypes.float8_e8m0fnu is None:
-    return None
-
   mxfp8_config = BlockScaleConfig(
         mode='mxfp8',
         block_size=32,
@@ -571,9 +564,6 @@ def create_mxfp8_configs():
   return [mxfp8_config for _ in range(3)]
 
 def create_mxfp4_configs():
-  if _dtypes.float8_e8m0fnu is None or _dtypes.float4_e2m1fn is None:
-    return None
-
   mxfp4_config = BlockScaleConfig(
         mode='mxfp4',
         block_size=32,

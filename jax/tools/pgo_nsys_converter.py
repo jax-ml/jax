@@ -53,7 +53,7 @@ if __name__ == '__main__':
   proc = subprocess.Popen(stats_command, stdout=sys.stdout, stderr=sys.stderr)
   proc.wait()
 
-  thunk_re = re.compile("hlo_op=(.*)#")
+  thunk_re = re.compile(r"hlo_op=([^,#]+)")
   cost_dictionary: dict[str, list] = {}
   with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
     with open(f"{pgle_folder}{pgle_filename}.pbtxt_{report_name}.csv", newline='') as csvfile:

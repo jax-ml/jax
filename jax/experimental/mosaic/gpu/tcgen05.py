@@ -36,6 +36,11 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TMEM_MAX_COLS = 512
+# On sm_107f, TMEM has 576 columns per CTA. However, the columns past
+# `TMEM_MAX_COLS` can only be used through an exclusive allocation
+# (`tcgen05.alloc.exclusive`), which must be the only TMEM allocation that
+# exists at any point in time.
+TMEM_EXCLUSIVE_MAX_COLS = 576
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
 LAYOUT = fa.TCGEN05_LAYOUT
 TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
@@ -120,6 +125,11 @@ def _mxf4_sparsity_version() -> int:
   return int(arch == utils.RUBIN)
 
 
+def _supports_k96_mma() -> bool:
+  """Whether dense 4-bit block-scaled MMA can issue K=96 steps."""
+  return utils.get_arch() in (utils.Arch(10, 3), utils.RUBIN)
+
+
 def sparse_group_elems(element_type: ir.Type) -> int:
   """The number of A elements described by one pair of metadata entries."""
   assert utils.bitwidth(element_type) != 32, "tf32 support not implemented"
@@ -140,6 +150,7 @@ def _create_scaled_instr_descriptor(
     scale_type: ir.Type,
     sparse: bool = False,
     a_scale_128_lane: bool = False,
+    is_k96: bool = False,
 ) -> ir.Value:
   arch = utils.get_arch()
   is_sm107f = arch.major == 10 and arch.minor >= 7
@@ -204,7 +215,13 @@ def _create_scaled_instr_descriptor(
   # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
   # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
   # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
-  # for .kind::mxf8f6f4.
+  # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
+  # .kind::mxf4nvf4 on sm_103a and sm_107a.
+  if is_k96 and (not is_fp4 or sparse or not _supports_k96_mma()):
+    raise ValueError(
+        "K=96 is only supported for dense 4-bit MMA on sm_103a or sm_107a"
+    )
+  desc |= is_k96 << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -619,6 +636,24 @@ def mma(
   else:
     a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
+  # On SM103 and SM107, dense 4-bit block-scaled MMA can issue K=96 (48B) steps
+  # in addition to K=64 (32B) steps.
+  # TODO(allanrenucci): Support sparse K=192 steps.
+  use_k96 = (
+      a_scale is not None and b_scale is not None
+      and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
+      and not is_sparse
+      and _supports_k96_mma()
+      # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
+      and not isinstance(a, TMEMRef)
+      # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
+      and a_swizzle == b_swizzle == 128
+      and b_scale.layout == scales_layout()
+      # Because of how `scales_layout()` lays out scales in TMEM, K=96 only
+      # works if B scales are padded along N to exactly 128 rows (for an
+      # instruction N of at most 128) or 256 rows (otherwise).
+      and b_scale.shape[0] == (256 if n_collective_group_elems > 128 else 128)
+  )
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -654,6 +689,7 @@ def mma(
         scale_element_type=scale_element_type,
         scale_block=scale_block,
         a_scale_128_lane=a_scale_128_lane,
+        use_k96=use_k96,
     )
 
 
@@ -678,13 +714,14 @@ def _do_mma(
     accumulate: ir.Value,
     collective: bool,
     a_scale_128_lane: bool = False,
+    use_k96: bool = False,
 ) -> None:
   """Issues the MMA instructions covering the full K extent of the operands.
 
   Every instruction has shape `instr_m x instr_n x instr_k`, where `instr_k` is
-  derived from the element type, and the instructions step through all `k`
-  elements of the K dimension. `n_start` is the N offset of this instruction
-  group in B.
+  derived from the element type (with `use_k96`, K=96 steps followed by up to
+  two trailing K=64 steps), and the instructions step through all `k` elements
+  of the K dimension. `n_start` is the N offset of this instruction group in B.
 
   `accumulate` only applies to the first instruction. All subsequent
   instructions always accumulate into D.
@@ -697,6 +734,7 @@ def _do_mma(
   num_cta = 2 if collective else 1
   if isinstance(a_desc_or_addr, ir.Value):
     assert a_desc_or_addr.type == i32
+    assert not use_k96
     a_in_tmem = True
     a_transpose = False
     a_addr_base = a_desc_or_addr
@@ -708,7 +746,7 @@ def _do_mma(
   b_addr_base = b_desc.addr_base
   elem_bitwidth = utils.bitwidth(a_element_type)
   # TODO: support larger K values on newer hardware
-  instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
+  base_instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
   if is_scaled:
@@ -724,7 +762,12 @@ def _do_mma(
           scale_element_type,
           (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
-      scale_vec = "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+      if use_k96:
+        scale_vec = f"block{base_scale_block}"
+      else:
+        scale_vec = (
+            "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+        )
       kind = f"mxf4nvf4.block_scale.{scale_vec}"
     else:
       raise NotImplementedError(
@@ -755,8 +798,19 @@ def _do_mma(
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
 
-  assert k % instr_k == 0
-  for k_elem_offset in range(0, k, instr_k):
+  assert k % base_instr_k == 0
+  k_chunks = k // base_instr_k
+  if use_k96:
+    # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
+    # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
+    assert base_instr_k == 64
+    q, b = divmod(k_chunks, 3)
+    instr_ks = [96] * (2 * q) + [base_instr_k] * b
+  else:
+    instr_ks = [base_instr_k] * k_chunks
+
+  k_elem_offset = 0
+  for instr_k in instr_ks:
     if is_sparse:
       assert a_sparse_addr is not None
       # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM
@@ -791,6 +845,7 @@ def _do_mma(
           scale_element_type,
           sparse=is_sparse,
           a_scale_128_lane=a_scale_128_lane,
+          is_k96=(instr_k == 96),
       )
       assert (instr_m == 64 and collective) or instr_m == 128
       assert instr_n % (8 * num_cta) == 0
@@ -820,13 +875,19 @@ def _do_mma(
       )
     assert k_elem_offset % (1 + is_sparse) == 0
     a_k_offset = k_elem_offset // (1 + is_sparse)
+    a_instr_k = instr_k // (1 + is_sparse)
     if a_in_tmem:
       assert a_k_offset % packing == 0
-      a_offset = a_k_offset // packing
+      a_base_scale, a_offset = 1, a_k_offset // packing
     else:
       assert isinstance(a_desc_or_addr, mma_utils.SmemDescriptor)
-      a_offset = a_desc_or_addr.encoded_offset(0, a_k_offset)
-    b_offset = b_desc.encoded_offset(n_start, k_elem_offset)
+      a_base_scale, a_offset = a_desc_or_addr.encoded_offset(
+          0, a_k_offset, a_instr_k
+      )
+    b_base_scale, b_offset = b_desc.encoded_offset(
+        n_start, k_elem_offset, instr_k
+    )
+    k_elem_offset += instr_k
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     utils.inline_ptx(
@@ -834,8 +895,8 @@ def _do_mma(
             .reg .b32 a_desc_low, b_desc_low;
             .reg {".b32" if a_in_tmem else ".b64"} a_desc;
             .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
-            add.s32 b_desc_low, $2, {b_offset_low};
+            mad.lo.u32 a_desc_low, $1, {a_base_scale}, {a_offset_low};
+            mad.lo.u32 b_desc_low, $2, {b_base_scale}, {b_offset_low};
             mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
@@ -913,26 +974,55 @@ def commit_arrive(
       )
 
 
+def supports_tmem_alloc_expanded_columns() -> bool:
+  arch = utils.get_arch()
+  return arch.major == utils.RUBIN.major and arch.minor >= utils.RUBIN.minor
+
+
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
   """Returns the exact number of columns to allocate in TMEM.
 
-  The number of columns is rounded up to the nearest power of 2.
+  If `exact` is false, `ncols` is rounded up to the nearest power of 2 that is
+  at least 32. On sm_107f, `ncols` within (512, 576] is instead rounded up to
+  `TMEM_EXCLUSIVE_MAX_COLS`, which requires an exclusive allocation. Since no
+  other TMEM allocation can coexist with an exclusive one, there is no point in
+  allocating fewer than all the TMEM columns in that case.
+
+  If `exact` is true, `ncols` is returned as is, provided that it is valid.
 
   Args:
     ncols: The number of columns to allocate.
     exact: If true, throws an error if the number of columns is not a power of 2
-      and within [32, 512].
+      within [32, 512] or, additionally on sm_107f, a multiple of 32 within
+      (512, 576].
   """
-  if exact:
-    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
-      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+  if supports_tmem_alloc_expanded_columns():
+    max_cols = TMEM_EXCLUSIVE_MAX_COLS
   else:
-    ncols = max(32, 1 << (ncols - 1).bit_length())
-    if ncols > 512:
-      raise ValueError(
-          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
-      )
-  return ncols
+    max_cols = TMEM_MAX_COLS
+  alloc_alignment = 32
+  if exact:
+    if ncols.bit_count() == 1 and 32 <= ncols <= TMEM_MAX_COLS:
+      return ncols
+    if TMEM_MAX_COLS < ncols <= max_cols and ncols % alloc_alignment == 0:
+      return ncols  # Exclusive allocation.
+    exclusive_range = (
+        f" or a multiple of {alloc_alignment} within ({TMEM_MAX_COLS}, {max_cols}]"
+        if max_cols > TMEM_MAX_COLS
+        else ""
+    )
+    raise ValueError(
+        f"ncols must be a power of 2 and within [32, {TMEM_MAX_COLS}]"
+        f"{exclusive_range}, got: {ncols}"
+    )
+  if ncols <= TMEM_MAX_COLS:
+    return max(alloc_alignment, 1 << (ncols - 1).bit_length())
+  if ncols <= max_cols:
+    return TMEM_EXCLUSIVE_MAX_COLS  # Exclusive allocation.
+  raise ValueError(
+      f"After rounding up, got {1 << (ncols - 1).bit_length()} columns,"
+      f" exceeding the limit of {max_cols}"
+  )
 
 
 def tmem_alloc(
@@ -951,9 +1041,21 @@ def tmem_alloc(
   elif tmem_addr.type != llvm.PointerType.get(address_space=3):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  # Exclusive allocations must be the only TMEM allocation of the CTA, and
+  # must be deallocated with `.exclusive` as well.
+  is_exclusive = ncols > TMEM_MAX_COLS
+  if is_exclusive and not supports_tmem_alloc_expanded_columns():
+    raise ValueError(
+        f"Trying to allocate {ncols} TMEM columns. Allocating > {TMEM_MAX_COLS}"
+        " requires exclusive allocation and sm_107f architecture."
+    )
+  exclusive = ".exclusive" if is_exclusive else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
+  ptx = (
+      f"tcgen05.alloc{exclusive}.cta_group::{cta_group}.sync.aligned"
+      ".shared::cta.b32 [$0], $1;"
+  )
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
@@ -962,9 +1064,10 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  exclusive = ".exclusive" if ncols > TMEM_MAX_COLS else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
+  ptx = f"tcgen05.dealloc{exclusive}.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 
@@ -1216,8 +1319,7 @@ def scales_128_lane_layout() -> TMEMLayout:
   ``scales_layout()``, nothing is replicated across the four 32-lane TMEM
   sub-partitions, so it uses 4x fewer columns.
 
-  ``async_copy_scales_smem_to_tmem`` rejects this layout. Instead, copy the
-  scales from SMEM with ``async_copy_smem_to_tmem(..., swizzle=16)``, laid out
+  Copy the scales from SMEM with ``async_copy_scales_smem_to_tmem``, laid out
   in unswizzled ``(8, 16)`` tiles like any other 8-bit operand, which requires
   ``K // block_size`` to be a multiple of 16. Alternatively, fill it from
   registers with ``TMEMRef.store`` (``tcgen05.st``) of an array in
@@ -1904,7 +2006,7 @@ def async_copy_scales_smem_to_tmem(
   on the chosen ``Barrier``. However, if TMEM reference is to be consumed by a
   MMA issued in the same thread, no additional synchronization is needed.
 
-  Two TMEM layouts are supported:
+  Three TMEM layouts are supported:
 
   **scales_layout()**: The standard layout for A and B scales. The ``smem_ref``
   must be contiguous with shape ``(MN // 128, K // 4, 32, 16)`` for 8-bit
@@ -1937,6 +2039,15 @@ def async_copy_scales_smem_to_tmem(
           .reshape(1, k // 4, 64, columns_per_cta * 4),
           ((0, 0), (0, 0), (0, 0), (0, 16 - columns_per_cta * 4)),
       )
+
+  **scales_128_lane_layout()**: Used for A scales in the 128-lane configuration
+  (sm_107f only). This is the standard fully packed TMEM layout, so the scales
+  are copied like any other 8-bit operand: the TMEM ref is expected to have
+  shape ``(128, K // block_size)`` and the ``smem_ref`` must have shape
+  ``(16, (K // block_size) // 16, 8, 16)``, i.e. the array of scales in
+  unswizzled ``(8, 16)`` tiles, which requires ``K // block_size`` to be a
+  multiple of 16. No host-side formatting is needed if the scales are loaded
+  into SMEM with ``gmem_transform=TileTransform((8, 16))``.
   """
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
@@ -1951,6 +2062,11 @@ def async_copy_scales_smem_to_tmem(
         f"Unsupported dtype: {dtype}, only f8e8m0fnu, f8e4m3fn, and f8e5m3fnu"
         " are supported"
     )
+  if tmem_ref.layout == scales_128_lane_layout():
+    # The 128-lane layout is the standard fully packed TMEM layout, so this is
+    # a regular unswizzled operand copy.
+    async_copy_smem_to_tmem(smem_ref, tmem_ref, swizzle=16, collective=collective)
+    return
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:
@@ -1987,7 +2103,8 @@ def async_copy_scales_smem_to_tmem(
   if tmem_ref.layout != scales_layout():
     raise ValueError(
         f"TMEM layout {tmem_ref.layout} is not supported for scale copies. Only"
-        " scales_layout() and b_scales_m64_collective_layout() are supported."
+        " scales_layout(), b_scales_m64_collective_layout() and"
+        " scales_128_lane_layout() are supported."
     )
 
   expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, tmem_ref.shape[1] // 4, 32, 16)

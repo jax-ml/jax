@@ -29,23 +29,37 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(4)
 
 mock = absltest.mock
 
 
-class GpuPluginOptionsTest(absltest.TestCase):
+@jtu.thread_unsafe_test_class()  # Modifies ``os.environ``.
+class GpuPluginOptionsTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
     if jaxlib_extension_version < 516:
       self.skipTest("Requires jaxlib_extension_version >= 516")
+    self.enterContext(
+        jtu.set_env(
+            XLA_PYTHON_CLIENT_ALLOCATOR=None,
+            XLA_CLIENT_MEM_FRACTION=None,
+            XLA_PYTHON_CLIENT_MEM_FRACTION=None,
+            XLA_PYTHON_CLIENT_PREALLOCATE=None,
+            XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB=None,
+            XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE=None,
+            XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT=None,
+            XLA_FLAGS=None,
+        )
+    )
 
   def test_default_memory_fraction_policy(self):
     for env in (
         {},
         {"XLA_CLIENT_MEM_FRACTION": "", "XLA_PYTHON_CLIENT_MEM_FRACTION": ""},
     ):
-      with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True):
+      with self.subTest(env=env), jtu.set_env(**env):
         options = xc.generate_pjrt_gpu_plugin_options()
         self.assertEqual(options["memory_fraction_policy"], "0.75+")
         self.assertNotIn("memory_fraction", options)
@@ -54,7 +68,7 @@ class GpuPluginOptionsTest(absltest.TestCase):
     for name in ("XLA_CLIENT_MEM_FRACTION", "XLA_PYTHON_CLIENT_MEM_FRACTION"):
       for fraction in ("0.5", "0.75", "0.9"):
         with self.subTest(name=name, fraction=fraction):
-          with mock.patch.dict(os.environ, {name: fraction}, clear=True):
+          with jtu.set_env(**{name: fraction}):
             options = xc.generate_pjrt_gpu_plugin_options()
           self.assertEqual(options["memory_fraction"], float(fraction))
           self.assertNotIn("memory_fraction_policy", options)
@@ -64,7 +78,7 @@ class GpuPluginOptionsTest(absltest.TestCase):
         "XLA_CLIENT_MEM_FRACTION": "",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.5",
     }
-    with mock.patch.dict(os.environ, env, clear=True):
+    with jtu.set_env(**env):
       options = xc.generate_pjrt_gpu_plugin_options()
     self.assertEqual(options["memory_fraction"], 0.5)
     self.assertNotIn("memory_fraction_policy", options)
@@ -74,7 +88,7 @@ class GpuPluginOptionsTest(absltest.TestCase):
         "XLA_CLIENT_MEM_FRACTION": "0.75",
         "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
     }
-    with mock.patch.dict(os.environ, env, clear=True):
+    with jtu.set_env(**env):
       with self.assertRaisesRegex(ValueError, "specified together"):
         xc.generate_pjrt_gpu_plugin_options()
 
@@ -83,8 +97,7 @@ class GpuPluginOptionsTest(absltest.TestCase):
         ("false", False), ("False", False), ("0", False), ("true", True)
     ):
       with self.subTest(value=value):
-        with mock.patch.dict(
-            os.environ, {"XLA_PYTHON_CLIENT_PREALLOCATE": value}, clear=True):
+        with jtu.set_env(XLA_PYTHON_CLIENT_PREALLOCATE=value):
           options = xc.generate_pjrt_gpu_plugin_options()
         self.assertEqual(options["memory_fraction_policy"], "0.75+")
         self.assertEqual(options["preallocate"], expected)
@@ -94,15 +107,14 @@ class GpuPluginOptionsTest(absltest.TestCase):
         "default", "bfc", "platform", "cuda_async", "vmm", "address"
     ):
       with self.subTest(allocator=allocator):
-        with mock.patch.dict(
-            os.environ, {"XLA_PYTHON_CLIENT_ALLOCATOR": allocator}, clear=True):
+        with jtu.set_env(XLA_PYTHON_CLIENT_ALLOCATOR=allocator):
           options = xc.generate_pjrt_gpu_plugin_options()
         self.assertEqual(options["allocator"], allocator)
         self.assertEqual(options["memory_fraction_policy"], "0.75+")
 
   def test_explicit_xla_flags_are_preserved(self):
     flags = "--xla_gpu_memory_fraction_policy=0.5"
-    with mock.patch.dict(os.environ, {"XLA_FLAGS": flags}, clear=True):
+    with jtu.set_env(XLA_FLAGS=flags):
       options = xc.generate_pjrt_gpu_plugin_options()
       self.assertEqual(os.environ["XLA_FLAGS"], flags)
     # XLA resolves its explicit flag ahead of the client policy.
@@ -122,6 +134,43 @@ class XlaBridgeTest(jtu.JaxTestCase):
         num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
     self.assertEqual(compile_options.device_assignment.replica_count(), 2)
     self.assertEqual(compile_options.device_assignment.computation_count(), 2)
+
+  def test_set_device_assignment_device_list(self):
+    devices = xb.devices()
+    da = xc.DeviceList(tuple(devices))
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=len(da), device_assignment=da)
+    self.assertEqual(compile_options.device_assignment.replica_count(), 1)
+    self.assertEqual(
+        compile_options.device_assignment.computation_count(), len(da))
+    if len(devices) >= 4:
+      expected = compiler.get_compile_options(
+          num_replicas=2,
+          num_partitions=2,
+          device_assignment=[
+              [d.id for d in devices[:2]],
+              [d.id for d in devices[2:4]],
+          ],
+      )
+      actual = compiler.get_compile_options(
+          num_replicas=2,
+          num_partitions=2,
+          device_assignment=xc.DeviceList(tuple(devices[:4])),
+      )
+      self.assertEqual(
+          actual.device_assignment.serialize(),
+          expected.device_assignment.serialize(),
+      )
+    if jaxlib_extension_version >= 526:
+      with self.assertRaisesRegex(_jax.JaxRuntimeError, "must be positive"):
+        xc.DeviceAssignment.create(da, 0, len(da))
+      with self.assertRaisesRegex(_jax.JaxRuntimeError, "does not match"):
+        xc.DeviceAssignment.create(da, 1, len(da) + 1)
+    with self.assertRaisesRegex(
+        ValueError, "device_assignment length.*does not match"
+    ):
+      compiler.get_compile_options(
+          num_replicas=1, num_partitions=len(da) + 1, device_assignment=da)
 
   def test_set_fdo_profile(self):
     compile_options = compiler.get_compile_options(

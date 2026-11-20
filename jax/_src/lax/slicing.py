@@ -2301,7 +2301,7 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   index_dtype = lax_utils.int_dtype_for_shape(operand.shape, signed=True)
   intarray = partial(np.array, dtype=index_dtype)
   operand_dims = lax.shape_as_value(operand.shape).astype(index_dtype)
-  indices = lax.convert_element_type(indices, index_dtype)
+  indices = lax._clamp_and_cast_index(indices, index_dtype)
   num_batch_dims = len(indices.shape) - 1
 
   upper_bound = operand_dims[
@@ -2589,7 +2589,8 @@ def _gather_lower(ctx, operand, indices, *,
 
 def _gather_collective_rule(
     in_avals, out_avals, *, dimension_numbers, slice_sizes, out_sharding,
-    **params):
+    mode, fill_value, **params):
+  from jax._src.lax import parallel
   del params
   op_aval, idx_aval = in_avals
   out_aval, = out_avals
@@ -2597,9 +2598,21 @@ def _gather_collective_rule(
   idx_parts = idx_aval.sharding.spec.partitions
   dnums = dimension_numbers
 
-  # Sharded index vectors or collapsed dims need an all-gather across shards.
-  if (idx_parts[-1] is not None or
-      any(op_parts[i] is not None for i in dnums.collapsed_slice_dims)):
+  if idx_parts[-1] is not None:
+    raise NotImplementedError
+
+  sharded_collapsed = [
+      i for i in dnums.collapsed_slice_dims if op_parts[i] is not None]
+  reduced_axes = core.order_wrt_mesh(
+      mesh_lib.get_abstract_mesh(),
+      flatten_spec_no_none(op_parts[i] for i in sharded_collapsed))
+  zero_fill = False if out_aval.dtype == np.bool_ else 0
+  if sharded_collapsed and (
+      not set(sharded_collapsed).issubset(dnums.start_index_map) or
+      set(reduced_axes) & set(flatten_spec_no_none(idx_parts)) or
+      dtypes.issubdtype(out_aval.dtype, dtypes.extended) or
+      mode == GatherScatterMode.CLIP or
+      (mode == GatherScatterMode.FILL_OR_DROP and fill_value != zero_fill)):
     raise NotImplementedError
 
   # Propagation allows replicated-vs-sharded batch dims, which need a slice.
@@ -2628,8 +2641,34 @@ def _gather_collective_rule(
         out_batch_parts != idx_parts[:-1]):
       raise NotImplementedError
 
-  return mlir.PartitioningRule(per_shard_params={
-      'slice_sizes': tuple(shard_slice_sizes), 'out_sharding': None})
+  if not sharded_collapsed:
+    return mlir.PartitioningRule(per_shard_params={
+        'slice_sizes': tuple(shard_slice_sizes), 'out_sharding': None})
+
+  op_shard_shape = op_aval.sharding.shard_shape(op_aval.shape)
+  index_dtype = lax_utils.int_dtype_for_shape(op_aval.shape, signed=True)
+  reduce_fn = parallel.pmax if out_aval.dtype == np.bool_ else parallel.psum
+
+  def in_collective(op, idx):
+    idx = lax._clamp_and_cast_index(idx, index_dtype)
+    offsets = lax.stack([
+        lax.convert_element_type(parallel.axis_index(op_parts[d]), index_dtype)
+        * op_shard_shape[d]
+        if d in sharded_collapsed else np.array(0, dtype=index_dtype)
+        for d in dnums.start_index_map
+    ])
+    return op, idx - lax.broadcast_in_dim(offsets, idx.shape, (idx.ndim - 1,))
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective,
+      out_collective=lambda y: reduce_fn(y, reduced_axes),
+      per_shard_params={
+          'slice_sizes': tuple(shard_slice_sizes),
+          'out_sharding': None,
+          'mode': GatherScatterMode.FILL_OR_DROP,
+          'fill_value': zero_fill,
+      },
+  )
 
 mlir.register_lowering(
     gather_p, _gather_lower, shard_map_collective_rule=_gather_collective_rule)
@@ -3756,6 +3795,7 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
 
 def _scatter_collective_rule(
     in_avals, out_avals, *, dimension_numbers, mode, out_sharding, **params):
+  from jax._src.lax import parallel
   del params
   op_aval, idx_aval, upd_aval = in_avals
   out_aval, = out_avals
@@ -3764,10 +3804,17 @@ def _scatter_collective_rule(
   upd_parts = upd_aval.sharding.spec.partitions
   dnums = dimension_numbers
 
+  sharded_inserted = [
+      i for i in dnums.inserted_window_dims if op_parts[i] is not None]
+  if sharded_inserted and (
+      not set(sharded_inserted).issubset(dnums.scatter_dims_to_operand_dims) or
+      mode == GatherScatterMode.CLIP):
+    raise NotImplementedError
+
   # FILL_OR_DROP checks bounds against local shard size instead of global size.
   if (mode == GatherScatterMode.FILL_OR_DROP and
-      any(op_parts[d] is not None
-          for d in dnums.scatter_dims_to_operand_dims)):
+      any(op_parts[d] is not None for d in dnums.scatter_dims_to_operand_dims
+          if d not in sharded_inserted)):
     raise NotImplementedError
 
   # _scatter_spec_computation allows replicated-vs-sharded batch broadcasting.
@@ -3781,12 +3828,40 @@ def _scatter_collective_rule(
     raise NotImplementedError
 
   # Explicit out_sharding bypasses _scatter_spec_computation in propagation.
-  if out_sharding is not None and (
-      out_aval.sharding.spec.partitions != op_parts or
-      _scatter_spec_computation(op_aval, idx_aval, upd_aval, dnums) is None):
-    raise NotImplementedError
+  # Sharded inserted dims are handled by the index shift below, so skip them.
+  if out_sharding is not None:
+    op_check = op_aval.update(sharding=op_aval.sharding.update(spec=P(*(
+        None if i in dnums.inserted_window_dims else p
+        for i, p in enumerate(op_parts)))))
+    if (out_aval.sharding.spec.partitions != op_parts or
+        _scatter_spec_computation(op_check, idx_aval, upd_aval, dnums) is None):
+      raise NotImplementedError
 
-  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+  if not sharded_inserted:
+    return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+  op_shard_shape = op_aval.sharding.shard_shape(op_aval.shape)
+  index_dtype = lax_utils.int_dtype_for_shape(op_aval.shape, signed=True)
+  if dtypes.iinfo(idx_aval.dtype).bits > dtypes.iinfo(index_dtype).bits:
+    index_dtype = np.dtype(np.int64)
+
+  # Subtracting `axis_index * shard_size` shifts indices targeting other shards
+  # outside `[0, shard_size)`. Because `CLIP` is rejected above, both
+  # `FILL_OR_DROP` (the `.at[...]` default) and `PROMISE_IN_BOUNDS` lower to raw
+  # `hlo.ScatterOp`, which we rely on to drop out-of-bounds updates per shard.
+  def in_collective(op, idx, upd):
+    idx = lax._clamp_and_cast_index(idx, index_dtype)
+    offsets = lax.stack([
+        lax.convert_element_type(parallel.axis_index(op_parts[d]), index_dtype)
+        * op_shard_shape[d]
+        if d in sharded_inserted else np.array(0, dtype=index_dtype)
+        for d in dnums.scatter_dims_to_operand_dims
+    ])
+    return (op, idx - lax.broadcast_in_dim(offsets, idx.shape, (idx.ndim - 1,)),
+            upd)
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective, per_shard_params={'out_sharding': None})
 
 def _scatter_set_collective_rule(
     in_avals, out_avals, *, update_jaxpr, **params):

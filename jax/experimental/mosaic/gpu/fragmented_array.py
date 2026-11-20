@@ -1745,7 +1745,7 @@ class FragmentedArray:
       return self._pointwise(arith.negf, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       if utils.bitwidth(self.mlir_dtype) == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1766,7 +1766,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1805,7 +1805,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -1831,7 +1831,7 @@ class FragmentedArray:
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       is_8bit = utils.bitwidth(self.mlir_dtype) == 8
       if is_8bit:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -2086,7 +2086,7 @@ class FragmentedArray:
       width = utils.bitwidth(self.mlir_dtype)
       sign = "s" if self.is_signed else "u"
       if width == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -2119,7 +2119,7 @@ class FragmentedArray:
       width = utils.bitwidth(self.mlir_dtype)
       sign = "s" if self.is_signed else "u"
       if width == 8:
-        if (arch := utils.get_arch()) != utils.RUBIN:
+        if not (arch := utils.get_arch()).is_sm107f:
           raise NotImplementedError(
               "Packed 8-bit integer ALU instructions require sm_107f, got"
               f" sm_{arch.major}{arch.minor}"
@@ -3093,8 +3093,7 @@ class FragmentedArray:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
-    is_sm107f = arch.major == 10 and arch.minor >= 7
-    if f8e5m3fnu in {cur_dtype, new_dtype} and not is_sm107f:
+    if f8e5m3fnu in {cur_dtype, new_dtype} and not arch.is_sm107f:
       raise ValueError("f8e5m3fnu type only supported on sm_107f GPUs")
 
     def check_supported_rounding(allowed_roundings, hw_limitation: bool = True):
@@ -3128,7 +3127,7 @@ class FragmentedArray:
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
         # .rz rounding for cvt.{e4m3x2,e5m2x2,e2m1x2}.{f32,f16x2,bf16x2} was
         # added in PTX ISA 9.4 and is only supported on sm_107f.
-        if arch == utils.RUBIN and ptx_isa_version >= 94:
+        if arch.is_sm107f and ptx_isa_version >= 94:
           allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx

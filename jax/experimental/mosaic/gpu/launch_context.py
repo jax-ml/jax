@@ -1155,6 +1155,7 @@ class LaunchContext:
       collective: tuple[gpu.Dimension, ...],
       leader_tracked: CopyPartition | None,
       implementation: AsyncCopyImplementation,
+      oob_mode: OOBFillMode,
   ):
     """Performs setup common to TMA and CP_ASYNC implementations."""
     index = ir.IndexType.get()
@@ -1198,8 +1199,7 @@ class LaunchContext:
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice,
         untransformed_gmem_ref_ty.shape,
-        # NOTE: TMA supports OOB indices, so we skip the check.
-        check_oob=implementation != AsyncCopyImplementation.TMA,
+        check_oob=oob_mode == OOBFillMode.PROMISE_IN_BOUNDS,
     )
     if gather_indices is not None:
       slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
@@ -1584,6 +1584,7 @@ class LaunchContext:
         collective,
         leader_tracked,
         implementation,
+        oob_mode,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
     untransformed_gmem_ref_ty = ir.MemRefType(untransformed_gmem_ref.type)
@@ -2537,7 +2538,13 @@ class LaunchContext:
         gather_indices,
         gmem_transform,
     ) = self._prepare_async_copy(
-        gmem_ref, gmem_slice, gmem_transform, collective, leader_tracked, impl
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        leader_tracked,
+        impl,
+        OOBFillMode.ZEROS,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
 

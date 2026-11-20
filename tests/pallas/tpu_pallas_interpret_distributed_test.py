@@ -1263,5 +1263,50 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     ).reshape(x.shape)
     np.testing.assert_array_equal(y, expected_out)
 
+
+  def test_shard_map_pl_kernel_closed_over_ref_axis_index(self):
+    num_devices = jax.device_count()
+    if num_devices < 2:
+      self.skipTest('requires at least 2 devices')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+
+    def run_fn(x):
+      out_ref = jax.new_ref(x)
+      meta_ref = jax.new_ref(x)
+      my_id = jnp.int32(lax.axis_index('x'))
+
+      scratch_ty = (
+          None,
+          pltpu.SMEM((1,), jnp.int32),
+      )
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          scratch_types=scratch_ty,
+      )
+      def k(_unused, meta_smem):
+        pltpu.sync_copy(meta_ref, meta_smem)
+        own = my_id * 2
+        meta_smem[0] = own
+        pltpu.sync_copy(meta_smem, out_ref)
+      k()
+      return out_ref[...]
+
+    sharded_run = jax.jit(
+        shard_map.shard_map(
+            run_fn,
+            mesh=mesh,
+            in_specs=P('x'),
+            out_specs=P('x'),
+            check_vma=False,
+        ),
+        out_shardings=jax.sharding.NamedSharding(mesh, P('x')),
+    )
+
+    with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams()):
+      in_arr = jnp.arange(num_devices, dtype=jnp.int32) * 10
+      res = sharded_run(in_arr)
+      expected = jnp.arange(num_devices, dtype=jnp.int32) * 2
+      np.testing.assert_array_equal(res, expected)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

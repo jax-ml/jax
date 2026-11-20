@@ -133,6 +133,6 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: pytest-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}
+          artifact-name: pytest-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}-libtpu_${{ inputs.libtpu-version-type }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}

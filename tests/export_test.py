@@ -1184,6 +1184,8 @@ class JaxExportTest(jtu.JaxTestCase):
   ])
   def test_poly_numeric_dtypes(self, dtype=np.int32):
     if str(dtype) in {
+        "bcomplex32",
+        "complex32",
         "float8_e4m3b11fnuz",
         "float8_e4m3fnuz",
         "float8_e5m2fnuz",

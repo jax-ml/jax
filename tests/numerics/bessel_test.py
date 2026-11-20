@@ -120,7 +120,7 @@ class BesselI1eTest(jtu.JaxTestCase):
     x = np.array([*pos, *(-v for v in pos)], dtype=np.float64)
     with mpmath.workprec(200):
       ref = [_mpmath_i1e(mpmath.mpf(float(v))) for v in x]
-      ulp = np.abs(util.ulp_diff_mpmath(_i1e_reference(x), ref, f64, ftz=False))
+      ulp = np.abs(util.ulp_diff(_i1e_reference(x), ref, f64, ftz=False))
     np.testing.assert_array_less(ulp[np.abs(x) < 1e-6], 1.0)
     np.testing.assert_array_less(ulp[np.abs(x) >= 1e-6], 10.0)
 

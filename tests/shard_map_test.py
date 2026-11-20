@@ -46,7 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -409,8 +409,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   def test_collective_permute_in_loop_and_after_loop(self):
-    if ifrt_version < 79:
-      self.skipTest('Requires ifrt_version >= 79')
+    if xla_version < 79:
+      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')
@@ -456,8 +456,8 @@ class ShardMapTest(jtu.JaxTestCase):
         self.assertArraysEqual(c, np.roll(b_np, shift=k + 1, axis=0))
 
   def test_psum_in_cond_and_after_cond(self):
-    if ifrt_version < 79:
-      self.skipTest('Requires ifrt_version >= 79')
+    if xla_version < 79:
+      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')
@@ -2866,12 +2866,10 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_fma_and_fmuladd_mixed_vma(self, fma_op, varying_c, mesh):
     if fma_op is lax.fma and (
         jaxlib_extension_version < 515
-        or not jtu.is_libtpu_at_least('0.0.52')
         or not jtu.stablehlo_version_at_least('1.24.0')
     ):
       self.skipTest(
-          'fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, '
-          'and StableHLO >= 1.24.0'
+          'fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0'
       )
     a = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('x'))
     c = jax.device_put(
@@ -2906,12 +2904,10 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_fma_and_fmuladd_derivatives_vma(self, fma_op, mesh):
     if fma_op is lax.fma and (
         jaxlib_extension_version < 515
-        or not jtu.is_libtpu_at_least('0.0.52')
         or not jtu.stablehlo_version_at_least('1.24.0')
     ):
       self.skipTest(
-          'fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, '
-          'and StableHLO >= 1.24.0'
+          'fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0'
       )
     x = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('i'))
     grad = jax.grad(lambda x: fma_op(x, x, np.float32(1.5)).sum())
@@ -2994,6 +2990,22 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(8.)
     with jax.disable_jit():
       f(x)  # don't crash
+
+  @parameterized.parameters([False, True])
+  def test_eager_no_recompile_on_second_call(self, disable_jit):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jnp.sin(x) * 2. + 1.
+
+    x = jnp.arange(8.)
+    with jax.disable_jit(disable_jit):
+      expected = f(x)
+      with jtu.count_jit_and_pmap_lowerings() as count:
+        out = f(x)
+    self.assertEqual(count(), 0)
+    self.assertArraysEqual(out, expected)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_jacrev_explicit(self, mesh):

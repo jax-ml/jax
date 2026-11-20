@@ -8,9 +8,9 @@ bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_a
 bazel_dep(name = "apple_support", version = "2.8.0")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "bazel_features", version = "1.50.0")
-bazel_dep(name = "bazel_skylib", version = "1.9.0")
-bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
-bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "flatbuffers", version = "25.9.23", repo_name = "com_github_google_flatbuffers")
+bazel_dep(name = "googletest", version = "1.18.0", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "platforms", version = "1.1.0")
@@ -30,17 +30,16 @@ archive_override(
     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/cd8176c0dd2ff1f2f8cf3fc8e098e2577d227235.tar.gz"],
 )
 
-# TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-jimpbS/fgAqu8KabcWiSJndhvo8efIrepYUZ7ad/D/4=",
-    strip_prefix = "xla-c308dbb884239531b82276135a785c1a04683ebb",
-    urls = ["https://github.com/openxla/xla/archive/c308dbb884239531b82276135a785c1a04683ebb.tar.gz"],
+    integrity = "sha256-VubBKWTfPF88K2lYsO2nBMpUoQoXZSqUlU7r+du/ypA=",
+    strip_prefix = "xla-103d78f5ef3a1294972412e03493e868a0889dcf",
+    urls = ["https://github.com/openxla/xla/archive/103d78f5ef3a1294972412e03493e868a0889dcf.tar.gz"],
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
-# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.2.10).
+# Pin to 0.25.1, the last Bazel 9-compatible release on aspect_rules_js 2.x (required by flatbuffers 25.9.23).
 # TODO: Remove this override once flatbuffers is upgraded to >= 25.12.19.
 single_version_override(
     module_name = "aspect_rules_esbuild",

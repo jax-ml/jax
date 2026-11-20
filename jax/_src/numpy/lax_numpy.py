@@ -892,7 +892,9 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     ats = core.typeof(a).sharding
     wts = core.typeof(weights).sharding
-    if not ats.mesh.empty and not wts.mesh.empty and ats != wts:
+    if (not ats.mesh.empty and not wts.mesh.empty
+        and (ats.mesh._any_axis_explicit or wts.mesh._any_axis_explicit)
+        and ats != wts):
       raise ValueError(
           "type of weights must match type of a. Got"
           f" typeof(a)={core.typeof(a).str_short(True, True)} and"
@@ -2691,21 +2693,39 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   xp_left, xp_right = xp_arr[i - 1], xp_arr[i]
   df = fp_right - fp_left
   dx = xp_right - xp_left
-  delta = x_arr - xp_left
+  x_clamped = x_arr
+  if period is None:
+    if not extrapolate_left:
+      x_clamped = where(x_clamped < xp_arr[0], xp_arr[0], x_clamped)
+    if not extrapolate_right:
+      x_clamped = where(x_clamped > xp_arr[-1], xp_arr[-1], x_clamped)
 
-  epsilon = np.spacing(np.finfo(xp_arr.dtype).eps)
-  dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
+  dx0 = dx == 0  # Prevent NaN gradients when `dx` is zero.
   dx_safe = where(dx0, 1, dx)
-  f = where(dx0, fp_left, fp_left + (delta / dx_safe) * df)
+  df_safe = where(dx0, 0, df)
+  subnormal_dx = lax.abs(dx_safe) < dtypes.finfo(xp_arr.dtype).tiny
+
+  def _interp_from(x_ref: Array, fp_ref: Array) -> Array:
+    delta_ref = x_clamped - x_ref
+    dx_denom = where(subnormal_dx & (delta_ref == 0),
+                     lax.stop_gradient(dx_safe), dx_safe)
+    t = delta_ref / dx_denom
+    t = where(subnormal_dx & (df_safe == 0), lax.stop_gradient(t), t)
+    return fp_ref + t * df_safe
+
+  f = where(dx0,
+            where(ufuncs.isnan(x_arr), np.nan,
+                  where(x_arr >= xp_right, fp_right, fp_left)),
+            _interp_from(xp_left, fp_left))
   # `f` is NaN at and around an infinite knot (inf - inf, 0 * inf). Like
   # numpy.interp, return the knot value at an exact knot; elsewhere re-evaluate
   # from the other end of the interval, and fall back to the shared value when
   # both ends are equal. Only entries that are already NaN are replaced.
-  other = fp_right + ((x_arr - xp_right) / dx_safe) * df
+  other = _interp_from(xp_right, fp_right)
   other = where(ufuncs.isnan(other) & (fp_left == fp_right), fp_left, other)
-  f_alt = where(x_arr == xp_left, fp_left,
-                where(x_arr == xp_right, fp_right, other))
-  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr), f_alt, f)
+  f_alt = where(x_arr == xp_right, fp_right,
+                where(x_arr == xp_left, fp_left, other))
+  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr) & ~dx0, f_alt, f)
 
   if not extrapolate_left:
     assert not isinstance(left, str)
@@ -5023,6 +5043,10 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
   if not issubdtype(a.dtype, np.integer):
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
+
+  # Ensure N is representable in a.dtype (jax-ml/jax#42464)
+  if N > iinfo(a.dtype).max:
+    a = a.astype(dtypes.default_int_dtype())
 
   if mode == 'raise':
     arr: Array = core.concrete_or_error(asarray, a,
@@ -8176,7 +8200,7 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   a_reshaped = expand_dims(a, range(1, 2 * np.ndim(a), 2))
   b_reshaped = expand_dims(b, range(0, 2 * np.ndim(b), 2))
   out_shape = tuple(np.multiply(np.shape(a), np.shape(b)))
-  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
+  return reshape(ufuncs.multiply(a_reshaped, b_reshaped), out_shape)
 
 
 @export
@@ -8226,6 +8250,7 @@ def vander(
            [ 1,  4, 16, 64]], dtype=int32)
   """
   x = util.ensure_arraylike("vander", x)
+  x, = util.promote_dtypes_numeric(x)
   if x.ndim != 1:
     raise ValueError("x must be a one-dimensional array")
   N = x.shape[0] if N is None else core.concrete_or_error(

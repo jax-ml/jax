@@ -91,12 +91,12 @@ class UlpDiffTest(jtu.JaxTestCase):
     expected_no_ftz = np.array([e for _, _, _, e in cases], dtype=np.float64)
 
     np.testing.assert_allclose(
-        util.ulp_diff(x_arr, y_arr, dtype, ftz=True),
+        np.abs(util.ulp_diff(x_arr, y_arr, dtype, ftz=True)),
         expected_ftz,
         rtol=1e-12,
     )
     np.testing.assert_allclose(
-        util.ulp_diff(x_arr, y_arr, dtype, ftz=False),
+        np.abs(util.ulp_diff(x_arr, y_arr, dtype, ftz=False)),
         expected_no_ftz,
         rtol=1e-12,
     )
@@ -299,7 +299,7 @@ class UlpDiffTest(jtu.JaxTestCase):
           )
       )
 
-    ulp_mp = util.ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
+    ulp_mp = util._ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
 
     np.testing.assert_allclose(ulp_jax, ulp_mp, rtol=1e-12, atol=1e-12)
 
@@ -578,6 +578,30 @@ class UlpDiffTest(jtu.JaxTestCase):
         bounds=0.5,
         max_samples=100,
     )
+
+  def test_ulp_diff_mismatch_signs(self):
+    cases = [
+        # (computed, ref_f32, ref_mpf, expected)
+        (-1.0, np.nan, np.nan, np.inf),
+        (np.nan, -1.0, -1.0, np.inf),
+        (np.nan, np.nan, np.nan, 0.0),
+        (1.0, np.inf, np.inf, -np.inf),
+        (1.0, -np.inf, -np.inf, np.inf),
+        (np.inf, 1.0, 1.0, np.inf),
+        (-np.inf, 1.0, 1.0, -np.inf),
+        (-np.inf, np.inf, np.inf, -np.inf),
+        (np.inf, -np.inf, -np.inf, np.inf),
+        (-1.0, 2.0**128, mpmath.mpf(2) ** 1024, -np.inf),
+        (np.inf, -(2.0**128), -(mpmath.mpf(2) ** 1024), np.inf),
+    ]
+    c = np.array([row[0] for row in cases], dtype=np.float64)
+    r_f32 = np.array([row[1] for row in cases], dtype=np.float64)
+    r_mpf = np.array([row[2] for row in cases], dtype=object)
+    expected = np.array([row[3] for row in cases], dtype=np.float64)
+    jax_err = util.ulp_diff(c.astype(np.float32), r_f32, np.float32, ftz=False)
+    mp_err = util.ulp_diff(c, r_mpf, np.float64, ftz=False)
+    np.testing.assert_array_equal(jax_err, expected)
+    np.testing.assert_array_equal(mp_err, expected)
 
   def test_register_benchmark_nary(self):
     util.register_benchmark(jnp.add, nargs=2, name="test_add_nary")

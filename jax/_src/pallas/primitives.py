@@ -1144,13 +1144,14 @@ def semaphore_wait(
   """
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   value = jnp.asarray(value, dtype=jnp.int32)
-  args = [ref, transforms, value, decrement]
+  args = [ref, transforms, value]
   flat_args, args_tree = tree_util.tree_flatten(args)
-  semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
+  semaphore_wait_p.bind(*flat_args, args_tree=args_tree, decrement=decrement)
 
 @semaphore_wait_p.def_effectful_abstract_eval
-def _semaphore_wait_abstract_eval(*avals, args_tree):
-  sem_aval, sem_transforms_avals, value_aval, _ = tree_util.tree_unflatten(
+def _semaphore_wait_abstract_eval(*avals, args_tree, decrement: bool):
+  del decrement
+  sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
       args_tree, avals
   )
   check_sem_avals(sem_aval, sem_transforms_avals, "wait")
@@ -1164,11 +1165,11 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   del settings
   invars = eqn.invars
   tree = eqn.params["args_tree"]
+  decrement = eqn.params["decrement"]
   (
       sem,
       sem_transforms,
       value,
-      decrement,
   ) = tree_util.tree_unflatten(tree, invars)
   parts = [
       pp.text("semaphore_wait"),
@@ -1186,8 +1187,9 @@ jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
 
 def _semaphore_wait_discharge_rule(ctx,
                                    *flat_args,
-                                   args_tree):
-  [ref, transforms, value, decrement] = args_tree.unflatten(flat_args)
+                                   args_tree,
+                                   decrement: bool):
+  [ref, transforms, value] = args_tree.unflatten(flat_args)
   sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   value = value.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   if decrement:

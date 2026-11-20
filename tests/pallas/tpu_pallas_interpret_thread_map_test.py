@@ -20,7 +20,7 @@ import time
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax.numpy as jnp
 
@@ -70,8 +70,8 @@ class InterpretThreadMapTest(jtu.JaxTestCase):
     self.assertEqual(concurrent_calls[0], 0)
 
   def test_thread_map_in_program_dispatched_while_device_is_busy(self):
-    if ifrt_version < 87:
-      self.skipTest('Requires ifrt_version >= 87')
+    if xla_version < 87:
+      self.skipTest('Requires xla_version >= 87')
 
     # Programs with host callbacks, like `program`, run synchronously and take
     # no pacing units. `program` waits for `slow` on the dispatching thread and

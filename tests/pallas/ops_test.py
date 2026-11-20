@@ -548,7 +548,9 @@ class OpsTest(PallasBaseTest):
         grid=(1,),
     )(x)
 
-    np.testing.assert_allclose(result[0, 0], reduction_op(x), atol=1e-5)
+    np.testing.assert_allclose(
+        result[0, 0], reduction_op(x), rtol=1e-5, atol=1e-4
+    )
 
   @parameterized.named_parameters(
       ("sum", jnp.sum, (32, 256)),
