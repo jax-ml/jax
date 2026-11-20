@@ -65,7 +65,7 @@ jobs:
   preflight-gcs-wheels:
     if: github.repository_owner == 'jax-ml'
     name: "Preflight GCS wheels check"
-    runs-on: linux-x86-n4-4
+    runs-on: linux-x86-n4-16
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     timeout-minutes: 10
     defaults:
