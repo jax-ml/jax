@@ -66,6 +66,12 @@ def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
 bitcast_p = jax_core.Primitive("bitcast")
 
 
+def _vreg_bitwidth(dtype: DTypeLike) -> int:
+  """Returns the TPU vector register element bitwidth (FP6 uses 8 bits)."""
+  bits = dtypes.itemsize_bits(dtype)
+  return 8 if bits == 6 else bits
+
+
 def bitcast(x: jax.Array, ty: DTypeLike, dim: int = -2) -> jax.Array:
   """Bitcasts an array to a different dtype, preserving its rank.
 
@@ -102,8 +108,8 @@ def bitcast(x: jax.Array, ty: DTypeLike, dim: int = -2) -> jax.Array:
         "Cannot bitcast along a dimension other than the second minor or the"
         f" minormost one: {dim=}, {x.ndim=}"
     )
-  src_bitwidth = dtypes.itemsize_bits(x.dtype)
-  dst_bitwidth = dtypes.itemsize_bits(ty)
+  src_bitwidth = _vreg_bitwidth(x.dtype)
+  dst_bitwidth = _vreg_bitwidth(ty)
   if x.shape[dim] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         f"dim {dim} of size {x.shape[dim]} cannot be perfectly packed or"
@@ -115,8 +121,8 @@ def bitcast(x: jax.Array, ty: DTypeLike, dim: int = -2) -> jax.Array:
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, *, ty, dim):
   shape = list(x.shape)
-  src_bitwidth = dtypes.itemsize_bits(x.dtype)
-  dst_bitwidth = dtypes.itemsize_bits(ty)
+  src_bitwidth = _vreg_bitwidth(x.dtype)
+  dst_bitwidth = _vreg_bitwidth(ty)
   if shape[dim] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         f"dim {dim} of size {shape[dim]} cannot be perfectly packed or"
