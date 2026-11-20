@@ -2882,7 +2882,7 @@ def _poisson_log_pmf(k, lam):
   # In the rejection sampler, large-rate candidates are almost always central.
   # A scalar conditional avoids evaluating both logarithmic tail paths when
   # every element in the vector is in that well-conditioned region.
-  result = lax.cond(
+  result = lax_control_flow.cond(
       jnp.all(small_delta), central_path, general_path, operand=None
   )
   return jnp.where(lam < 0.0, jnp.nan, result)
