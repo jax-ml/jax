@@ -34,6 +34,7 @@ from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax._src.pallas.mosaic_gpu import helpers
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -1175,6 +1176,11 @@ def emit_pipeline_warp_specialized(
         slot = lax.rem(step, max_concurrent_steps)
         fetch_slot = slot  # (x + y) % y == x % y
 
+        if collective_axes:
+          fency_proxy_kind = "async_shared::cluster"
+        else:
+          fency_proxy_kind = "async_shared::cta"
+
         if manual_consumed_barriers:
           consumed_barriers_refs = flat_consumed_barrier_refs
         else:
@@ -1182,14 +1188,15 @@ def emit_pipeline_warp_specialized(
           # barrier management.
           [consumed_barrier_ref] = flat_consumed_barrier_refs
           gpu_primitives.barrier_wait(consumed_barrier_ref.at[slot])
+          helpers.fence_proxy(fency_proxy_kind)
           consumed_barriers_refs = [None] * len(flat_in_brefs)
 
         for bref, barrier, consumed_barrier in zip(
             flat_in_brefs, produced_barriers_refs, consumed_barriers_refs
         ):
-          if manual_consumed_barriers:
-            assert consumed_barrier is not None
+          if consumed_barrier is not None:
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])
+            helpers.fence_proxy(fency_proxy_kind)
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
           bref.copy_in(buf_slot, indices, barrier, barrier_slot)
