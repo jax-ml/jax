@@ -3623,10 +3623,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(out1, np_inp * 2)
     self.assertArraysEqual(out2, np_inp * 2)
-    self.assertTupleEqual(out1.sharding._device_assignment,
-                          s.mesh._flat_devices_tuple)
-    self.assertTupleEqual(out2.sharding._device_assignment,
-                          s.mesh._flat_devices_tuple)
+    self.assertEqual(out1.sharding._device_assignment,
+                     s.mesh._internal_device_list)
+    self.assertEqual(out2.sharding._device_assignment,
+                     s.mesh._internal_device_list)
 
   def test_vmap_spmd_axis_name_error(self):
     s = make_single_device_sharding(jax.devices()[0])
@@ -3817,8 +3817,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_device_put_fast_path_hit() as count:
       out = jax.device_put(arr1, NamedSharding(mesh2, P('x')))
     self.assertEqual(count(), 1)
-    self.assertTupleEqual(out.sharding._device_assignment,
-                          mesh2._flat_devices_tuple)
+    self.assertEqual(out.sharding._device_assignment,
+                     mesh2._internal_device_list)
     self.assertArraysEqual(out, inp)
 
   def test_prng_sharding_propagation(self):
@@ -7146,10 +7146,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(compilation_count(), 2)
     self.assertEqual(cpp_cache_miss_count(), 2)
 
-    self.assertTupleEqual(out1.sharding._device_assignment,
-                          tuple(mesh1.devices.flat))
-    self.assertTupleEqual(out2.sharding._device_assignment,
-                          tuple(mesh2.devices.flat))
+    self.assertEqual(out1.sharding._device_assignment,
+                     mesh1._internal_device_list)
+    self.assertEqual(out2.sharding._device_assignment,
+                     mesh2._internal_device_list)
 
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_svd(self, mesh):

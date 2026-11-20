@@ -56,7 +56,6 @@ config_ext = _jax.config
 Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
-XLADeviceAssignment = tuple[Device, ...]
 
 
 def hashed_index(x) -> int:
@@ -160,10 +159,6 @@ class SingleDeviceSharding(jsharding.Sharding):
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     return {self._device: (slice(None),) * len(global_shape)}
 
-  @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    return (self._device,)
-
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return replicated_hlo_sharding
 
@@ -240,11 +235,11 @@ class GSPMDSharding(jsharding.Sharding):
       return True
     return (are_hlo_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self.memory_kind == other.memory_kind
-            and self._internal_device_list == other._internal_device_list)
+            and self._device_assignment == other._device_assignment)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,
+      self._hash = hash((self._device_assignment, self._hlo_sharding_hash,
                         self.memory_kind))
     return self._hash
 
@@ -262,7 +257,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @property
   def num_devices(self) -> int:
-    return len(self._internal_device_list)
+    return len(self._device_assignment)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -274,10 +269,6 @@ class GSPMDSharding(jsharding.Sharding):
 
   def with_memory_kind(self, kind: str) -> GSPMDSharding:
     return GSPMDSharding(self._devices, self._hlo_sharding, memory_kind=kind)
-
-  @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    return tuple(self._devices)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return self._hlo_sharding
@@ -310,7 +301,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable
+    return self._device_assignment.is_fully_addressable
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
@@ -377,12 +368,12 @@ class ShardingContext:
   This context also uses the GSPMD partitioner.
   """
   num_devices: int
-  device_assignment: tuple[xc.Device, ...] | None = None
+  device_assignment: tuple[xc.Device, ...] | xc.DeviceList | None = None
   abstract_mesh: AbstractMesh | None = None
 
   def __post_init__(self):
     if self.device_assignment is not None:
-      assert isinstance(self.device_assignment, tuple)
+      assert isinstance(self.device_assignment, (tuple, xc.DeviceList))
       assert self.num_devices == len(self.device_assignment)
 
 
@@ -780,7 +771,7 @@ def make_key_array_phys_sharding(aval, sharding):
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
-        sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
+        sharding._device_assignment, physical_hlo_sharding(aval, hlos))
 
 
 def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
@@ -797,7 +788,7 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   logical_op_sharding = phys_hlo_sharding.to_proto().clone()
   tad = partitions[:-elt_aval.ndim] + suffix
   logical_op_sharding.tile_assignment_dimensions = tad
-  return GSPMDSharding(phys_sharding._internal_device_list,
+  return GSPMDSharding(phys_sharding._device_assignment,
                        xc.HloSharding.from_proto(logical_op_sharding))
 
 def check_replicated_trailing_dims(sharding: jsharding.Sharding,

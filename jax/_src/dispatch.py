@@ -363,8 +363,8 @@ def _different_device_order_reshard(
   inp_sharding = x.sharding
   assert isinstance(inp_sharding, NamedSharding)
 
-  inp_device_list = inp_sharding._internal_device_list
-  target_device_list = target_sharding._internal_device_list
+  inp_device_list = inp_sharding._device_assignment
+  target_device_list = target_sharding._device_assignment
 
   donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
   if inp_device_list == target_device_list:
@@ -392,8 +392,8 @@ def _different_device_order_reshard(
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   """Returns True if src->dst is a supported cross-host transfer."""
-  if (src_sharding._internal_device_list.device_kind !=
-      dst_sharding._internal_device_list.device_kind):
+  if (src_sharding._device_assignment.device_kind !=
+      dst_sharding._device_assignment.device_kind):
     return False
   if (src_sharding._to_xla_hlo_sharding(ndim) !=
       dst_sharding._to_xla_hlo_sharding(ndim)):
@@ -402,8 +402,8 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   # have the same process index sets but there are shards that require
   # cross-host transfers. This case is supportable but expensive to check for.
   different_process_inds = (
-      src_sharding._internal_device_list.process_indices !=
-      dst_sharding._internal_device_list.process_indices)
+      src_sharding._device_assignment.process_indices !=
+      dst_sharding._device_assignment.process_indices)
   backend = xb.get_backend()
   # If a cross-host device transfer is requested but the backend does not
   # support it, then the user must set the flags to enable DCN-based transfers.
@@ -517,7 +517,7 @@ def _device_put_sharding_impl(
 
     if (s_is_fully_addressable and x_is_jax_array and
         x_is_fully_addressable and s.num_devices > 1 and
-        s._internal_device_list != x_sharding._internal_device_list and
+        s._device_assignment != x_sharding._device_assignment and
         s.device_set == x_sharding.device_set):
       assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
@@ -555,7 +555,7 @@ def _device_put_sharding_impl(
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if xb.process_count() == len(s._internal_device_list.process_indices):
+        if xb.process_count() == len(s._device_assignment.process_indices):
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -668,7 +668,7 @@ def _batched_device_put_impl(
       dca_indices.append(i)
       dca_xs.append(y.x)
       dca_shardings.append(y.dst_sharding)
-      dca_device_lists.append(y.dst_sharding._internal_device_list)
+      dca_device_lists.append(y.dst_sharding._device_assignment)
       dca_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 

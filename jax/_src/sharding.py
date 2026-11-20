@@ -27,7 +27,7 @@ from jax._src.op_shardings import (
 Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
-XLADeviceAssignment = Sequence[Device]
+XLADeviceAssignment = xc.DeviceList
 
 class IndivisibleError(ValueError):
   pass
@@ -39,7 +39,7 @@ def _addressable_devices_indices_map(
   if sharding.is_fully_addressable:
     return global_map
   return {d: global_map[d]
-          for d in sharding._internal_device_list.addressable_device_list}
+          for d in sharding._device_assignment.addressable_device_list}
 
 @cache(max_size=4096, trace_context_in_key=False)
 def common_devices_indices_map(
@@ -91,7 +91,7 @@ def common_is_equivalent_to(s1: Sharding, s2: Sharding, ndim: int,
   mem_eq = s1.memory_kind == s2.memory_kind
   if check_devices:
     return (hlo_s_eq and mem_eq and
-            s1._internal_device_list == s2._internal_device_list)
+            s1._device_assignment == s2._device_assignment)
   else:
     return hlo_s_eq and mem_eq
 
@@ -145,10 +145,6 @@ class Sharding:
     raise NotImplementedError('Subclasses should implement this method')
 
   @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  @property
   def _internal_device_list(self) -> xc.DeviceList:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -161,6 +157,10 @@ class Sharding:
 
   #############################################################################
   # Default implementations below that all subclasses will inherit.
+
+  @property
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return self._internal_device_list
 
   @property
   def _is_concrete(self) -> bool:
@@ -196,13 +196,11 @@ class Sharding:
 
   @property
   def has_addressable_devices(self) -> bool:
-    return len(self._internal_device_list.addressable_device_list) > 0
+    return len(self._device_assignment.addressable_device_list) > 0
 
-  @functools.cached_property
+  @property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
-    if self.is_fully_addressable:
-      return self._device_assignment
-    return tuple(self._internal_device_list.addressable_device_list)
+    return self._device_assignment.addressable_device_list
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     """Returns the shape of the data on each device.

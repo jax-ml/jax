@@ -249,7 +249,8 @@ class Lowering:
 
   def compile(
       self, compiler_options: CompilerOptions | None = None, *,
-      device_assignment: tuple[xc.Device, ...] | None = None) -> Executable:
+      device_assignment: tuple[xc.Device, ...] | None = None
+  ) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError(
         f"cost analysis unsupported on XLA computation: {type(self)}")
@@ -714,7 +715,8 @@ class Lowered(Stage):
 
   def compile(
       self, compiler_options: CompilerOptions | None = None, *,
-      device_assignment: tuple[xc.Device, ...] | None = None) -> Compiled:
+      device_assignment: tuple[xc.Device, ...] | None = None
+  ) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
     kw: dict[str, Any] = {"compiler_options": compiler_options,
                           "device_assignment": device_assignment}
@@ -1086,7 +1088,7 @@ class SourceInfo(NamedTuple):
 
 @dataclasses.dataclass(slots=True)
 class DeviceAssignmentMismatch:
-  da: Sequence[xc.Device] | int
+  da: xc.DeviceList | Sequence[xc.Device] | int
   m_type: MismatchType
   source_info: SourceInfo | None
 
@@ -1132,7 +1134,8 @@ def _find_arg_mismatch(arg_list, fails, fun_name):
   mismatched_args_msg = []
   def mismatch(err):
     for name, inp_da, aval in arg_list:
-      if err.m_type == MismatchType.ARG_SHARDING and err.da == inp_da:
+      if (err.m_type == MismatchType.ARG_SHARDING and inp_da is not None
+          and err.da == inp_da):
         mismatched_args_msg.append(
             f"argument {name} of {fun_name} with shape {aval.str_short()} and "
             f"{err._dev_ids_plat_str}")
@@ -1149,7 +1152,8 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   if arg_names is None:
     arg_names = [''] * len(args_flat)
   for a, n in zip(args_flat, arg_names):
-    da = a.sharding._device_assignment if a.sharding is not None else None
+    da = (a.sharding._device_assignment
+          if a.sharding is not None and a.sharding._is_concrete else None)
     arg_list.append((n, da, a.aval))
 
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
