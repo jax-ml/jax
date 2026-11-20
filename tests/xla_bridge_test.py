@@ -29,6 +29,7 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(4)
 
 mock = absltest.mock
 
@@ -142,6 +143,29 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(compile_options.device_assignment.replica_count(), 1)
     self.assertEqual(
         compile_options.device_assignment.computation_count(), len(da))
+    if len(devices) >= 4:
+      expected = compiler.get_compile_options(
+          num_replicas=2,
+          num_partitions=2,
+          device_assignment=[
+              [d.id for d in devices[:2]],
+              [d.id for d in devices[2:4]],
+          ],
+      )
+      actual = compiler.get_compile_options(
+          num_replicas=2,
+          num_partitions=2,
+          device_assignment=xc.DeviceList(tuple(devices[:4])),
+      )
+      self.assertEqual(
+          actual.device_assignment.serialize(),
+          expected.device_assignment.serialize(),
+      )
+    if jaxlib_extension_version >= 526:
+      with self.assertRaisesRegex(_jax.JaxRuntimeError, "must be positive"):
+        xc.DeviceAssignment.create(da, 0, len(da))
+      with self.assertRaisesRegex(_jax.JaxRuntimeError, "does not match"):
+        xc.DeviceAssignment.create(da, 1, len(da) + 1)
     with self.assertRaisesRegex(
         ValueError, "device_assignment length.*does not match"
     ):

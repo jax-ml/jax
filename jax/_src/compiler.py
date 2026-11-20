@@ -228,11 +228,18 @@ def get_compile_options(
             f' match num_replicas ({num_replicas}) * num_partitions'
             f' ({num_partitions}).'
         )
-      device_assignment = np.fromiter(
-          (d.id for d in device_assignment),
-          dtype=np.int32,
-          count=len(device_assignment),
-      ).reshape((num_replicas, num_partitions))
+      if lib.jaxlib_extension_version >= 526:
+        device_assignment = xc.DeviceAssignment.create(
+            device_assignment, num_replicas, num_partitions
+        )
+      else:
+        device_assignment = xc.DeviceAssignment.create(
+            np.fromiter(
+                (d.id for d in device_assignment),
+                dtype=np.int32,
+                count=len(device_assignment),
+            ).reshape((num_replicas, num_partitions))
+        )
     else:
       device_assignment = np.array(device_assignment)
 
@@ -251,7 +258,7 @@ def get_compile_options(
       if device_assignment.dtype == object:
         device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
             device_assignment)
-    device_assignment = xc.DeviceAssignment.create(device_assignment)
+      device_assignment = xc.DeviceAssignment.create(device_assignment)
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
