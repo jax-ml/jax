@@ -702,6 +702,29 @@ class PallasCallTest(ptu.PallasTPUTest):
       result = add_one(x)
       np.testing.assert_array_equal(result, x + 1.)
 
+  def test_pallas_call_fori_loop_over_refs_under_disable_jit(self):
+    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: error on TPU")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+    )
+    def sum_range(n_ref, o_ref):
+      o_ref[...] = 0
+      def body(i, o_ref):
+        o_ref[...] += i
+        return o_ref
+      lax.fori_loop(0, n_ref[...], body, o_ref)
+
+    n = jnp.array(5, dtype=jnp.int32)
+
+    result = sum_range(n)
+    self.assertEqual(result, 10)
+
+    with jax.disable_jit():
+      result = sum_range(n)
+      self.assertEqual(result, 10)
+
   @parameterized.parameters(
       ("float32", None),
       ("float32", jax.lax.Precision.DEFAULT),
