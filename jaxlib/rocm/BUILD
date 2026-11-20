@@ -195,6 +195,41 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "rocsolver_potrf",
+    srcs = ["//jaxlib/gpu:rocm/potrf.cc"],
+    hdrs = ["//jaxlib/gpu:rocm/potrf.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocblas",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocsolver",
+    ],
+)
+
+cc_library(
+    name = "rocsolver_potrf_kernels_ffi",
+    srcs = ["//jaxlib/gpu:rocm/potrf_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:rocm/potrf_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_make_batch_pointers",
+        ":hip_vendor",
+        ":hipsolver_kernels_ffi",
+        ":rocsolver_potrf",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
 rocm_nanobind_extension(
     name = "_solver",
     srcs = ["//jaxlib/gpu:solver.cc"],
@@ -208,6 +243,7 @@ rocm_nanobind_extension(
     deps = [
         ":hip_vendor",
         ":hipsolver_kernels_ffi",
+        ":rocsolver_potrf_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
