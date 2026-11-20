@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 from contextlib import contextmanager
-from functools import partial
 from collections.abc import Sequence
 import json
 
@@ -60,19 +59,24 @@ def _check_valid(c_type: str):
         'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
 
 
-def compute_on(f=None, *, compute_type, out_memory_spaces,
-                compiler_options=None):
+def compute_on(f=None, *, compute_type, out_memory_spaces, is_async=False,
+               compiler_options=None):
   kwargs = dict(compute_type=compute_type, out_memory_spaces=out_memory_spaces,
-                compiler_options=compiler_options)
+                compiler_options=compiler_options, is_async=is_async)
   if f is None:
     return lambda g: _compute_on(g, **kwargs)
   return _compute_on(f, **kwargs)
 
 
-def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
+def _compute_on(f, *, compute_type, out_memory_spaces, is_async,
+                compiler_options):
   if not isinstance(compute_type, str):
     raise TypeError("`compute_on`'s compute_type argument must be a string.")
   _check_valid(compute_type)
+  if is_async and compute_type != 'tpu_sparsecore':
+    raise NotImplementedError(
+        "compute_on with is_async=True is only supported for "
+        "compute_type='tpu_sparsecore'.")
 
   def wrapped(*args, **kwargs):
     nonlocal compiler_options
@@ -89,6 +93,16 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
         consts = []
     out_memory_spaces_flat = flatten_axes(
         "compute_on out_memory_spaces", out_tree, out_memory_spaces)
+    if is_async:
+      if any(oms is not core.MemorySpace.Device
+             for oms in out_memory_spaces_flat):
+        raise NotImplementedError(
+            'compute_on with is_async=True only supports '
+            'jax.memory.Space.Device out_memory_spaces.')
+      if len(jaxpr.out_avals) != 1:
+        raise NotImplementedError(
+            'compute_on with is_async=True only supports a single output.')
+
     if compute_type == 'tpu_sparsecore' and compiler_options is not None:
       sc_config = compiler_options.get('sparse_core_config')
       if isinstance(sc_config, dict) and 'core_ids' in sc_config:
@@ -103,26 +117,39 @@ def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
     outs_flat = compute_on_p.bind(
         *consts, *args_flat, jaxpr=jaxpr, compute_type=compute_type,
         out_memory_spaces=tuple(out_memory_spaces_flat),
-        compiler_options_json=compiler_options_json)
+        is_async=is_async, compiler_options_json=compiler_options_json)
     return tree_unflatten(out_tree, outs_flat)
 
   return wrapped
 
 compute_on_p = core.Primitive('compute_on')
 compute_on_p.multiple_results = True
-dispatch.simple_impl(compute_on_p)
+
+def _compute_on_impl(*args, jaxpr, compute_type, out_memory_spaces, is_async,
+                     compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True is only supported under jax.jit.')
+  return dispatch.apply_primitive(
+      compute_on_p, *args, jaxpr=jaxpr, compute_type=compute_type,
+      out_memory_spaces=out_memory_spaces, is_async=is_async,
+      compiler_options_json=compiler_options_json)
+compute_on_p.def_impl(_compute_on_impl)
 
 
 def _compute_on_abstract_eval(*in_avals, jaxpr, compute_type, out_memory_spaces,
-                              compiler_options_json):
+                              is_async, compiler_options_json):
   out_avals = [a.update(memory_space=s) if isinstance(a, core.ShapedArray)
                else a for a, s in zip(jaxpr.out_avals, out_memory_spaces)]
+  if is_async:
+    out_avals = [core.AbstractFuture(o, compute_on_done_p.bind)
+                 for o in out_avals]
   return out_avals, core.positional_effects(jaxpr)
 compute_on_p.def_effectful_abstract_eval(_compute_on_abstract_eval)
 
 
 def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
-                         compiler_options_json):
+                         is_async, compiler_options_json):
   if dispatch.jaxpr_has_primitive(jaxpr, 'compute_on'):
     raise ValueError("Nesting `compute_on` with different compute types is "
                      "not allowed.")
@@ -132,19 +159,18 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals]
   in_avals = (*const_avals, *ctx.avals_in)
+  out_avals = [a.inner_aval if is_async else a for a in ctx.avals_out]
   func_op, output_types, effects = mlir.lower_called_computation(
       "compute_on", jaxpr, ctx.module_context, len(const_args), in_avals,
-      ctx.avals_out, ctx.tokens_in)
+      out_avals, ctx.tokens_in)
 
   symbol_name = func_op.name.value
   flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
   tokens = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *args)
   flat_args, _ = mlir.ir_tree_registry.flatten(args)
-  call = func_dialect.CallOp(
-      flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
-      flat_args)
 
+  dict_attr: dict[str, ir.Attribute]
   if compute_type.startswith("gpu_stream:"):
     dict_attr = {
         "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
@@ -159,7 +185,24 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   elif compute_type in {'device', 'tpu_sparsecore'}:
     dict_attr |= {'backend_config': ir.StringAttr.get('{}')}
 
-  call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
+  if not is_async:
+    call = func_dialect.CallOp(
+        flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
+        flat_args)
+    call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
+  else:
+    if compiler_options_json is None or compiler_options_json == '{}':
+      dict_attr |= {
+          'backend_config': ir.StringAttr.get('{"sparse_core_config": {}}')}
+    call = mlir.custom_call(
+        call_target_name="compute-on-start",
+        result_types=flat_output_types,
+        operands=flat_args,
+        extra_attributes={
+            "mhlo.frontend_attributes": ir.DictAttr.get(dict_attr)},
+        called_computations=[symbol_name],
+        api_version=1,
+    )
 
   out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
@@ -167,28 +210,35 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   ctx.set_tokens_out(tokens_out)
   out = [mlir.lower_with_sharding_in_types(ctx, o, a)
          if isinstance(a, core.ShapedArray) else o
-         for o, a in zip(out_nodes, ctx.avals_out)]
+         for o, a in zip(out_nodes, out_avals)]
   return [on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
           mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), a)
-          for on, a, oms in zip(out, ctx.avals_out, out_memory_spaces)]
+          for on, a, oms in zip(out, out_avals, out_memory_spaces)]
 mlir.register_lowering(
     compute_on_p, _compute_on_lowering,
     shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _compute_on_batcher(axis_data, vals_in, dims_in, *, jaxpr, compute_type,
-                        out_memory_spaces, compiler_options_json):
+                        out_memory_spaces, is_async, compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support vmap.')
   batched_jaxpr, dims_out = batching.batch_jaxpr2(jaxpr, axis_data, dims_in)
   outs = compute_on_p.bind(*vals_in, jaxpr=batched_jaxpr,
                            compute_type=compute_type,
                            out_memory_spaces=out_memory_spaces,
+                           is_async=is_async,
                            compiler_options_json=compiler_options_json)
   return outs, dims_out
 batching.fancy_primitive_batchers[compute_on_p] = _compute_on_batcher
 
 
 def _compute_on_jvp(primals, tangents, *, jaxpr, compute_type,
-                    out_memory_spaces, compiler_options_json):
+                    out_memory_spaces, is_async, compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support jvp.')
   nzs = [not isinstance(t, ad.Zero) for t in tangents]
   jaxpr_jvp, out_nzs = ad.jvp_jaxpr(jaxpr, nzs, False)
   nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
@@ -196,7 +246,7 @@ def _compute_on_jvp(primals, tangents, *, jaxpr, compute_type,
                 *[s for s, nz in zip(out_memory_spaces, out_nzs) if nz])
   outs = compute_on_p.bind(*primals, *nz_tangents, jaxpr=jaxpr_jvp,
                            compute_type=compute_type,
-                           out_memory_spaces=spaces_jvp,
+                           out_memory_spaces=spaces_jvp, is_async=is_async,
                            compiler_options_json=compiler_options_json)
   primals_out, nz_tangents_out = outs[:len(out_nzs)], outs[len(out_nzs):]
   nz_outs = iter(nz_tangents_out)
@@ -208,7 +258,10 @@ ad.primitive_jvps[compute_on_p] = _compute_on_jvp
 
 
 def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
-                    out_memory_spaces, compiler_options_json):
+                    out_memory_spaces, is_async, compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support linearize/vjp/grad.')
   primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
       ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   _, ures_avals, sres_avals = out_tree.unpack()
@@ -240,6 +293,7 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
     nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
                         jaxpr=tangent_jaxpr, compute_type=compute_type,
                         out_memory_spaces=tangent_out_mem_spaces,
+                        is_async=is_async,
                         compiler_options_json=compiler_options_json)
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
@@ -250,6 +304,7 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
   primal_out_mem_spaces = out_memory_spaces + (core.MemorySpace.Device,) * num_kept_res
   ans = compute_on_p.bind(*primals, jaxpr=primal_jaxpr, compute_type=compute_type,
                           out_memory_spaces=primal_out_mem_spaces,
+                          is_async=is_async,
                           compiler_options_json=compiler_options_json)
   ans = subs_list(out_fwd, ans, ans)
   ans = subs_list(in_fwd, primals, ans)
@@ -261,8 +316,11 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
 ad.primitive_linearizations[compute_on_p] = _compute_on_lin
 
 def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,
-                             compute_type, out_memory_spaces,
+                             compute_type, out_memory_spaces, is_async,
                              compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support partial evaluation.')
   in_pvals = [t.pval for t in in_tracers]
   known_ins = tuple(pv.is_known() for pv in in_pvals)
   unknown_ins = tuple(not k for k in known_ins)
@@ -280,6 +338,7 @@ def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,
                              + (core.MemorySpace.Device,) * len(res_out_avals))
   known_params = dict(jaxpr=known_jaxpr, compute_type=compute_type,
                       out_memory_spaces=known_out_memory_spaces,
+                      is_async=is_async,
                       compiler_options_json=compiler_options_json)
 
   known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
@@ -296,7 +355,7 @@ def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,
   unknown_params = dict(
       jaxpr=unknown_jaxpr, compute_type=compute_type,
       out_memory_spaces=keep_where(out_memory_spaces, unknown_outs),
-      compiler_options_json=compiler_options_json)
+      is_async=is_async, compiler_options_json=compiler_options_json)
 
   unknown_tracers_in = [*residual_tracers,
                         *(t for t in in_tracers if not t.pval.is_known())]
@@ -343,9 +402,16 @@ def _compute_on_partial_eval_custom_params_updater(
           len(params_staged['jaxpr'].out_avals))
   return new_params_known, new_params_staged
 
+def _compute_on_partial_eval_custom_rule(saveable, unks_in, inst_in, eqn):
+  if eqn.params['is_async']:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support remat.')
+  return pe.closed_call_partial_eval_custom_rule(
+      'jaxpr', _compute_on_partial_eval_custom_params_updater,
+      saveable, unks_in, inst_in, eqn)
+
 pe.partial_eval_jaxpr_custom_rules[compute_on_p] = \
-    partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
-            _compute_on_partial_eval_custom_params_updater)
+    _compute_on_partial_eval_custom_rule
 
 @weakref_lru_cache
 def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
@@ -363,7 +429,10 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
   return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 
 def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
-                          out_memory_spaces, compiler_options_json):
+                          out_memory_spaces, is_async, compiler_options_json):
+  if is_async:
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support transpose.')
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
@@ -377,6 +446,7 @@ def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
   outs = compute_on_p.bind(*in_flat, jaxpr=trans_jaxpr,
                            compute_type=compute_type,
                            out_memory_spaces=trans_spaces,
+                           is_async=is_async,
                            compiler_options_json=compiler_options_json)
   cts_out, logs = tree_unflatten(out_tree, outs)
   for x, ct in zip(args, cts_out):
@@ -387,7 +457,10 @@ ad.fancy_transposes[compute_on_p] = _compute_on_transpose
 
 
 def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
-                         compiler_options_json):
+                         is_async, compiler_options_json):
+  if is_async and any(a.is_high for a in jaxpr.out_avals):
+    raise NotImplementedError(
+        'compute_on with is_async=True does not support high-level outputs.')
   lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
   in_avals = ft.flatten(([[core.typeof(x) for x in xs] for xs in lo_args_lol],
@@ -397,7 +470,7 @@ def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
                     for _ in l)
   all_outs = compute_on_p.bind(*lo_args, jaxpr=lo_jaxpr,
                                compute_type=compute_type,
-                               out_memory_spaces=lo_spaces,
+                               out_memory_spaces=lo_spaces, is_async=is_async,
                                compiler_options_json=compiler_options_json)
   lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
@@ -431,3 +504,21 @@ def dce_jaxpr_compute_on_rule(used_outputs: list[bool], live_ins: list[bool],
       eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
   return used_inputs, new_eqn
 pe.dce_rules[compute_on_p] = dce_jaxpr_compute_on_rule
+
+
+compute_on_done_p = core.Primitive('compute_on_done')
+
+def _compute_on_done_abstract_eval(aval):
+  if not isinstance(aval, core.AbstractFuture):
+    raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
+  return aval.inner_aval
+compute_on_done_p.def_abstract_eval(_compute_on_done_abstract_eval)
+
+def _compute_on_done_lowering(ctx, x):
+  out_aval, = ctx.avals_out
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
+  out, = mlir.custom_call(
+      call_target_name="compute-on-done", result_types=[out_type],
+      operands=[x], api_version=1).results
+  return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
+mlir.register_lowering(compute_on_done_p, _compute_on_done_lowering)
