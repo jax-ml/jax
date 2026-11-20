@@ -56,6 +56,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "donation_recovery_test",
+    srcs = ["donation_recovery_test.py"],
+    deps = [
+        "//jax/experimental:donation_recovery",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "custom_api_test",
     srcs = ["custom_api_test.py"],
     backend_tags = {
@@ -2600,6 +2611,7 @@ exports_files(
         "colocated_python_test.py",
         "compilation_cache_test.py",
         "custom_api_test.py",
+        "donation_recovery_test.py",
         "layout_test.py",
         "memories_test.py",
         "pjit_test.py",

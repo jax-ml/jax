@@ -42,6 +42,7 @@ wheel_sources(
         "//jax/experimental:compute_on",
         "//jax/experimental:overlap",
         "//jax/experimental:custom_partitioning",
+        "//jax/experimental:donation_recovery",
         "//jax/experimental:fused",
         "//jax/experimental:hijax",
         "//jax/experimental:jet",

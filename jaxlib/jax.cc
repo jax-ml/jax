@@ -101,6 +101,7 @@ limitations under the License.
 #include "jaxlib/config.h"
 #include "jaxlib/custom_call_sharding.h"
 #include "jaxlib/dlpack.h"
+#include "jaxlib/donation_recovery.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/mlir.h"
@@ -750,6 +751,7 @@ NB_MODULE(_jax, m) {
   BuildGuardSubmodule(m);
   BuildJaxjitSubmodule(m);
   BuildPjitSubmodule(m);
+  BuildDonationRecoverySubmodule(m);
   Traceback::Register(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);

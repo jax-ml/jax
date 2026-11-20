@@ -29,6 +29,7 @@ import jaxlib._hlo
 
 from . import (
     config as config,
+    donation_recovery as donation_recovery,
     ffi as ffi,
     guard_lib as guard_lib,
     hlo_sharding_util as hlo_sharding_util,

@@ -56,6 +56,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
+#include "jaxlib/donation_recovery.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/jax_jit.h"
@@ -676,6 +677,31 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         PyObject_Vectorcall(cache_miss_.ptr(), args, nargs, kwnames));
   };
 
+  DonationRecoveryScope* recovery_scope = DonationRecoveryScope::Current();
+  if (recovery_scope != nullptr && recovery_scope->has_executed()) {
+    throw nb::value_error(
+        "A DonationRecovery scope can only wrap at most one JIT execution.");
+  }
+
+  size_t num_positional_args = PyVectorcall_NARGS(nargs);
+  size_t num_keyword_args = kwnames ? PyTuple_GET_SIZE(kwnames) : 0;
+  absl::Span<PyObject* const> positional_args(args, num_positional_args);
+  absl::Span<PyObject* const> keyword_args(args + num_positional_args,
+                                           num_keyword_args);
+
+  auto make_py_args_tuple = [&]() {
+    nb::tuple_builder py_pos_args(num_positional_args);
+    for (size_t i = 0; i < num_positional_args; ++i) {
+      py_pos_args.put(nb::handle(positional_args[i]));
+    }
+    nb::dict py_kwargs;
+    for (size_t i = 0; i < num_keyword_args; ++i) {
+      py_kwargs[nb::handle(PyTuple_GET_ITEM(kwnames, i))] =
+          nb::handle(keyword_args[i]);
+    }
+    return nb::make_tuple(py_pos_args.commit(), std::move(py_kwargs));
+  };
+
   // Call the cache_miss() function, extracting the output data and ignoring
   // the fastpath data. If the cache miss returns a Python error, returns
   // nullptr and leaves the Python error set.
@@ -692,14 +718,11 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     if (!cache_miss_output.ptr()) {
       return nb::object();
     }
+    if (recovery_scope != nullptr && recovery_scope->has_executed()) {
+      recovery_scope->SetPyArgs(make_py_args_tuple());
+    }
     return nb::object(cache_miss_output[0]);
   };
-
-  size_t num_positional_args = PyVectorcall_NARGS(nargs);
-  size_t num_keyword_args = kwnames ? PyTuple_GET_SIZE(kwnames) : 0;
-  absl::Span<PyObject* const> positional_args(args, num_positional_args);
-  absl::Span<PyObject* const> keyword_args(args + num_positional_args,
-                                           num_keyword_args);
 
   CallSignature call_signature;
   std::vector<nb::object> keep_alive_objects;
@@ -792,6 +815,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         executables_->Remove(call_signature);
       }
 
+      if (recovery_scope != nullptr && recovery_scope->has_executed()) {
+        recovery_scope->SetPyArgs(make_py_args_tuple());
+      }
+
       // We have already computed the result in the miss path so we can return
       // it. We are even *required* to do so if there are donated arguments,
       // because any donated buffers will now be invalid.
@@ -853,16 +880,33 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         *cache_entry->executable->ifrt_executable()->devices()));
   }
 
-  // A vector of [num_outputs].
-  std::vector<xla::ifrt::ArrayRef> output_arrays;
+#if defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 91
+  std::vector<const xla::ifrt::Array*> input_ifrt_arrays;
+  if (recovery_scope != nullptr) {
+    execute_options.fill_recovery_future = true;
+    input_ifrt_arrays.reserve(num_args_arrays->size());
+    for (const xla::ifrt::ArrayRef& arr : *num_args_arrays) {
+      input_ifrt_arrays.push_back(arr.get());
+    }
+  }
+#endif
+  xla::ifrt::LoadedExecutable::ExecuteResult result;
   {
     nb::gil_scoped_release gil_release;
-    ABSL_ASSIGN_OR_RETURN(auto result,
+    ABSL_ASSIGN_OR_RETURN(result,
                           cache_entry->executable->ifrt_executable()->Execute(
                               absl::MakeSpan(*num_args_arrays), execute_options,
                               /*devices=*/std::nullopt));
-    output_arrays = std::move(result.outputs);
   }
+  // A vector of [num_outputs].
+  std::vector<xla::ifrt::ArrayRef> output_arrays = std::move(result.outputs);
+#if defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 91
+  if (recovery_scope != nullptr) {
+    recovery_scope->RecordExecution(
+        std::move(result.recovery_future), cache_entry->executable->client(),
+        std::move(input_ifrt_arrays), make_py_args_tuple());
+  }
+#endif
 
   // Convert the ifrt::Array objects to PyArray.
   int num_outputs = output_arrays.size();
