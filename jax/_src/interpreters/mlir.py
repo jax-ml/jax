@@ -3243,7 +3243,7 @@ register_lowering(
 
 register_lowering(
     ad_util.stop_gradient_p, lambda ctx, x: [x],
-    shard_map_collective_rule=lambda *_, **__: None)
+    shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
 
 def compare_hlo(x, y, direction: str, comparison_type: str | None = None):

@@ -1859,8 +1859,10 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return a.astype(dt).astype(jnp.int8)
 
     with mesh.jax_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
 
+    self.assertIn('sdy.manual_computation', f.lower(x).as_text())
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -1995,8 +1997,10 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return jnp.copy(a)
 
     with mesh.jax_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
 
+    self.assertIn('sdy.manual_computation', f.lower(x).as_text())
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -2862,6 +2866,72 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with self.assertRaises(NotImplementedError):
       put_gspmd.lower(x)
+
+  @parameterized.named_parameters(
+      ('stop_gradient', lax.stop_gradient, 'float_arr'),
+      (
+          'checkpoint_name',
+          functools.partial(checkpoint_name, name='act'),
+          'float_arr',
+      ),
+      ('random_seed', jax.vmap(jax.random.key), 'seeds'),
+      ('random_wrap', jax.random.wrap_key_data, 'raw_key_data'),
+      ('random_unwrap', jax.random.key_data, 'keys'),
+      ('random_clone', jax.random.clone, 'keys'),
+      ('raw_bits', functools.partial(prng.raw_bits, shape=(3,)), 'keys'),
+      (
+          'raw_bits_4x32',
+          functools.partial(prng.raw_bits, shape=(3,)),
+          'keys_4x32',
+      ),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_first_order_noop_and_prng_partitioning_rules(
+      self, fn, arg_kind, mesh
+  ):
+    if arg_kind == 'float_arr':
+      arg = jax.device_put(
+          np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y')
+      )
+    elif arg_kind == 'seeds':
+      arg = jax.device_put(np.arange(4, dtype=np.int32), P('x'))
+    elif arg_kind == 'raw_key_data':
+      arg = jax.device_put(
+          np.arange(8, dtype=np.uint32).reshape(4, 2), P('x', None)
+      )
+    elif arg_kind == 'keys':
+      raw_key_data = jax.device_put(
+          np.arange(8, dtype=np.uint32).reshape(4, 2), P('x', None)
+      )
+      with mesh.jax_partitioning(False):
+        arg = jax.random.wrap_key_data(raw_key_data)
+    else:
+      assert arg_kind == 'keys_4x32'
+      seeds = jax.device_put(np.arange(4, dtype=np.int32), P('x'))
+      with mesh.jax_partitioning(False):
+        arg = jax.vmap(
+            functools.partial(jax.random.key, impl='threefry4x32')
+        )(seeds)
+
+    f_jit = jax.jit(fn)
+
+    with mesh.jax_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f_jit.lower(arg).as_text())
+      expected = f_jit(arg)
+
+    self.assertIn('sdy.manual_computation', f_jit.lower(arg).as_text())
+    out = f_jit(arg)
+    out_leaves, out_treedef = jax.tree.flatten(out)
+    exp_leaves, exp_treedef = jax.tree.flatten(expected)
+    self.assertEqual(out_treedef, exp_treedef)
+    for out_leaf, exp_leaf in zip(out_leaves, exp_leaves):
+      self.assertEqual(out_leaf.sharding, exp_leaf.sharding)
+      if jax.dtypes.issubdtype(out_leaf.dtype, jax.dtypes.prng_key):
+        self.assertArraysEqual(
+            jax.random.key_data(out_leaf), jax.random.key_data(exp_leaf)
+        )
+      else:
+        self.assertArraysEqual(out_leaf, exp_leaf)
 
 
 if __name__ == '__main__':

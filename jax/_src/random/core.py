@@ -4770,7 +4770,7 @@ random_clone_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(random_clone_p)
 mlir.register_lowering(
     random_clone_p, lambda _, k: [k],
-    shard_map_collective_rule=lambda *_, **__: None
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 
 

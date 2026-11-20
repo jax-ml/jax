@@ -930,7 +930,7 @@ ad.primitive_jvps[name_p] = name_jvp
 
 mlir.register_lowering(
     name_p, lambda ctx, x, *, name: [x],
-    shard_map_collective_rule=lambda *_, **__: None)
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims

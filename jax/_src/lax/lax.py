@@ -6681,7 +6681,7 @@ ad.primitive_transposes[to_edtype_p] = \
 batching.defvectorized(to_edtype_p)
 mlir.register_lowering(
     to_edtype_p, lambda _, x, **__: [x],
-    shard_map_collective_rule=lambda *_, **__: None)
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
 
 def _from_edtype_abstract_eval(x, *, dtype):
@@ -6725,7 +6725,7 @@ ad.primitive_transposes[from_edtype_p] = \
 batching.defvectorized(from_edtype_p)
 mlir.register_lowering(
     from_edtype_p, lambda _, x, **__: [x],
-    shard_map_collective_rule=lambda *_, **__: None)
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -11596,7 +11596,8 @@ def _copy_lowering(ctx, x):
   out_aval, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
 mlir.register_lowering(
-    copy_p, _copy_lowering, shard_map_collective_rule=lambda *_, **__: None)
+    copy_p, _copy_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 copy_p.is_high = lambda x: x.is_high  # type: ignore

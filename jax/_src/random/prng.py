@@ -793,7 +793,7 @@ def raw_bits_abstract_eval(keys_aval, *, shape):
   out_dtype = dtypes.dtype(impl.raw_dtype)
   out_sharding = lax.lax_utils.call_sharding_rule(
       raw_bits_p, _random_split_sharding_rule, None, None, keys_aval,
-      shape=shape)
+      shape=shape, out_sharding=None)
   out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
                               manual_axis_type=keys_aval.mat)
   return (out_aval,) * impl.num_streams
@@ -1034,7 +1034,7 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
 
 mlir.register_lowering(
     random_wrap_p, random_wrap_lowering,
-    shard_map_collective_rule=lambda *_, **__: None
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
@@ -1061,7 +1061,7 @@ def random_unwrap_lowering(ctx, keys):
 
 mlir.register_lowering(
     random_unwrap_p, random_unwrap_lowering,
-    shard_map_collective_rule=lambda *_, **__: None
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 
 
