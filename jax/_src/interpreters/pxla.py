@@ -340,7 +340,7 @@ class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
                'has_unordered_effects', 'ordered_effects', 'keepalive',
-               'has_host_callbacks', '_local_devices', 'kept_var_idx',
+               'has_host_callbacks', '_cached_local_devices', 'kept_var_idx',
                'mut', 'pgle_profiler', '__weakref__']
 
   def __init__(self, xla_executable, name, backend, in_handler: InputsHandler,
@@ -357,12 +357,18 @@ class ExecuteReplicated:
     self.out_handler = out_handler
     self.has_unordered_effects = bool(unordered_effects)
     self.ordered_effects = ordered_effects
-    self._local_devices = self.xla_executable.local_devices()
+    self._cached_local_devices = None
     self.keepalive = keepalive
     self.has_host_callbacks = has_host_callbacks
     self.kept_var_idx = kept_var_idx
     self.mut = mut
     self.pgle_profiler = pgle_profiler
+
+  @property
+  def _local_devices(self):
+    if self._cached_local_devices is None:
+      self._cached_local_devices = self.xla_executable.local_devices()
+    return self._cached_local_devices
 
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
