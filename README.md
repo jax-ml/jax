@@ -13,6 +13,11 @@
 | [**Change logs**](https://docs.jax.dev/en/latest/changelog.html)
 | [**Reference docs**](https://docs.jax.dev/en/latest/)
 
+<p align="center">
+  <b>English</b> · <a href="https://github.com/jax-ml/jax/blob/main/README.zh.md">简体中文</a>
+</p>
+
+
 
 ## What is JAX?
 
