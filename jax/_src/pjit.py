@@ -3229,7 +3229,11 @@ relayout_p.def_impl(_relayout_impl)
 def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
-mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+mlir.register_lowering(
+    relayout_p,
+    _relayout_hlo_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule(),
+)
 
 def _relayout_jvp_rule(primals, tangents, *, dst_layout):
   (p,), (t,) = primals, tangents
