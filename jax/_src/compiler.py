@@ -461,9 +461,6 @@ def compile_or_get_cached(
     logger.info("Dumped the module to %s.", dumped_to)
 
   is_multi_process = len(executable_devices.process_indices) > 1
-  min_device_process_id = min(
-      executable_devices, key=lambda device: device.id
-  ).process_index
 
   # cache_key: may be None if compilation caching is disabled
   cache_key, compile_options = _resolve_compilation_strategy(
@@ -474,7 +471,6 @@ def compile_or_get_cached(
     pgle_profiler,
     is_multi_process,
     module_name,
-    min_device_process_id,
   )
 
   if cache_key is None:
@@ -519,7 +515,7 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
-        min_device_process_id
+        min(executable_devices, key=lambda device: device.id).process_index,
     )
   else:
     log_persistent_cache_miss(module_name, cache_key)
@@ -564,7 +560,6 @@ def _resolve_compilation_strategy(
     pgle_profiler: profiler.PGLEProfiler | None,
     is_multi_process: bool,
     module_name: str,
-    min_device_process_id: int,
 ) -> tuple[str | None, xc.CompileOptions]:
   is_auto_pgle_used = (
       config.enable_pgle.value and config.pgle_profiling_runs.value > 0
@@ -626,7 +621,7 @@ def _resolve_compilation_strategy(
             compile_options,
             backend,
             distributed.global_state.client,
-            min_device_process_id,
+            min(devices, key=lambda device: device.id).process_index,
         )
       )
     return pgle_optimized_cache_key, compile_options
