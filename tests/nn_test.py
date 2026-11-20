@@ -15,6 +15,7 @@
 import collections
 from functools import partial
 import itertools
+import os
 import unittest
 
 from absl.testing import absltest
@@ -27,6 +28,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
+from jax._src.cudnn.fused_attention_stablehlo import check_cudnn_version
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
 )
@@ -40,7 +42,10 @@ config.parse_flags_with_absl()
 def _check_cudnn_backend(fn, *args, **kwargs):
   lowered = jax.jit(fn).lower(*args, **kwargs)
   hlo = lowered.as_text('stablehlo', debug_info=True)
-  return '__cudnn$fmha' in hlo
+  target = ('cudnn_sdpa_'
+            if os.getenv('JAX_CUDNN_SDPA_USE_PYTHON_FRONTEND') == '1'
+            else '__cudnn$fmha')
+  return target in hlo
 
 _cudnn_dbias_error = 'cuDNN only supports bias gradient'
 
@@ -313,8 +318,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Needs compute capability 8.0 or higher.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
-    if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
-      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    if (impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0)
+        and check_cudnn_version() < 92700):
+      raise unittest.SkipTest("CUDA 13 SDPA tests require cuDNN 9.27 or newer.")
 
     S = T = 128 if impl == 'cudnn' else 32
     B, N, H, G = 2, 4, 32, group_num
@@ -384,8 +390,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if use_cudnn:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
-      if jtu.is_cuda_version_at_least(13, 0):
-        raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+      if (jtu.is_cuda_version_at_least(13, 0)
+          and check_cudnn_version() < 92700):
+        raise unittest.SkipTest("CUDA 13 SDPA tests require cuDNN 9.27 or newer.")
 
     dtype = jnp.bfloat16
     S = T = 128 if use_cudnn else 32
@@ -470,8 +477,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if use_cudnn:
       if not jtu.is_cuda_compute_capability_at_least("8.0"):
         raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
-      if jtu.is_cuda_version_at_least(13, 0):
-        raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+      if (jtu.is_cuda_version_at_least(13, 0)
+          and check_cudnn_version() < 92700):
+        raise unittest.SkipTest("CUDA 13 SDPA tests require cuDNN 9.27 or newer.")
 
     dtype = jnp.bfloat16
     S = 128 if use_cudnn else 32
