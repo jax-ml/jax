@@ -22,6 +22,8 @@ import jax
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask_info as mask_info_lib
+from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
+from jax.sharding import Mesh, PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
 
@@ -2333,7 +2335,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
             [[1, 1, 1, 1], [1, 1, 1, 1]],
             [[1, 1, 1, 0], [1, 1, 1, 1]],
         ],
-        dtype=np.bool_,
+        dtype=np.int8,
     )
 
     _expected_mask_next = np.array(
@@ -2379,6 +2381,143 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     )
     self.assertArraysEqual(mask_info.mask_next, _expected_mask_next)
     self.assertArraysEqual(mask_info.data_next, _expected_data_next)
+
+  @parameterized.product(
+    shape=[(128, 128), (256, 256), (256, 512),(512, 256), (512, 512)],
+    seed=[0, 1, 2],
+    mask_type=['causal', 'random', 'full'],)
+  def test_numpy_mask_jit_vs_eager(self, shape, seed,mask_type):
+    q_len, kv_len = shape
+    batch_size = 2
+    num_heads = 2
+    head_dim = 128
+
+    q = jax.random.normal(jax.random.key(seed), (batch_size, num_heads, q_len, head_dim))
+    k = jax.random.normal(jax.random.key(seed + 1), (batch_size, num_heads, kv_len, head_dim))
+    v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
+
+    mask_factories = {
+        'causal': lambda: jnp.tril(jnp.ones((q_len, kv_len), dtype=jnp.bool_)),
+        'random': lambda: jax.random.bernoulli(jax.random.key(seed), p=0.5, shape=(q_len, kv_len)),
+        'full': lambda: jnp.ones((q_len, kv_len), dtype=jnp.bool_),
+    }
+    dense_mask = mask_factories[mask_type]()
+
+    def run_attention(query, key, value, mask_array):
+        mask = mask_lib.NumpyMask(array=mask_array)
+        multi_head_mask = mask_lib.MultiHeadMask(
+            masks=(mask,) * num_heads
+        )
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=multi_head_mask,
+            head_shards=1,
+            q_seq_shards=1,
+        )
+        return jax.vmap(kernel)(query, key, value)
+
+    eager_output = run_attention(q, k, v, dense_mask)
+    jit_output = jax.jit(run_attention)(q, k, v, dense_mask)
+
+    # Attention output should match between eager and jit. Under jit, NumpyMask
+    # arrays become tracers and are routed through the dynamic mask path, producing
+    # different intermediate representations.
+
+    self.assertArraysEqual(eager_output, jit_output)
+
+  @parameterized.product(
+    shape=[(128, 128), (256, 256), (256, 512),(512, 256), (512, 512)],
+    seed=[0, 1, 2],
+    mask_type=['causal', 'random', 'full'],)
+  def test_numpy_mask_jit_vs_eager_distributed_heads(self, shape, seed,mask_type):
+    q_len, kv_len = shape
+    batch_size = 2
+    num_heads = 8
+    head_dim = 128
+
+    q = jax.random.normal(jax.random.key(seed), (batch_size, num_heads, q_len, head_dim))
+    k = jax.random.normal(jax.random.key(seed + 1), (batch_size, num_heads, kv_len, head_dim))
+    v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
+
+    mask_factories = {
+        'causal': lambda: jnp.tril(jnp.ones((q_len, kv_len), dtype=jnp.bool_)),
+        'random': lambda: jax.random.bernoulli(jax.random.key(seed), p=0.5, shape=(q_len, kv_len)),
+        'full': lambda: jnp.ones((q_len, kv_len), dtype=jnp.bool_),
+    }
+    dense_mask = mask_factories[mask_type]()
+    num_devices = jax.device_count()
+    mesh = Mesh(np.array(jax.devices()), axis_names=('heads',))
+
+    # Path A: concrete mask captured as constant should follow static pathway (process_mask)
+    def run_static(query, key, value):
+        mask = mask_lib.NumpyMask(array=np.asarray(dense_mask))
+        mhm = mask_lib.MultiHeadMask(masks=(mask,) * num_heads)
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=mhm, head_shards=num_devices, q_seq_shards=1)
+        return jax.vmap(kernel)(query, key, value)
+
+    # Path B: mask passed as arg becomes a tracer should follow dynamic pathway (process_dynamic_mask)
+    def run_dynamic(query, key, value, mask_array):
+        mask = mask_lib.NumpyMask(array=mask_array)
+        mhm = mask_lib.MultiHeadMask(masks=(mask,) * num_heads)
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=mhm, head_shards=num_devices, q_seq_shards=1)
+        return jax.vmap(kernel)(query, key, value)
+
+    static_out  = jax.shard_map(run_static,  mesh=mesh,
+                    in_specs=(P(None,'heads',None,None),)*3,
+                    out_specs=P(None,'heads',None,None), check_vma=False)(q, k, v)
+
+    dynamic_out = jax.shard_map(run_dynamic, mesh=mesh,
+                    in_specs=(P(None,'heads',None,None),)*3 + (P(),),
+                    out_specs=P(None,'heads',None,None), check_vma=False)(q, k, v, dense_mask)
+
+    self.assertArraysEqual(static_out, dynamic_out)
+
+  @parameterized.named_parameters(
+    ("traced", True),
+    ("concrete", False),
+    )
+  def test_numpy_mask_info_is_traced_only_when_mask_is_traced(self, traced):
+    n, seq_len = 8, 256
+    mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+    captured = {}
+
+    def build(mask_array):
+      mhm = mask_lib.MultiHeadMask(
+          masks=(mask_lib.NumpyMask(array=mask_array),) * n)
+      kernel = splash_attention_kernel.make_splash_mha(
+          mask=mhm, head_shards=1, q_seq_shards=1)
+      captured["leaves"] = jax.tree.leaves(kernel.fwd_mask_info)
+
+    if traced:
+      jax.jit(build)(mask)
+    else:
+      build(np.asarray(mask))
+
+    has_tracer = any(isinstance(x, jax.core.Tracer) for x in captured["leaves"])
+    self.assertEqual(has_tracer, traced)
+
+  @parameterized.named_parameters(
+    ("traced_raises", True),
+    ("concrete_ok", False),
+    )
+  def test_numpy_mask_q_seq_shards(self, traced):
+    n, seq_len, head_dim = 8, 256, 128
+    q = k = v = jnp.ones((n, seq_len, head_dim))
+    mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+
+    def run(q, k, v, mask_array):
+      mhm = mask_lib.MultiHeadMask(
+          masks=(mask_lib.NumpyMask(array=mask_array),) * n)
+      return splash_attention_kernel.make_splash_mha(
+          mask=mhm, head_shards=1, q_seq_shards=2)(q, k, v)
+
+    if traced:
+      with self.assertRaisesRegex(ValueError, "q_seq_shards"):
+        jax.jit(run)(q, k, v, mask)
+    else:
+      run(q, k, v, np.asarray(mask))
+
 
 
 if __name__ == "__main__":

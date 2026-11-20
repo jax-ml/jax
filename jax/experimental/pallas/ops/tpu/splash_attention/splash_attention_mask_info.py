@@ -20,13 +20,15 @@ from collections.abc import Callable
 import functools
 import math
 from typing import NamedTuple
+import inspect
 
 import jax
 from jax._src import util as jax_util
+from jax.core import Tracer
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np
-
+from jax._src.pallas.mosaic.tpu_info import get_tpu_info
 
 # Logic for processing NumPy masks for kernels
 class MaskInfo(NamedTuple):
@@ -312,6 +314,95 @@ def _get_mask_info_for_shard(
 
   return data_next, mask_next
 
+def _check_smem_limit(
+    leading_dim: int,
+    q_blocks_count: int,
+    kv_blocks_count: int,
+    q_block_size: int,
+    kv_block_size: int,
+    has_mask_next: bool,
+    is_dkv: bool,
+    max_mask_next: int | None = None,
+    max_data_next: int | None = None,
+  ):
+  """Check that mask scheduling metadata fits in SMEM.
+
+    The Splash Attention kernel prefetches scheduling metadata into SMEM
+    before execution. The metadata layout depends on the mask type.
+
+    Smaller block sizes produce more blocks, increasing metadata
+    quadratically. If the metadata exceeds SMEM capacity, a ValueError is
+    raised with a suggested minimum block size. The suggestion uses
+    geometric scaling (powers of 2) relative to the default block size to
+    ensure clean divisibility with powers-of-2 sequence lengths, and is
+    conservative: increasing block size reduces block counts, which both
+    shrinks the metadata and may enable more aggressive downcasting of
+    index values.
+
+    Args:
+        leading_dim: Leading dimension of the metadata arrays (per-shard
+            where applicable).
+        q_blocks_count: Number of query blocks in the metadata (per-shard
+            where applicable).
+        kv_blocks_count: Number of key-value blocks in the metadata.
+        q_block_size: Number of tokens per query block.
+        kv_block_size: Number of tokens per key-value block.
+        has_mask_next: If True, a mask_next array is materialized in SMEM
+            (NumpyMask / dynamic mask case; all three metadata arrays are
+            present and scaled by leading_dim). If False, the mask is
+            computed in-kernel via a mask_function (e.g. CausalMask), so
+            mask_next is omitted from the estimate.
+        is_dkv: If True, uses q_blocks_count as the max value for data_next
+            downcasting (dKV backward pass iterates over Q blocks);
+            otherwise uses kv_blocks_count (forward pass iterates over KV
+            blocks).
+        max_mask_next: Optional Maximum value for mask_next. Used to
+            compute a tighter mask_next estimate when has_mask_next is True.
+        max_data_next: Optional Maximum value for data_next.
+
+    Raises:
+        ValueError: If the estimated SMEM usage exceeds TPU capacity. The
+            message includes a suggested minimum block size that would fit.
+  """
+
+  tpu_info = get_tpu_info()
+  smem_limit = tpu_info.smem_capacity_bytes
+
+  def _downcast_dtype_size(max_val):
+    if max_val <= np.iinfo(np.int8).max:
+      return np.dtype(np.int8).itemsize
+    elif max_val <= np.iinfo(np.int16).max:
+      return np.dtype(np.int16).itemsize
+    return np.dtype(np.int32).itemsize
+
+  data_next_max = max_data_next
+  if data_next_max is None:
+    data_next_max = q_blocks_count if is_dkv else kv_blocks_count
+  elements = leading_dim * q_blocks_count * kv_blocks_count
+  required_smem_bytes = (
+          elements * _downcast_dtype_size(data_next_max) # data_next
+        + elements * 1                                   # block_mask: always int8
+  )
+
+  if has_mask_next and max_mask_next is not None:
+    required_smem_bytes += elements * _downcast_dtype_size(max_mask_next) # mask_next
+
+  if required_smem_bytes > smem_limit:
+    # When block size increases, element counts drop. It also enables aggressive
+    # downcasting (smaller dtypes), so actual SMEM usage drops faster than the linear estimate.
+    # Future work may explore rectangular block sizes as current symmetric block
+    # size will always be safe, just potentially larger than strictly necessary.
+    default_block_size = 128
+    block_size = math.sqrt(
+            (required_smem_bytes * q_block_size * kv_block_size) / smem_limit
+        )
+    scaling_factor = math.ceil(math.log2(block_size / default_block_size))
+    min_block_size = default_block_size * (2 ** scaling_factor)
+    raise ValueError(
+            f"Splash attention mask metadata requires {required_smem_bytes / (1024*1024):.2f} MiB "
+            f"but SMEM limit is {smem_limit / (1024*1024):.2f} MiB. "
+            f"Rebuild mask and attention with block_sizes={min_block_size}."
+        )
 
 def _process_dynamic_mask(
     mask: jax.Array,
@@ -399,9 +490,17 @@ def _process_dynamic_mask(
           kv_block_size,
       )
       .swapaxes(-2, -3)
-      .astype(np.bool_)
+      .astype(jnp.int8)
   )
-
+  _check_smem_limit(leading_dim=head_count,
+                    q_blocks_count=q_blocks_per_shard,
+                    kv_blocks_count=kv_blocks_count,
+                    q_block_size=q_block_size,
+                    kv_block_size=kv_block_size,
+                    has_mask_next=True,
+                    is_dkv=is_dkv,
+                    max_mask_next=heads_per_shard * q_blocks_per_shard * kv_blocks_count,
+                    max_data_next=None)
   # The block mask is 2 for all blocks with all entries set to True and 1 for
   # blocks with a mix of True and False entries.
   is_full_mask = jnp.all(partial_mask_blocks, axis=(-1, -2))
@@ -1125,9 +1224,74 @@ def _slice_mask_info(
 
   return block_mask, data_next, mask_next
 
+def _route_mask(*args, **kwargs):
+  """
+  Dispatches mask processing to the static or dynamic implementation.
 
-process_mask = functools.partial(_process_mask, is_dkv=False)
-process_mask_dkv = functools.partial(_process_mask, is_dkv=True)
+  Callers use the signature of _process_dynamic_mask. The target is chosen
+  from the type of mask:
+
+  Only the arguments that the chosen function accepts are forwarded.
+
+  Returns:
+    The apt mask processing function returns.
+
+  Raises:
+    ValueError: If the mask is a traced NumpyMask and q_seq_shards > 1.
+  """
+
+  given = dict(_DYNAMIC_SIG.bind(*args, **kwargs).arguments)
+  mask = given["mask"]
+
+  def _is_numpy_mask_with_traced_arrays(mask) -> bool:
+    """
+    Returns True if mask is a MultiHeadMask made only of traced NumpyMasks.
+
+    A NumpyMask wraps a materialized array. When that array is a JAX tracer (for
+    example, the mask is an argument of a jitted function), its values are not
+    known at trace time. The static mask-processing path can't handle it,
+    because that path inspects concrete values to build block-sparsity info.
+
+    Args:
+      mask: Any mask object accepted by the splash attention entry points.
+
+    Returns:
+      True if every per-head mask is a NumpyMask whose array is a Tracer.
+      False otherwise, including for an empty MultiHeadMask.
+    """
+    return (
+        isinstance(mask, mask_lib.MultiHeadMask)
+        and len(mask.masks) > 0
+        and all(
+            isinstance(m, mask_lib.NumpyMask) and isinstance(m.array, Tracer)
+            for m in mask.masks
+        )
+    )
+
+  if _is_numpy_mask_with_traced_arrays(mask):
+    if given.get("q_seq_shards",1) > 1:
+      raise ValueError(
+          "Sequence sharding (q_seq_shards > 1) is not supported for "
+          "materialized NumpyMask under JIT. Unlike _ComputableMask, "
+          "NumpyMask has no mask_function to evaluate per shard, so it "
+          "cannot be sharded correctly along the sequence dimension. Use a "
+          "computable mask (e.g. LocalMask, CausalMask), disable JIT, or "
+          "set q_seq_shards == 1."
+      )
+    target, target_sig = _process_dynamic_mask, _DYNAMIC_SIG
+    given["mask"] = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
+  else:
+    target, target_sig = _process_mask, _STATIC_SIG
+
+  accepted = target_sig.parameters
+  call = target_sig.bind(**{k: v for k, v in given.items() if k in accepted})
+  return target(*call.args, **call.kwargs)
+
+_STATIC_SIG = inspect.signature(_process_mask)
+_DYNAMIC_SIG = inspect.signature(_process_dynamic_mask)
+
+process_mask = functools.partial(_route_mask, is_dkv=False)
+process_mask_dkv = functools.partial(_route_mask, is_dkv=True)
 
 process_dynamic_mask = functools.partial(_process_dynamic_mask, is_dkv=False)
 process_dynamic_mask_dkv = functools.partial(_process_dynamic_mask, is_dkv=True)
