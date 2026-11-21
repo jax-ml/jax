@@ -19,6 +19,7 @@ from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
+from jax._src.scipy.stats._core import log1m_exp_neg_exp
 from jax._src.scipy.special import xlogy, xlog1py
 
 
@@ -121,11 +122,7 @@ def logcdf(x: ArrayLike,
   x, loc, scale = promote_args_inexact("gumbel_l.logcdf", x, loc, scale)
   ok = lax.gt(scale, _lax_const(scale, 0))
   z = lax.div(lax.sub(x, loc), scale)
-  neg_exp_z = lax.neg(lax.exp(z))
-  # xlog1p fails here, that's why log1p is used here
-  # even log1p fails for some cases when using float64 mode
-  # so we're using this formula which is stable
-  log_cdf = lax.log(-lax.expm1(neg_exp_z))
+  log_cdf = log1m_exp_neg_exp(z)
   return jnp.where(ok, log_cdf, np.nan)
 
 

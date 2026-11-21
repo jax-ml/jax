@@ -2422,5 +2422,50 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            else {np.float32: 1e-3, np.float64: 1e-5})
     self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol)
 
+  @jtu.sample_product(
+    case=[
+      ("gumbel_r", "sf", [-88.5, 0.0, 17.0, 20.0, 40.0]),
+      ("gumbel_l", "logcdf", [-200.0, -105.0, -20.0, -10.0, -9.5, 0.0, 3.0, 10.0, 100.0]),
+      ("gumbel_r", "logsf", [-100.0, -10.0, -3.0, 0.0, 9.5, 10.0, 20.0, 105.0, 200.0]),
+    ],
+    dtype=jtu.dtypes.floating,
+  )
+  def testGumbelTailsKeepPrecision(self, case, dtype):
+    # sf and logcdf are close to 0 in one tail and must not be computed as a
+    # difference from 1; logcdf and logsf also underflow in the other tail.
+    name, method, xs = case
+    x = np.asarray(xs, dtype)
+    z = x.astype(np.float64)
+    with np.errstate(all="ignore"):
+      expected = {
+          ("gumbel_r", "sf"): -np.expm1(-np.exp(-z)),
+          ("gumbel_l", "logcdf"): np.log(-np.expm1(-np.exp(z))),
+          ("gumbel_r", "logsf"): np.log(-np.expm1(-np.exp(-z))),
+      }[name, method]
+    actual = getattr(getattr(lsp_stats, name), method)(x)
+    rtol = 1e-3 if dtype == np.float32 else 1e-6
+    self.assertAllClose(actual, expected, atol=0, rtol=rtol, check_dtypes=False)
+
+  @jtu.sample_product(
+    case=[
+      ("gumbel_r", "sf", [-200.0, -100.0, 0.0, 17.0, 40.0]),
+      ("gumbel_l", "logcdf", [-200.0, -105.0, -10.0, 0.0, 3.0, 100.0]),
+      ("gumbel_r", "logsf", [-100.0, 0.0, 10.0, 105.0, 200.0]),
+    ],
+  )
+  def testGumbelTailsGradientsAreFinite(self, case):
+    name, method, xs = case
+    x = np.asarray(xs, np.float32)
+    z = x.astype(np.float64)
+    with np.errstate(all="ignore"):
+      expected = {
+          ("gumbel_r", "sf"): -np.exp(-z - np.exp(-z)),
+          ("gumbel_l", "logcdf"): np.exp(z) / np.expm1(np.exp(z)),
+          ("gumbel_r", "logsf"): -np.exp(-z) / np.expm1(np.exp(-z)),
+      }[name, method]
+    fun = getattr(getattr(lsp_stats, name), method)
+    actual = jax.vmap(jax.grad(fun))(x)
+    self.assertAllClose(actual, expected, atol=1e-30, rtol=1e-3, check_dtypes=False)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

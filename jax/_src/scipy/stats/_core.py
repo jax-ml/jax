@@ -23,9 +23,29 @@ from jax._src import api
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
+from jax._src.lax.lax import _const as _lax_const
+from jax._src.nn.functions import log1mexp
 from jax._src.numpy.util import check_arraylike, promote_args_inexact
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
+
+
+def log1m_exp_neg_exp(z: Array) -> Array:
+  """Compute ``log(1 - exp(-exp(z)))`` for floating-point ``z``.
+
+  ``exp(z)`` underflows to zero for very negative ``z``, where the result is
+  ``z - exp(z) / 2 + O(exp(2 * z))``, and overflows for large ``z``, where the
+  result is zero. Each branch only sees arguments it can handle, so values and
+  gradients stay finite.
+  """
+  lo = _lax_const(z, -10)
+  hi = _lax_const(z, math.log(float(dtypes.finfo(z.dtype).max)) - 1)
+  small = z <= lo
+  z_small = jnp.where(small, z, lo)
+  z_large = jnp.where(small, lo, jnp.where(z > hi, hi, z))
+  return jnp.where(small,
+                   z_small - _lax_const(z, 0.5) * lax.exp(z_small),
+                   log1mexp(lax.exp(z_large)))
 
 
 class ModeResult(NamedTuple):
