@@ -3461,6 +3461,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
 
+  def testAsarrayExistingArrayFastPath(self):
+    x = jnp.arange(3)
+    self.assertIs(jnp.asarray(x), x)
+    self.assertIs(jnp.asarray(x, copy=False), x)
+    self.assertIsNot(jnp.asarray(x, copy=True), x)
+
   @jtu.sample_product(
     shape=nonempty_nonscalar_array_shapes,
     dtype=[int, float, complex],

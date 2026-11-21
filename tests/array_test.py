@@ -64,6 +64,12 @@ def create_array(shape, sharding, global_data=None):
 
 class JaxArrayTest(jtu.JaxTestCase):
 
+  def test_asarray_existing_multi_device_array(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    sharding = NamedSharding(mesh, P('x'))
+    x = jax.device_put(jnp.arange(4), sharding)
+    self.assertIs(jnp.asarray(x), x)
+
   def test_array_impl_name(self):
     self.assertEqual(array.ArrayImpl.__name__, "ArrayImpl")
 

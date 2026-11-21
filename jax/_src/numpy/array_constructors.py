@@ -189,6 +189,8 @@ def array(object: Any, dtype: DTypeLike | None = None, *, copy: bool = True,
   if dtype is None and device is None and out_sharding is None and ndmin == 0:
     if isinstance(object, core.Tracer) and not core.is_concrete(object):
       return lax._array_copy(object) if copy else object
+    if isinstance(object, Array):
+      return lax._array_copy(object) if copy else object
     if isinstance(object, (int, float, complex, np.number)):
       return lax.stage(object)
     if isinstance(object, np.ndarray) and not isinstance(object, np.ma.MaskedArray):
