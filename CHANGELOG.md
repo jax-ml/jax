@@ -189,6 +189,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     returned all orders `0..v`, whereas `jn(n, z)` returns only order `n`).
 
 * Changes
+  * Operations in user-written {func}`jax.custom_vjp` backward rules now report
+    their backward function source locations instead of the forward call site.
+    Automatically generated (non-custom) derivatives retain their forward
+    source attribution.
   * On GPU, when neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
     `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, JAX now preallocates 75% of GPU
     memory at startup and allows the default GPU memory pool to grow up to
