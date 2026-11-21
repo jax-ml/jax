@@ -353,8 +353,10 @@ custom_vmap_p.def_impl(custom_vmap_impl)
 custom_vmap_p.def_effectful_abstract_eval(custom_vmap_abstract_eval)
 batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
-mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
-    custom_vmap_impl, multiple_results=True))
+mlir.register_lowering(
+    custom_vmap_p,
+    mlir.lower_fun(custom_vmap_impl, multiple_results=True),
+    shard_map_collective_rule=lambda *_, **__: None)
 custom_vmap_p.to_lojax = custom_vmap_impl
 
 

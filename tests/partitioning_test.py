@@ -2933,6 +2933,75 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       else:
         self.assertArraysEqual(out_leaf, exp_leaf)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_custom_vmap(self, mesh):
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y')
+    )
+
+    @jax.custom_batching.custom_vmap
+    def f(a):
+      return jnp.sum(a * 2.0, axis=-1)
+
+    @f.def_vmap
+    def f_vmap(axis_size, in_batched, a):
+      del axis_size
+      (batched,) = in_batched
+      if not batched:
+        return f(a), False
+      return jnp.sum(a * 2.0, axis=-1), True
+
+    @jax.jit
+    def call_direct(a):
+      return f(a)
+
+    @jax.jit
+    def call_vmapped(a):
+      return jax.vmap(f)(a)
+
+    @jax.jit
+    def call_jvp(a):
+      return jax.jvp(f, (a,), (jnp.ones_like(a),))
+
+    for fn in (call_direct, call_vmapped):
+      with mesh.jax_partitioning(False):
+        self.assertNotIn('sdy.manual_computation', fn.lower(x).as_text())
+        expected = fn(x)
+      self.assertIn('sdy.manual_computation', fn.lower(x).as_text())
+      out = fn(x)
+      self.assertEqual(out.sharding, expected.sharding)
+      self.assertArraysEqual(out, expected)
+
+    with mesh.jax_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', call_jvp.lower(x).as_text())
+      exp_p, exp_t = call_jvp(x)
+    self.assertIn('sdy.manual_computation', call_jvp.lower(x).as_text())
+    out_p, out_t = call_jvp(x)
+    self.assertEqual(out_p.sharding, exp_p.sharding)
+    self.assertEqual(out_t.sharding, exp_t.sharding)
+    self.assertArraysEqual(out_p, exp_p)
+    self.assertArraysEqual(out_t, exp_t)
+
+    x_seq = jax.device_put(
+        np.arange(32, dtype=np.float32).reshape(2, 4, 4), P(None, 'x', 'y')
+    )
+
+    @jax.jit
+    def call_seq_vmap(a):
+      return jax.vmap(jax.custom_batching.sequential_vmap(jnp.sin))(a)
+
+    with mesh.jax_partitioning(False):
+      self.assertNotIn(
+          'sdy.manual_computation', call_seq_vmap.lower(x_seq).as_text()
+      )
+      exp_seq = call_seq_vmap(x_seq)
+    self.assertIn(
+        'sdy.manual_computation', call_seq_vmap.lower(x_seq).as_text()
+    )
+    out_seq = call_seq_vmap(x_seq)
+    self.assertEqual(out_seq.sharding, exp_seq.sharding)
+    self.assertArraysEqual(out_seq, exp_seq)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
