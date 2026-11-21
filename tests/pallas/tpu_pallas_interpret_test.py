@@ -1969,6 +1969,7 @@ class InterpretTest(jtu.JaxTestCase):
       use_prim=[False, True],
       mode=['interpret_true', 'interpret_params', 'tpu_lowering'],
   )
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_emit_pipeline_dynamic_and_megacore_num_programs(
       self, use_prim, mode
   ):

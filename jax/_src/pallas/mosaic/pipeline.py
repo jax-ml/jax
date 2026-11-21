@@ -21,8 +21,10 @@ import contextlib
 import dataclasses
 import enum
 import functools
+import inspect
 import itertools
 import math
+import sys
 from typing import Any, Literal
 
 import jax
@@ -34,6 +36,7 @@ from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import effects
 from jax._src import flattree as ft
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import util as jax_util
 from jax._src.interpreters import batching
@@ -2136,13 +2139,65 @@ def _emit_pipeline(
   return pipeline
 
 
+def _resolve_explicit_indices(
+    explicit_indices: bool | None, *, warn: bool = True
+) -> bool:
+  if explicit_indices:
+    return True
+  # The user's frame is not at a fixed depth: the public wrappers call
+  # emit_pipeline themselves.
+  frame, stacklevel = sys._getframe(), 1
+  while (
+      not source_info_util.is_user_filename(frame.f_code.co_filename)
+      and (outer := frame.f_back) is not None
+  ):
+    frame, stacklevel = outer, stacklevel + 1
+  if (
+      explicit_indices is None
+      and config.pallas_tpu_pipeline_explicit_indices.value
+  ):
+    return not frame.f_code.co_filename.endswith(
+        config.pallas_tpu_emit_pipeline_legacy_files
+    )
+  if warn:
+    deprecations.warn(
+        "jax-pallas-tpu-emit-pipeline-indices",
+        "pltpu.emit_pipeline without _explicit_indices=True is deprecated. "
+        "Pass it and use the pltpu.PipelineStep passed as the first body "
+        "argument instead of pl.program_id.",
+        stacklevel,
+    )
+  return False
+
+
+def _with_explicit_indices_hint(body):
+  @functools.wraps(body)
+  def wrapper(*args):
+    try:
+      return body(*args)
+    except TypeError as e:
+      if callable(body):
+        try:
+          inspect.signature(body).bind(*args)
+        except TypeError:
+          e.add_note(
+              "pltpu.emit_pipeline passes a pltpu.PipelineStep as the first "
+              "body argument. Use it instead of pl.program_id, or pass "
+              "temporarily enable the old behavior with "
+              "_explicit_indices=False."
+          )
+      raise
+
+  return wrapper
+
+
 def emit_pipeline_with_allocations(
     body,
     *,
     grid,
     in_specs=(),
     out_specs=(),
-    _explicit_indices: bool = False,
+    _explicit_indices: bool | None = None,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -2227,8 +2282,11 @@ def emit_pipeline(
     trace_scopes: bool = True,
     no_pipelining: bool = False,
     output_wait_read_only: bool = False,
-    _explicit_indices: bool = False,
+    _explicit_indices: bool | None = None,
 ):
+  _explicit_indices = _resolve_explicit_indices(_explicit_indices)
+  if _explicit_indices:
+    body = _with_explicit_indices_hint(body)
   in_specs = _normalize_specs(in_specs)
   out_specs = _normalize_specs(out_specs)
 
