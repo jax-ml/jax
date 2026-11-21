@@ -114,7 +114,7 @@ CURRENT_TESTDATA_VERSION = 1
 @dataclasses.dataclass
 class CompatTestData:
   testdata_version: int
-  platform: str  # One of: "cpu", "tpu", "cuda", "rocm"
+  platform: str  # One of: "cpu", "tpu", "cuda", "rocm", "oneapi"
   custom_call_targets: list[str]
   serialized_date: datetime.date  # e.g., datetime.date(2023, 3, 9)
   inputs: Sequence[np.ndarray]
