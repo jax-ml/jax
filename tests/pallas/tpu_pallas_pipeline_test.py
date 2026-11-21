@@ -230,6 +230,34 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     out = kernel(x, y, z)
     np.testing.assert_allclose(out, x + y + 2 * z.reshape((8 * 8, 128)))
 
+  def test_emit_pipeline_hbm_block_spec_neutral_ref(self):
+    def pipeline_body(step, x_r, y_r, o_r):
+      del step
+      pltpu.sync_copy(y_r, o_r)
+      o_r[...] = o_r[...] + x_r[...]
+
+    in_x = pl.BlockSpec((8, 128), lambda i: (0, 0))
+    in_y = pl.BlockSpec((8, 128), lambda i: (0, 0), memory_space=pltpu.HBM)
+    out_s = pl.BlockSpec((8, 128), lambda i: (0, 0))
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+    )
+    def kernel(x_hbm, y_ref, o_hbm):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(1,),
+          in_specs=(in_x, in_y),
+          out_specs=out_s,
+          _explicit_indices=True,
+      )(x_hbm, y_ref, o_hbm)
+
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    y = jnp.full((8, 128), 3.0, dtype=jnp.float32)
+    out = kernel(x, jax.new_ref(y))
+    np.testing.assert_allclose(out, x + y)
+
   def test_emit_pipeline_filter_no_block_spec(self):
     test_self = self
     def pipeline_body(step, x_ref, y_ref, o_ref):
