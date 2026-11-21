@@ -287,11 +287,6 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
       scratch: bool, vmap: bool, dyn_grid: bool):
     # Tests what we process correctly all the various inputs and outputs:
     # dynamic_grid_dims, index, inputs, outputs, scratch.
-    if jtu.test_device_matches(['cpu']) and jax.config.x64_enabled:
-      self.skipTest(
-          'TODO: dslice(start, 1) raises error about slice inputs being int32'
-          ' and int64'
-      )
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     if vmap:
       x_shape = (4, 16, 128)
@@ -1596,8 +1591,11 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     np.testing.assert_allclose(y, x)
 
   def test_dma_with_regular_semaphore(self):
-    if not jtu.is_device_tpu_at_least(6):
-      self.skipTest('Regular semaphores in DMAs require TPU v6+')
+    if not (
+        jtu.is_device_tpu(version=5, variant='p')
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Regular semaphores in DMAs require TPU v5p or TPU v6+')
 
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, y_ref, sem):
@@ -1644,8 +1642,11 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       )(x)
 
   def test_unrolled_dma_with_regular_semaphore_raises(self):
-    if not jtu.is_device_tpu_at_least(6):
-      self.skipTest('Regular semaphores in DMAs require TPU v6+')
+    if not (
+        jtu.is_device_tpu(version=5, variant='p')
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Regular semaphores in DMAs require TPU v5p or TPU v6+')
 
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(x_ref, sem):
@@ -2520,11 +2521,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   def test_replicated_broadcast_reduction(
       self, m, replicated, reduced_dims, dty, reduce_func
   ):
-    if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
-      self.skipTest(
-          'Brodcast in both sublanes and lanes not supported on this hardware'
-      )
-
     in_shape = (1 if replicated[0] else m, 1 if replicated[1] else m)
     red_shape = [m, m]
     for d in reduced_dims:
@@ -4516,8 +4512,6 @@ class TPUBooleanTest(ptu.PallasTPUTest):
 
   @parameterized.parameters((False,), (True,))
   def test_scalar_bool_run_scoped(self, value):
-    if self.INTERPRET:
-      self.skipTest('run_scoped not supported in non-interpret mode.')
     def kernel(x_ref, o_ref):
       def inner_scope(scoped_ref):
         scoped_ref[0, 0] = jnp.logical_not(x_ref[0, 0])
@@ -4679,9 +4673,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   """Tests for reported bugs. Only pass in interpret mode unless fixed."""
 
   def test_casting_bool_to_i8(self):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Operation not supported on this TPU version.')
-
     def greater_than(x: jax.Array, y: jax.Array):
       def kernel(x_ref, y_ref, out_ref):
         cmp = (x_ref[...] > y_ref[...]).astype(jnp.int8)
@@ -5248,9 +5239,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_small_last_two_dims(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('TPU v5+ required.')
-
     input_major_dims, output_major_dims = input_output_major_dims
     output_minor_dims = (input_minor_dims[1], input_minor_dims[0])
     input_shape = input_major_dims + input_minor_dims
@@ -6172,9 +6160,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       if r % m == 0
   )
   def test_manual_dma_reshape_tc(self, n, m):
-    if self.INTERPRET:
-      self.skipTest('Interpret not supported for manual DMA test')
-    if not jtu.is_device_tpu_at_least(4):
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
 
     def kernel(x_hbm, y_hbm):
@@ -6752,9 +6738,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32_transpose', jnp.float32, True),
   )
   def test_basic(self, dtype, transpose):
-    if not jtu.is_device_tpu_at_least(6):
-      self.skipTest('TPU generation too old')
-
     if not jtu.is_device_tpu_at_least(7):
       expect_ctx = self.assertRaisesRegex(
           ValueError, 'Accumulators are not available on TPU'
