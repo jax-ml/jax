@@ -39,6 +39,7 @@ from jax._src import flattree as ft
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
@@ -6606,7 +6607,16 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     lower_kwargs = {} if on_tpu else {'lowering_platforms': ('tpu',)}
     with jtu.capture_stdout() as get_ir:
       jax.jit(f).trace(x, x).lower(**lower_kwargs)
-    expected = 'arith.cmpf une' if on_tpu else 'arith.cmpf one'
+    runtime_type = (
+        getattr(xb.get_backend(), 'runtime_type', '') or '' if on_tpu else ''
+    )
+    forward_compat = (
+        runtime_type in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+        or runtime_type.startswith('proxy/')
+    )
+    expected = (
+        'arith.cmpf une' if on_tpu and not forward_compat else 'arith.cmpf one'
+    )
     self.assertIn(expected, get_ir())
 
 
