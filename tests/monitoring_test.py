@@ -88,6 +88,18 @@ class MonitoringTest(absltest.TestCase):
         [1, 2.5, 5e5],
     )
 
+  def test_clear_event_listeners_clears_scalar_listeners(self):
+    observed_values = []
+    monitoring.register_scalar_listener(
+        lambda _, value, **kwargs: observed_values.append(value),
+    )
+
+    monitoring.clear_event_listeners()
+    monitoring.record_scalar("test_event", 1)
+
+    self.assertEmpty(observed_values)
+    self.assertEmpty(jax_src_monitoring.get_scalar_listeners())
+
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
     callback = lambda event, durations, **kwargs: None
