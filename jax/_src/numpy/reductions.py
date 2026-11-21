@@ -921,7 +921,10 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
   sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
   result = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
-  return result if initial is None else lax_other.logaddexp(initial, result)
+  if initial is None:
+    return result
+  return lax_other.logaddexp(lax.convert_element_type(initial, result.dtype),
+                             result)
 
 
 def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
@@ -936,9 +939,10 @@ def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   a = ensure_arraylike("logsumexp2", a)
   where = check_where("logsumexp2", where)
   ln2 = float(np.log(2))
+  a = a * ln2
   if initial is not None:
-    initial *= ln2
-  return _logsumexp(a * ln2, axis=axis, dtype=dtype, keepdims=keepdims,
+    initial = lax.convert_element_type(initial, a.dtype) * ln2
+  return _logsumexp(a, axis=axis, dtype=dtype, keepdims=keepdims,
                     where=where, initial=initial) / ln2
 
 @export
