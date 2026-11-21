@@ -2079,19 +2079,24 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   m, n = a.shape
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
-    if m >= n and side == "right":
+    # QDWH needs m >= n and returns a = u @ p. For m < n it is applied to a^H,
+    # which gives a = p @ u.
+    if m >= n:
       unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
                                          max_iterations=max_iterations)
-    elif m < n and side == "left":
-      a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
-                                         max_iterations=max_iterations)
+    else:
+      unitary, posdef, _, _ = qdwh.qdwh(a.T.conj(), is_hermitian=False,
+                                         eps=eps, max_iterations=max_iterations)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
-    else:
-      raise NotImplementedError("method='qdwh' only supports mxn matrices "
-                                "where m < n where side='right' and m >= n "
-                                f"side='left', got {a.shape} with {side=}")
+    # The other side's p follows from u: a = p @ u gives p = a @ u^H, and
+    # a = u @ p gives p = u^H @ a.
+    if side == "left" and m >= n:
+      posdef = a @ unitary.T.conj()
+      posdef = (posdef + posdef.T.conj()) / 2
+    elif side == "right" and m < n:
+      posdef = unitary.T.conj() @ a
+      posdef = (posdef + posdef.T.conj()) / 2
   elif method == "svd":
     u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
     s_svd = s_svd.astype(u_svd.dtype)
