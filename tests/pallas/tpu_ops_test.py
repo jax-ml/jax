@@ -345,13 +345,8 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if dtype == jnp.int8 and jtu.get_tpu_version() < 5:
-      self.skipTest(
-          f"Not implemented: cast vector to mask with dtype == {dtype}"
-      )
-    if dtype == jnp.int16:
-      if jtu.get_tpu_version() < 4:
-        self.skipTest("Requires TPUv4+")
+    if dtype in (jnp.int8, jnp.int16) and jtu.get_tpu_version() < 4:
+      self.skipTest("Requires TPUv4+")
 
     shape = (128, 128)
 
@@ -630,7 +625,7 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
-    if jtu.get_tpu_version() < 5 and msk_bitwidth < 16:
+    if jtu.get_tpu_version() < 4 and msk_bitwidth < 16:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
@@ -661,7 +656,7 @@ class OpsTest(ptu.PallasTPUTest):
     shape = (256, 256)
     msk_bitwidth = dtypes.itemsize_bits(msk_dtype)
     msk_packing = 32 // msk_bitwidth
-    if jtu.get_tpu_version() < 5 and msk_bitwidth < 16:
+    if jtu.get_tpu_version() < 4 and msk_bitwidth < 16:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
@@ -704,11 +699,8 @@ class OpsTest(ptu.PallasTPUTest):
       dtype=[jnp.int32, jnp.int16, jnp.int8],
   )
   def test_i1_relayout_bw_1d_tiling(self, msk_dtype, dtype):
-    if msk_dtype == jnp.int8 and jtu.get_tpu_version() < 5:
-      self.skipTest("Requires TPUv5+")
-    if msk_dtype == jnp.int16:
-      if jtu.get_tpu_version() < 4:
-        self.skipTest("Requires TPUv4+")
+    if msk_dtype in (jnp.int8, jnp.int16) and jtu.get_tpu_version() < 4:
+      self.skipTest("Requires TPUv4+")
 
     shape = (1024,)
 
@@ -734,8 +726,6 @@ class OpsTest(ptu.PallasTPUTest):
       round=(False, True),
   )
   def test_quantize(self, target, round):
-    if not jtu.is_device_tpu_at_least(version=6):
-      self.skipTest("Requires TPUv6+")
     shape = (256, 256)
     # NOTE: 256 * 256 == 2 ** 16, so those are all bf16 values.
     x = lax.bitcast_convert_type(
@@ -829,7 +819,7 @@ class OpsTest(ptu.PallasTPUTest):
   )
   def test_concat_mask(self, dtype):
     bitwidth = dtypes.itemsize_bits(dtype)
-    if jtu.get_tpu_version() < 5 and bitwidth < 16:
+    if jtu.get_tpu_version() < 4 and bitwidth < 16:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
       )
@@ -1264,12 +1254,6 @@ class OpsTest(ptu.PallasTPUTest):
       ],
   )
   def test_2d_concatenate(self, dtype, shapes_axis_and_out):
-    packing = 32 // jnp.iinfo(dtype).bits
-    if packing > 1 and not jtu.is_device_tpu_at_least(version=4):
-      self.skipTest("Requires TPU v4+")
-    if packing > 2 and not jtu.is_device_tpu_at_least(version=5):
-      self.skipTest("Requires TPU v5+")
-
     x_shape, y_shape, axis, out_shape = shapes_axis_and_out
 
     min_val = dtype(jnp.iinfo(dtype).min)
@@ -1442,13 +1426,8 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.bfloat16, jnp.float32])
   def test_reciprocal(self, approx, full_range, dtype):
-    if dtype == jnp.bfloat16:
-      if not jtu.is_device_tpu_at_least(6):
-        self.skipTest("BF16 reciprocal not supported before v6e.")
-      if approx:
-        self.skipTest("BF16 reciprocal does not support approx=True.")
-      if not full_range:
-        self.skipTest("BF16 reciprocal does not support full_range=False.")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("BF16 reciprocal not supported before v6e.")
 
     shape = (32, 256)
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
@@ -1659,9 +1638,6 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(four_bits_out, four_bits_in)
 
   def test_load_transpose_with_sliced_leading_dim(self) -> None:
-    if not jtu.is_device_tpu_at_least(version=5):
-      self.skipTest("Requires TPUv5+")
-
     def kernel(in_ref, out_ref):
       out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
 
