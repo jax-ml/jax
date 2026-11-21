@@ -7224,6 +7224,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       ab_type=[
           jnp.float16,
           jnp.bfloat16,
+          jnp.float32,
           (jnp.float8_e5m2, jnp.float8_e5m2),
           (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
           (jnp.float8_e5m2, jnp.float8_e4m3fn),
@@ -7248,6 +7249,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         self.skipTest("Skipping FP8 transpose tests in simple sweep")
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
+    if a_type == jnp.float32 and (transpose_lhs or not transpose_rhs):
+      self.skipTest("MMA only supports K-fastest f32 operands")
     if n * jnp.dtype(b_type).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:
@@ -7300,6 +7303,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     rhs_shape = (n, k) if transpose_rhs else (k, n)
     x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=a_type)
     y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=b_type)
+    if a_type == jnp.float32:
+      # The MMA computes with TF32, so the inputs are exact in TF32.
+      x, y = (jax.lax.reduce_precision(a, 8, 10) for a in (x, y))
     result = f(x, y)
     if transpose_lhs:
       x = jnp.transpose(x, (1, 0))
@@ -7308,6 +7314,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     if is_fp8:
       expected = x.astype(jnp.float32) @ y.astype(jnp.float32)
       atol, rtol = 1e-2, 1e-2
+    elif a_type == jnp.float32:
+      expected = jnp.matmul(x, y, precision="highest")
+      atol, rtol = 0, 1e-3
     else:
       expected = x @ y
       atol, rtol = 0, 1e-3
