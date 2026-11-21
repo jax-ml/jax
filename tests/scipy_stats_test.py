@@ -798,6 +798,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker, atol={np.float32: 3e-5},
                             rtol={np.float32: 3e-5})
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testGenNormCdfLowerTail(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42765
+    x = np.array([-3., -6., -2., -30.], dtype=dtype)
+    beta = np.array([2., 2., 4., 1.], dtype=dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    for cdf in [lsp_stats.gennorm.cdf, jax.jit(lsp_stats.gennorm.cdf)]:
+      self.assertAllClose(cdf(x, beta), osp_stats.gennorm.cdf(x, beta),
+                          check_dtypes=False, atol=0, rtol=rtol)
+    _, tangent = jax.jvp(lsp_stats.gennorm.cdf, (x, beta),
+                         (np.ones_like(x), np.zeros_like(beta)))
+    self.assertAllClose(tangent, osp_stats.gennorm.pdf(x, beta),
+                        check_dtypes=False, atol=0, rtol=rtol)
+
   @genNamedParametersNArgs(4)
   def testNBinomLogPmf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
