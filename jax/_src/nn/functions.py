@@ -496,8 +496,9 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
 
   if approximate:
     sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x_arr.dtype)
-    cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x_arr + 0.044715 * (x_arr ** 3))))
-    return x_arr * cdf
+    # 0.5 * (1 + tanh(z)) == sigmoid(2 * z), which avoids the cancellation in
+    # 1 + tanh(z) for negative z.
+    return x_arr * sigmoid(2 * sqrt_2_over_pi * (x_arr + 0.044715 * (x_arr ** 3)))
   else:
     sqrt_half = np.sqrt(0.5).astype(x_arr.dtype)
     return jnp.array(
