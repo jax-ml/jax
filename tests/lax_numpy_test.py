@@ -1522,6 +1522,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.product(
+    op=["polyadd", "polysub"],
+    shapes=[((0,), (2,)), ((2,), (0,)), ((0,), (0,))],
+    dtype=[np.int32, np.float32],
+  )
+  def testPolyAddSubEmpty(self, op, shapes, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    np_fun, jnp_fun = getattr(np, op), getattr(jnp, op)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
   @jtu.sample_product(
     [dict(order=order, k=k, dtype=dtype)
       for dtype in default_dtypes
