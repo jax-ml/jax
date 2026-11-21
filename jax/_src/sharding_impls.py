@@ -780,6 +780,8 @@ def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
 
 def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   elt_aval = core.physical_element_aval(dtype)
+  if elt_aval.ndim == 0:
+    return phys_sharding
   phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
       len(logical_shape) + elt_aval.ndim)
   partitions, num_replicas = get_num_ways_dim_sharded(phys_hlo_sharding)
@@ -799,7 +801,7 @@ def check_replicated_trailing_dims(sharding: jsharding.Sharding,
   hlo_s = sharding._to_xla_hlo_sharding(len(phys_shape))
   partitions, _ = get_num_ways_dim_sharded(hlo_s)
   num_trailing_dims = len(phys_shape) - len(logical_shape)
-  if not all(i == 1 for i in partitions[-num_trailing_dims:]):
+  if num_trailing_dims and not all(i == 1 for i in partitions[-num_trailing_dims:]):
     raise AssertionError(
         "The trailing dims of extended dtypes should be replicated. Got"
         f" sharding: {sharding}, partitions: {partitions}, "
@@ -812,6 +814,8 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
 
   if isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)
+    if elt_aval.ndim == 0:
+      return phys_sharding
     phys_shape = core.physical_shape(logical_shape, dtype)
     if len(phys_sharding.spec) < len(phys_shape):
       phys_spec = (*phys_sharding.spec,
