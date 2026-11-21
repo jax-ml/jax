@@ -146,10 +146,7 @@ single_version_override(
 
 ### Toolchains
 
-# Keep in sync with jax/version.py (_version) and python.defaults below.
 DEFAULT_PYTHON_VERSION = "3.12"
-
-JAXLIB_VERSION = "0.9.2"
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.override(
@@ -356,8 +353,8 @@ rocm_wheels_repository = use_repo_rule(
 # Pre-built ROCm wheels from GitHub (ROCm/rocm-jax).
 rocm_wheels_repository(
     name = "rocm_wheels",
-    jaxlib_version = JAXLIB_VERSION,
     python_version = DEFAULT_PYTHON_VERSION,
+    version_source = "//jax:version.py",
     # rocm_version = "7.2.0",  # Optional: pick a specific ROCm version.
 )
 
