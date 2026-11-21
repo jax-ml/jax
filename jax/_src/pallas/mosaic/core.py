@@ -109,6 +109,9 @@ class CompilerParams:
     disable_bounds_checks: Disable bounds checks in the kernel.
     disable_semaphore_checks: Disable semaphore checks in the kernel.
     skip_device_barrier: Skip the default device barrier for the kernel.
+    has_communication: Force `has_communication=True` on the lowered
+      `tpu_custom_call` even when no outbound remote DMA or signal op is
+      emitted (e.g., for wait-only collective receive kernels).
     allow_collective_id_without_custom_barrier: Allow the use of collective_id
       without a custom barrier.
     use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is only
@@ -139,6 +142,7 @@ class CompilerParams:
   disable_bounds_checks: bool = False
   disable_semaphore_checks: bool = False
   skip_device_barrier: bool = False
+  has_communication: bool = False
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
@@ -159,6 +163,7 @@ class CompilerParams:
       disable_bounds_checks: bool = False,
       disable_semaphore_checks: bool = False,
       skip_device_barrier: bool = False,
+      has_communication: bool = False,
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
@@ -191,6 +196,7 @@ class CompilerParams:
         self, "disable_semaphore_checks", disable_semaphore_checks
     )
     object.__setattr__(self, "skip_device_barrier", skip_device_barrier)
+    object.__setattr__(self, "has_communication", has_communication)
     object.__setattr__(
         self,
         "allow_collective_id_without_custom_barrier",
