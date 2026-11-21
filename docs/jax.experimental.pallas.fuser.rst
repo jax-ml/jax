@@ -11,6 +11,7 @@ Classes
 
    BlockIndexTransform
    Fusion
+   Usage
 
 Functions
 ---------
