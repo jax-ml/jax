@@ -287,7 +287,7 @@ these are empirical bounds.
 | {func}`~jax.lax.erfc` | 350.0 | 350.0 |
 | {func}`~jax.lax.erfc` (`jax_accurate_default_erfc`) | 10.0 | 10.0 |
 | {func}`~jax.lax.erfc` (`highest`) | 2.0 | 2.0 |
-| {func}`~jax.lax.exp` | 2.0 | 1.5 |
+| {func}`~jax.lax.exp` | 1.5 | 1.5 |
 | {func}`~jax.lax.exp2` | 0.5 | 1.0 |
 | {func}`~jax.lax.exp2m1` | 1.0 | 1.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 |

@@ -117,8 +117,12 @@ class ExpTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_accuracy(self, dtype):
+    if xla_version >= 91:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5, f64: 1.5})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0})
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
+        cpu_bounds,
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 116.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 109.5}),
@@ -137,8 +141,12 @@ class ExpTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_highest_accuracy(self, dtype):
+    if xla_version >= 91:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5, f64: 1.5})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0})
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
+        cpu_bounds,
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {bf16: 1.0, f16: 1.0, f32: 1.5}),
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
