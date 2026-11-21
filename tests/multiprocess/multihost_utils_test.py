@@ -16,6 +16,7 @@
 
 import math
 import unittest
+from unittest import mock
 
 from absl.testing import parameterized
 import jax
@@ -159,6 +160,28 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
     out = multihost_utils.broadcast_one_to_all(x)
     self.assertEqual(out.dtype, jnp.uint8)
     np.testing.assert_array_equal(out, np.array(0, dtype=jnp.uint8))
+
+  @parameterized.named_parameters(
+      ('interleaved', True),
+      ('permuted_processes', False),
+  )
+  def test_devices_not_grouped_by_process(self, interleave):
+    # On some multi-host topologies, `jax.devices()` (sorted by global device
+    # id) is not ordered by `process_index`. Simulate that by reversing the
+    # process order and optionally interleaving the processes' devices.
+    by_process = [[d for d in jax.devices() if d.process_index == p]
+                  for p in reversed(range(jax.process_count()))]
+    if interleave:
+      devices = [d for ds in zip(*by_process) for d in ds]
+    else:
+      devices = [d for ds in by_process for d in ds]
+    with mock.patch.object(jax, 'devices', return_value=devices):
+      out = multihost_utils.process_allgather(np.array(jax.process_index()))
+      np.testing.assert_array_equal(out, np.arange(jax.process_count()))
+
+      x = np.array(1 + jax.process_index())
+      np.testing.assert_array_equal(multihost_utils.broadcast_one_to_all(x), 1)
+      multihost_utils.sync_global_devices('devices not grouped by process')
 
   def test_sync_global_devices(self):
     multihost_utils.sync_global_devices('test sync global devices')

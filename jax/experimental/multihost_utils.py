@@ -45,6 +45,14 @@ def _psum(xs: Any) -> Any:
   return jax.tree.map(lambda x: jnp.sum(x, dtype=x.dtype, axis=0), xs)
 
 
+def _devices_by_process() -> np.ndarray:
+  # `jax.devices()` is not guaranteed to be grouped by process, so sort it to
+  # make row `i` hold exactly the devices of process `i`.
+  devices = sorted(jax.devices(), key=lambda d: d.process_index)
+  return np.array(devices).reshape(jax.process_count(),
+                                   jax.local_device_count())
+
+
 def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
   """Broadcast data from a source host (host 0 by default) to all other hosts.
 
@@ -65,8 +73,7 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
   if is_source is None:
     is_source = jax.process_index() == 0
 
-  devices: np.ndarray = np.array(
-      jax.devices()).reshape(jax.process_count(), jax.local_device_count())
+  devices = _devices_by_process()
   global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
   pspec = P('processes')
 
@@ -112,8 +119,7 @@ def _handle_array_process_allgather(inp, tiled):
       out = np.asarray(inp)
       return np.expand_dims(out, axis=0) if not tiled else out
 
-    devices = np.array(jax.devices()).reshape(jax.process_count(),
-                                              jax.local_device_count())
+    devices = _devices_by_process()
     global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
     pspec = P('processes')
     s = jax.sharding.NamedSharding(global_mesh, pspec)
