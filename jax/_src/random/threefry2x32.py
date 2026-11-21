@@ -351,11 +351,8 @@ def threefry_raw_bits(
     raise NotImplementedError(
         'out_sharding requires jax_threefry_partitionable=True.')
   else:
-    k0, k1 = _threefry_split_original(key, (2,))
-    return (
-        _threefry_random_bits_original(k0, 32, shape),
-        _threefry_random_bits_original(k1, 32, shape),
-    )
+    bits = _threefry_random_bits_original(key, 32, (2, *shape))
+    return bits[0], bits[1]
 
 def _threefry_raw_bits_partitionable(
     key: typing.Array, shape: prng.Shape, *, out_sharding=None
