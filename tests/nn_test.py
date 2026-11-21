@@ -92,6 +92,34 @@ def _generate_quantized_tensors(
 
   return a, b, a_q, b_q, a_scales, b_scales
 
+def _assert_within_fp32_accumulation_bound(test, out, a, b, dtype):
+  # Any fp32 accumulation of the K products, in any order, is within
+  # K * 2^-24 * sum_k |a_k * b_k| of the exact result, and rounding to dtype is
+  # monotonic, so `out` must lie between the roundings of the ends of that
+  # interval. Away from a dtype rounding boundary both ends round to the same
+  # value, which `out` must then match exactly.
+  a = np.asarray(a, np.float64)
+  b = np.asarray(b, np.float64)
+  exact = np.einsum("bmk,bnk->bmn", a, b)
+  bound = a.shape[-1] * 2.0**-24 * np.einsum(
+      "bmk,bnk->bmn", np.abs(a), np.abs(b))
+  lo = (exact - bound).astype(np.float32).astype(dtype)
+  hi = (exact + bound).astype(np.float32).astype(dtype)
+  out = np.asarray(out)
+  bad = np.argwhere((out < lo) | (out > hi))
+  test.assertEqual(
+      len(bad), 0,
+      f"{len(bad)} of {out.size} outputs outside the fp32 accumulation bound;"
+      f" first at {tuple(bad[0].tolist()) if len(bad) else None}")
+
+
+def _is_rocm_gfx11():
+  if not jtu.is_device_rocm():
+    return False
+  arch = jax.local_devices(backend="gpu")[0].compute_capability
+  return arch.startswith("gfx11")
+
+
 def create_mx_configs(mode):
   return [nn.get_scaled_dot_general_config(mode) for _ in range(3)]
 
@@ -121,6 +149,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     )
     out = nn.scaled_matmul(a_q, b_q, a_scales, b_scales,
                            preferred_element_type=dtype)
+    if mode != "nvfp4" and _is_rocm_gfx11():
+      # RDNA3 WMMA does not accumulate bit-exactly in fp32, so a result near a
+      # dtype rounding boundary may differ from out_ref by one ulp of dtype.
+      _assert_within_fp32_accumulation_bound(self, out, a, b, dtype)
+      return
     out_ref = jnp.matmul(a.astype(jnp.float32),
                          jnp.transpose(b, (0, 2, 1)).astype(jnp.float32))
     if mode == "nvfp4":
