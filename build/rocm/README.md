@@ -69,3 +69,23 @@ device agnostic library.
 ### Simplified Build Script
 
 For a streamlined process, consider using the `jax/build/rocm/dev_build_rocm.py` script.
+
+## Debug and ASAN wheels
+
+The nightly and continuous workflows also build the plugin and PJRT wheels with
+debug symbols (`--config=debug_symbols`) and with host-only AddressSanitizer
+(`--config=asan_shared --copt=-fno-gpu-sanitize`). They are not tested, and
+upload per run to
+`s3://jax-ci-amd/rocm-wheels/<repo>/<branch>/10.1.0/<debug|asan>/<workflow>/<run>/<attempt>`.
+
+Run the ASAN wheels with ROCm's ASAN runtime and HSA preloaded:
+
+```bash
+core=$(python -c "import _rocm_sdk_core; print(_rocm_sdk_core.__path__[0])")
+LD_PRELOAD="$(echo "$core"/lib/llvm/lib/clang/*/lib/x86_64-unknown-linux-gnu/libclang_rt.asan.so) $core/lib/libhsa-runtime64.so.1" \
+ASAN_OPTIONS=detect_leaks=0 python my_program.py
+```
+
+TheRock 10.1.0 ships the runtime as `lib/linux/libclang_rt.asan-x86_64.so`;
+expose it as `libclang_rt.asan.so` (for example a symlink on `LD_LIBRARY_PATH`),
+the name the wheels link against.
