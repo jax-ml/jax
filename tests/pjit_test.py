@@ -424,7 +424,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
-  def testBufferDonationNotDonated(self):
+  def testBufferDonationWithoutAlias(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
 
@@ -434,7 +434,10 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     x = jax.device_put(np.arange(16).reshape(8, 2), s)
     f(x)
-    self.assertNotDeleted(x)
+    if xla_version >= 91:
+      self.assertDeleted(x)
+    else:
+      self.assertNotDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationDifferentIOShapes(self):

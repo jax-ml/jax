@@ -22,6 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.layout import LayoutMode, use_layout_mode
+from jax._src.lib import xla_version
 from jax._src.pjit import relayout
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
@@ -578,7 +579,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   @jtu.skip_on_devices('cpu', 'gpu')
-  def test_layout_donation_mismatching_in_and_out_fails(self):
+  def test_layout_donation_mismatching_in_and_out(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16*2, 32016*2)
@@ -595,7 +596,10 @@ class LayoutTest(jtu.JaxTestCase):
 
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     f.lower(sds).compile()(arr)
-    self.assertFalse(arr.is_deleted())
+    if xla_version >= 91:
+      self.assertTrue(arr.is_deleted())
+    else:
+      self.assertFalse(arr.is_deleted())
 
   def test_donation_error_on_auto(self):
     @jax.jit(donate_argnums=0, in_shardings=Format(Layout.AUTO))
