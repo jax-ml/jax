@@ -365,6 +365,16 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.polygamma(np.array([1, 2]), q[:2]),
                         np.zeros(2, dtype))
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testPochLargeZ(self, dtype):
+    # gamma(z) and gamma(z + m) overflow for these z, but poch(z, m) does not.
+    z = np.array([40., 200., 171., 1e3, 1e5, 1e5], dtype=dtype)
+    m = np.array([2., 2., 1., -3., 0.5, -0.5], dtype=dtype)
+    expected = osp_special.poch(z.astype(np.float64), m.astype(np.float64))
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(lsp_special.poch(z, m), expected.astype(dtype),
+                        rtol=rtol)
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))

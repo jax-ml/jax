@@ -4092,7 +4092,17 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
   if dtypes.issubdtype(z.dtype, np.complexfloating):
     raise ValueError("jnp.poch does not support complex-valued inputs.")
 
-  return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
+  ratio = gamma(z + m) / gamma(z)
+  # gamma(z + m) and gamma(z) overflow long before their ratio does (z > 171
+  # in float64, z > 35 in float32). When both arguments are positive, use
+  # log(gamma(w + k) / gamma(w)) = gammaln(k) - betaln(w, k) with k = |m| and
+  # w = min(z, z + m) instead, which keeps full precision for large w.
+  k = jnp.abs(m)
+  w = jnp.minimum(z, z + m)
+  use_log = ~(jnp.isfinite(ratio) & (ratio != 0)) & (w > 0)
+  log_ratio = jnp.sign(m) * (gammaln(k) - betaln(w, k))
+  ratio = jnp.where(use_log, jnp.exp(log_ratio), ratio)
+  return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), ratio)
 
 
 def _poch_z_derivative(z, m):
