@@ -921,6 +921,19 @@ class NNFunctionsTest(jtu.JaxTestCase):
         partial(nn.logsumexp, axis=-1, keepdims=True), (x2,), order=2, atol=5e-3
     )
 
+  def testLogSumExpFloat16LongAxis(self):
+    # The float16 sum of 65520 ones is inf, although log(65520) = 11.09 and
+    # every softmax value, 1 / 65520, is representable in float16.
+    n = 65520
+    x = jnp.zeros(n, jnp.float16)
+    self.assertAllClose(nn.logsumexp(x), np.log(n), rtol=1e-3,
+                        check_dtypes=False)
+    self.assertAllClose(nn.log_softmax(x)[0], -np.log(n), rtol=1e-3,
+                        check_dtypes=False)
+    self.assertAllClose(nn.softmax(x)[0], 1 / n, rtol=1e-2, check_dtypes=False)
+    self.assertAllClose(jax.grad(nn.logsumexp)(x)[0], 1 / n, rtol=1e-2,
+                        check_dtypes=False)
+
   def testLogSumExpWhereGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])

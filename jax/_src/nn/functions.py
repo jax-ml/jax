@@ -40,6 +40,7 @@ from jax._src.cudnn.scaled_matmul_stablehlo import (
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
 from jax._src.numpy.reductions import _count
+from jax._src.numpy.reductions import _upcast_f16
 from jax._src.numpy.reductions import Axis
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
                                      canonicalize_sharding)
@@ -602,9 +603,13 @@ def log_softmax(x: ArrayLike,
   x_max = jnp.max(x_arr, axis, where=where, initial=-np.inf, keepdims=True)
   x_safe = x_arr if where is None else jnp.where(where, x_arr, -np.inf)
   shifted = x_safe - lax.stop_gradient(x_max)
+  exp_shifted = jnp.exp(shifted)
+  # Sum and take the log in float32 for float16 and bfloat16 inputs: the sum
+  # can overflow float16 even when the result is representable.
   shifted_logsumexp = jnp.log(
-      jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
-  result = shifted - shifted_logsumexp
+      jnp.sum(exp_shifted, axis, where=where, keepdims=True,
+              dtype=_upcast_f16(exp_shifted.dtype)))
+  result = shifted - shifted_logsumexp.astype(exp_shifted.dtype)
   if where is not None:
     return jnp.where(where, result, -np.inf)
   return result

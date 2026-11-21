@@ -79,7 +79,10 @@ def _softmax(
   x_max = jnp.max(x, axis, where=where, initial=-np.inf, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, -np.inf)
   unnormalized = jnp.exp(x_safe - x_max)
-  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+  # Sum float16 and bfloat16 in float32: a float16 sum overflows for long axes.
+  sumexp = jnp.sum(unnormalized, axis, where=where, keepdims=True,
+                   dtype=reductions._upcast_f16(unnormalized.dtype))
+  result = (unnormalized / sumexp).astype(unnormalized.dtype)
   if where is not None:
     result = jnp.where(where, result, 0)
   return result
@@ -133,11 +136,16 @@ def _logsumexp_impl(
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
   if b is not None:
     exp_a = lax.mul(exp_a, b_arr)
-  sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
+  # Sum and take the log in float32 for float16 and bfloat16 inputs: the sum
+  # can overflow float16 even when the result is representable.
+  sum_dtype = reductions._upcast_f16(exp_a.dtype)
+  sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where, dtype=sum_dtype)
   sign = lax.sign(sumexp)
   if return_sign or not np.issubdtype(a_arr.dtype, np.complexfloating):
     sumexp = abs(sumexp)
   out = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
+  if sum_dtype != exp_a.dtype:
+    out, sign = out.astype(exp_a.dtype), sign.astype(exp_a.dtype)
 
   if return_sign:
     return (out, sign)
