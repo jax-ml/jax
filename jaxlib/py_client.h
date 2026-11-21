@@ -54,6 +54,7 @@ namespace jax {
 class PyClient;
 class PyLoadedExecutable;
 class PyExecutable;
+class PyRelocatable;
 class PyArray;
 class PyDevice;
 class PyMemorySpace;
@@ -173,10 +174,31 @@ class PyClient {
       nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options);
 
-  static absl::StatusOr<nb_class_ptr<PyExecutable>>
-  Compile(nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
-          std::shared_ptr<xla::ifrt::Topology> topology,
-          xla::CompileOptions options);
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
+      std::shared_ptr<xla::ifrt::Topology> topology,
+      xla::CompileOptions options);
+
+  static absl::StatusOr<nb_class_ptr<PyRelocatable>> CompileToRelocatable(
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
+      xla::ifrt::DeviceListRef executable_devices, std::string_view name,
+      bool is_entrypoint, xla::CompileOptions options);
+
+  static absl::StatusOr<nb_class_ptr<PyRelocatable>> CompileToRelocatable(
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
+      std::shared_ptr<xla::ifrt::Topology> topology, std::string_view name,
+      bool is_entrypoint, xla::CompileOptions options);
+
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> LinkRelocatables(
+      nb_class_ptr<PyClient> client, nb_class_ptr<PyRelocatable> entrypoint,
+      absl::Span<const nb_class_ptr<PyRelocatable>> dependencies,
+      xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options);
+
+  static absl::StatusOr<nb_class_ptr<PyExecutable>> LinkRelocatables(
+      nb_class_ptr<PyClient> client, nb_class_ptr<PyRelocatable> entrypoint,
+      absl::Span<const nb_class_ptr<PyRelocatable>> dependencies,
+      std::shared_ptr<xla::ifrt::Topology> topology,
+      xla::CompileOptions options);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
       nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
