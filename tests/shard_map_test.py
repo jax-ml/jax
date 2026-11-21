@@ -74,6 +74,18 @@ def create_inputs(a_sharding, b_sharding, dtype=None):
 
 class ShardMapTest(jtu.JaxTestCase):
 
+  @parameterized.parameters(
+      (lax.pmax, 3.), (lax.pmin, 0.), (lax.psum, 6.), (lax.pmean, 1.5))
+  def test_vmap_collective_axis_inside_shard_map(self, collective, expected):
+    mesh = jtu.create_mesh((1,), ('x',))
+    x = jax.device_put(jnp.arange(4.), NamedSharding(mesh, P('x')))
+
+    def f(a):
+      return jax.vmap(lambda b: collective(b, 'i'), axis_name='i')(a)
+
+    mapped = shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    self.assertArraysEqual(mapped(x), jnp.full((4,), expected))
+
   def test_identity(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None))
     assert a.addressable_data(0).shape == (4, 2)

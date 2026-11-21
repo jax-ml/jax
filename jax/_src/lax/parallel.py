@@ -900,7 +900,7 @@ def _constant_reduction(prim, axis_data, arg, axes, axis_index_groups):
   if new_axes:
     arg = (prim.bind(arg, axes=new_axes) if prim is psum_invariant_p else
            prim.bind(arg, axes=new_axes, axis_index_groups=axis_index_groups))
-  if prim is psum_p:
+  if prim in (psum_p, psum_invariant_p):
     out = lax._const(arg, axis_data.size) * arg
   elif prim in (pmin_p, pmax_p):
     out = arg
@@ -958,20 +958,27 @@ def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
     return _reduction_batcher(
         prim, v, d, axes=axes, axis_index_groups=axis_index_groups)
 
-  # Note that we have a choice here. We can either unfuse the reduction into one
-  # that handles the batched dims and then another one that handles the rest.
-  # Alternatively, we can keep the dimension reduction fused with the rest, but
-  # we have to split the primitive into one for unmapped inputs and another
-  # one for mapped, because they differ in their `axes` parameter.
-  # We choose the second strategy here.
-  val_out = _reduction_with_positional_batcher(
-      prim, v, d, axis_index_groups,
-      lambda d, v: (tuple(axis for axis in axes if axis != axis_data.name),
-                    if_unmapped(v, axis_data.size)),
-      lambda d, v: (tuple(axis + (axis >= d) if isinstance(axis, int) else axis
-                          if axis != axis_data.name else d for axis in axes),
-                    v))
-  return val_out, None
+  if axis_index_groups is not None:
+    raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
+                              "Please open a feature request!")
+  # Reduce the vmap axis locally before binding a collective over any remaining
+  # manual axes. Positional axes are local to vmap and must not reach shard_map's
+  # VMA abstract evaluation.
+  v = v if d == 0 else _moveaxis(d, 0, v)
+  if prim in (psum_p, psum_invariant_p):
+    reduce = lax.reduce_sum
+  elif prim is pmax_p:
+    reduce = lax.reduce_max
+  elif prim is pmin_p:
+    reduce = lax.reduce_min
+  else:
+    raise AssertionError(f"Unexpected reduction collective: {prim}")
+  v = reduce(v, (0,))
+  remaining_axes = tuple(axis for axis in axes if axis != axis_data.name)
+  if remaining_axes:
+    v = (prim.bind(v, axes=remaining_axes) if prim is psum_invariant_p else
+         prim.bind(v, axes=remaining_axes, axis_index_groups=None))
+  return v, None
 
 def _replica_groups(axis_ctx, axis_name, axis_index_groups):
   replica_groups = pxla.axis_groups(axis_ctx, axis_name)
@@ -2009,7 +2016,8 @@ def insert_collective_pvary(axis_name, x):
     return x
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.typeof(x)
-  names_union = set(axis_name) | aval.mat.varying
+  names_union = set(axis_name) & set(get_abstract_mesh().manual_axes)
+  names_union |= aval.mat.varying
   x = pvary(x, tuple(n for n in names_union if n not in aval.mat.varying))
   return x
 
@@ -2778,7 +2786,9 @@ def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
     raise NotImplementedError
   if (config.auto_pcast.value and
       (names := set(axes) - core.typeof(leaf).mat.varying)):
-    leaf = pvary(leaf, tuple(names))
+    names &= set(get_abstract_mesh().manual_axes)
+    if names:
+      leaf = pvary(leaf, tuple(names))
   prim = psum_invariant_start_p if is_async else psum_invariant_p
   return prim.bind(leaf, axes=axes)
 
@@ -3331,6 +3341,8 @@ unreduced_reduce_scatter_p.to_lojax = _unreduced_reduce_scatter_to_lojax
 def _get_from(aval, axes: tuple[AxisName, ...], name) -> str:
   out = set()
   for a in axes:
+    if a not in get_abstract_mesh().manual_axes:
+      continue
     if a in aval.mat.varying:
       out.add('varying')
     elif a in aval.mat.unreduced:
@@ -3345,6 +3357,8 @@ def _get_from(aval, axes: tuple[AxisName, ...], name) -> str:
         f"{name} can only accept axis_name which corresponds to one of"
         " varying, unreduced, reduced or invarying state of the input. Got"
         f" input type: {aval}, axes: {axes} and input state: {out}")
+  if not out:
+    return 'invarying'
   o, = out
   return o
 
