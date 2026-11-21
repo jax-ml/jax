@@ -10,3 +10,5 @@
 
     initialize
     shutdown
+    client
+    detected_cluster
