@@ -2510,6 +2510,35 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(jac, jacfwd(lambda x: x**3)(3.))
     self.assertAllClose(aux, [9.], check_dtypes=False)
 
+  def test_jacfwd_with_new_ref(self):
+    x = jnp.array([1., 2., 3., 4.], dtype=jnp.float32)
+    expected = jnp.eye(4, dtype=jnp.float32)
+    f_freeze = lambda x: jax.freeze(jax.new_ref(x))
+    f_index = lambda x: jax.new_ref(x)[...]
+
+    self.assertAllClose(jacfwd(f_freeze)(x), expected)
+    self.assertAllClose(jit(jacfwd(f_freeze))(x), expected)
+    self.assertAllClose(jacfwd(f_index)(x), expected)
+
+  @parameterized.parameters(4, 0)
+  def test_jacfwd_with_new_ref_and_aux(self, size):
+    x = jnp.arange(size, dtype=jnp.float32)
+    def f(x):
+      value = jax.freeze(jax.new_ref(jnp.sum(x ** 2) + 1))
+      return (value, 3.), {"value": value, "constant": 5}
+
+    (dref, dconstant), aux = jacfwd(f, has_aux=True)(x)
+    self.assertAllClose(dref, 2 * x)
+    self.assertAllClose(dconstant, jnp.zeros_like(x))
+    self.assertAllClose(aux["value"], jnp.sum(x ** 2) + 1)
+    self.assertEqual(aux["constant"], 5)
+
+  def test_hessian_with_new_ref(self):
+    x = jnp.array([1., 2., 3., 4.], dtype=jnp.float32)
+    f = lambda x: jax.freeze(jax.new_ref(jnp.sum(x ** 2)))
+
+    self.assertAllClose(hessian(f)(x), 2 * jnp.eye(4, dtype=jnp.float32))
+
   def test_jacrev_and_aux_basic(self):
     jac, aux = jacrev(lambda x: (x**3, [x**2]), has_aux=True)(3.)
     self.assertAllClose(jac, jacrev(lambda x: x**3)(3.))

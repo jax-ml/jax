@@ -734,6 +734,9 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
    [ 0.      16.      -2.     ]
    [ 1.6209   0.       0.84147]]
   """
+  from jax._src import hijax  # pyrefly: ignore[missing-module-attribute]
+  from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
+
   check_callable(fun)
   argnums = _ensure_index(argnums)
 
@@ -747,18 +750,30 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
     f_partial, dyn_args = argnums_partial2(fun, argnums, args, kwargs)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
     pushfwd: Callable = partial(_jvp, f_partial, dyn_args, has_aux=has_aux)
-    if has_aux:
-      y, jac, aux = vmap(pushfwd, out_axes=(None, -1, None))(_std_basis(dyn_args))
-    else:
-      y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
-      aux = None
+    basis = _std_basis(dyn_args)
+    basis_leaves = tree_leaves(basis)
+    empty_basis = bool(basis_leaves) and core.definitely_equal(
+        basis_leaves[0].shape[0], 0)
+    if empty_basis:
+      # Use one zero direction so batched primal outputs have a first slice.
+      basis = tree_map(lambda t: lax_internal.full_like(
+          t, 0, shape=(1, *t.shape[1:]), sharding=core.typeof(t).sharding),
+          basis)
+
+    # Refs may be defensively batched even when the primal output is
+    # independent of the tangent basis.
+    out_axes = (None, -1, None) if has_aux else (None, -1)
+    outs, axes = vmap(pushfwd, out_axes=hijax._infer_shared(out_axes))(basis)
+    y, jac, *aux = hijax._take_first_example(out_axes, axes, outs)
+    if empty_basis:
+      jac = tree_map(lambda t: t[..., :0], jac)
     tree_map(partial(_check_output_dtype_jacfwd, holomorphic), y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     jac_tree = tree_map(partial(_jacfwd_unravel, example_args), y, jac)
     if not has_aux:
       return jac_tree
     else:
-      return jac_tree, aux
+      return jac_tree, aux[0]
 
   return jacfun
 
