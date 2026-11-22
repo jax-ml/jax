@@ -470,11 +470,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
             "(gesvd / gesvdj / gesdd); none registered in this plugin build."
         )
 
-    m, n = shape
-    if (method == "qdwh" and ((side == "left" and m >= n) or
-                              (side == "right" and m < n))):
-      raise unittest.SkipTest("method=qdwh does not support these sizes")
-
     matrix, left_vecs, right_vecs = _initialize_polar_test(
       self.rng(), shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
