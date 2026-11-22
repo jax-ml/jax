@@ -1393,7 +1393,7 @@ def _normal_real(
     lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
     hi = np.array(1.0, dtype)
     u = uniform(key, shape, dtype, lo, hi, out_sharding=out_sharding)
-    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+    return lax.mul(lax._const(u, np.sqrt(2)), lax_special.erf_inv(u))
   compute_dtype = (
       dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
   )
