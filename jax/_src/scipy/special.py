@@ -4092,7 +4092,9 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
   if dtypes.issubdtype(z.dtype, np.complexfloating):
     raise ValueError("jnp.poch does not support complex-valued inputs.")
 
-  return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
+  sign = gammasgn(z + m) * gammasgn(z)
+  val = sign * lax.exp(gammaln(z + m) - gammaln(z))
+  return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), val)
 
 
 def _poch_z_derivative(z, m):
