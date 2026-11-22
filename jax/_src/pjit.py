@@ -1683,12 +1683,20 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
   assert len(in_shardings) == len(fwd_jaxpr.in_avals)
+  # Forwarded residual inputs must remain available to the pullback/pushforward.
+  forwarded_residual_inputs = {
+      i - len(jaxpr.consts) for i in in_fwd_res
+      if i is not None and i >= len(jaxpr.consts)
+  }
+  fwd_donated_invars = tuple(
+      donated and i not in forwarded_residual_inputs
+      for i, donated in enumerate(donated_invars))
   ans = jit_p.bind(*primals_in, jaxpr=fwd_jaxpr,
                    in_shardings=in_shardings,
                    out_shardings=primal_out_shardings,
                    in_layouts=in_layouts,
                    out_layouts=primal_out_layouts,
-                   donated_invars=donated_invars,
+                   donated_invars=fwd_donated_invars,
                    ctx_mesh=ctx_mesh,
                    name=name,
                    keep_unused=keep_unused,
