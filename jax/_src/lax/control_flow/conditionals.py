@@ -37,7 +37,8 @@ from jax._src import effects
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_discharge_rule, discharge_state
-from jax._src.state.types import AbstractRef, RefEffect
+from jax._src.state.primitives import pin, unpin
+from jax._src.state.types import AbstractLinVal, AbstractRef, RefEffect
 from jax._src.core import replace_jaxpr_effects, typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -1254,6 +1255,10 @@ mlir.register_lowering(
 def _cond_state_discharge_rule(ctx, index, *args,
                                branches, **params):
   assert not ctx.should_discharge[0], "Can't discharge the index."
+  original_args = args
+  args = [
+      unpin(x) if isinstance(typeof(x), AbstractLinVal) else x for x in args
+  ]
   discharged_branches = tuple(
       discharge_state(branch, should_discharge=ctx.should_discharge[1:],
                       strip_memory_space=ctx.strip_memory_space)
@@ -1287,8 +1292,21 @@ def _cond_state_discharge_rule(ctx, index, *args,
   out_vals, out_ref_vals_no_fwd = util.split_list(out_vals_no_fwd, [len(ctx.out_avals)])
   # Insert forwarded values into reference outputs
   ref_val_no_fwd_iter = iter(out_ref_vals_no_fwd)
-  out_ref_vals = [next(ref_val_no_fwd_iter) if fwd is None else args[fwd]
-                  for fwd in forwarded_outvars]
+  ref_inputs = [
+      x for x, aval, should in zip(
+          original_args, ctx.in_avals[1:], ctx.should_discharge[1:])
+      if should and isinstance(aval, AbstractRef)
+  ]
+  out_ref_vals = []
+  for ref_input, fwd in zip(ref_inputs, forwarded_outvars):
+    if fwd is None:
+      ref_val = next(ref_val_no_fwd_iter)
+      ref_aval = typeof(ref_input)
+      if isinstance(ref_aval, AbstractLinVal):
+        ref_val = pin(ref_val, to=ref_aval.memory_space)
+    else:
+      ref_val = original_args[fwd]
+    out_ref_vals.append(ref_val)
   # Map reference outputs back to their invars
   ref_val_iter = iter(out_ref_vals)
   new_invals = []

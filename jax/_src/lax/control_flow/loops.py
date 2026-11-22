@@ -63,6 +63,8 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
 from jax._src.state import AbstractRef, discharge as state_discharge
+from jax._src.state.primitives import pin, unpin
+from jax._src.state.types import AbstractLinVal
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.tree_util import (
@@ -1509,6 +1511,10 @@ def _scan_state_discharge_rule(
 
   num_consts, num_carry, num_xs = _map(len, ft_in.unpack())
   is_ref = [isinstance(a, AbstractRef) and s for a, s in zip(jaxpr.in_avals, ctx.should_discharge)]
+  original_args = args
+  args = [
+      unpin(x) if isinstance(typeof(x), AbstractLinVal) else x for x in args
+  ]
   is_ref_const, _, is_ref_xs = split_list_checked(is_ref, [num_consts, num_carry, num_xs])
   num_const_refs = sum(is_ref_const)
   num_xs_refs = sum(is_ref_xs)
@@ -1569,7 +1575,16 @@ def _scan_state_discharge_rule(
   const_refvals, carry, xs_refvals, ys = split_list(
       outs, [num_const_refs, num_carry, num_xs_refs])
   refvals_iter = it.chain(const_refvals, xs_refvals)
-  refvals_out = [next(refvals_iter) if r else None for r in is_ref]
+  refvals_out = []
+  for arg, is_ref_arg in zip(original_args, is_ref):
+    if is_ref_arg:
+      refval = next(refvals_iter)
+      ref_aval = typeof(arg)
+      if isinstance(ref_aval, AbstractLinVal):
+        refval = pin(refval, to=ref_aval.memory_space)
+      refvals_out.append(refval)
+    else:
+      refvals_out.append(None)
   assert next(refvals_iter, None) is None
   return refvals_out, [*carry, *ys]
 
