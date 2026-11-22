@@ -1080,7 +1080,7 @@ def _unpack_conjugate_pairs(w: Array, vr: Array) -> Array:
   if w.size == 0:
     return lax.complex(vr, lax.full_like(vr, 0))
 
-  is_real = ((w.imag == 0) | (w.imag == np.nan))
+  is_real = (w.imag == 0) | lax._isnan(w.imag)
   # Finds the positions at which each conjugate pair starts, via the parity of
   # the count of the number of complex numbers seen.
   conj_pair_start = control_flow.cumsum((~is_real).astype(int),

@@ -402,6 +402,36 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     for result in results:
       self.assertTrue(np.all(np.isnan(result)))
 
+  @jtu.sample_product(dtype=float_types)
+  def testUnpackConjugatePairsHandlesNanEigenvalues(self, dtype):
+    complex_dtype = np.result_type(dtype, 1j)
+    w = jnp.array(
+        [
+            [np.nan + 1j * np.nan, 1.0 + 2.0j, 1.0 - 2.0j, 3.0 + 0.0j],
+            [np.nan + 1j * np.nan] * 4,
+        ],
+        dtype=complex_dtype,
+    )
+    nan_col = np.full((4,), np.nan, dtype=dtype)
+    u_re = np.array([1.0, 2.0, 3.0, 4.0], dtype=dtype)
+    u_im = np.array([5.0, 6.0, 7.0, 8.0], dtype=dtype)
+    r_col = np.array([9.0, 10.0, 11.0, 12.0], dtype=dtype)
+    vr_packed = jnp.stack(
+        [
+            np.column_stack([nan_col, u_re, u_im, r_col]),
+            np.full((4, 4), np.nan, dtype=dtype),
+        ],
+        axis=0,
+    )
+    unpacked = jit(lax_linalg._unpack_conjugate_pairs)(w, vr_packed)
+    self.assertTrue(np.all(np.isnan(unpacked[0, :, 0])))
+    self.assertArraysEqual(unpacked[0, :, 1], jnp.asarray(u_re + 1j * u_im))
+    self.assertArraysEqual(unpacked[0, :, 2], jnp.asarray(u_re - 1j * u_im))
+    self.assertArraysEqual(
+        unpacked[0, :, 3], jnp.asarray(r_col, dtype=complex_dtype)
+    )
+    self.assertTrue(np.all(np.isnan(unpacked[1])))
+
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (8, 8), (7, 6, 6)],
     dtype=float_types + complex_types,
