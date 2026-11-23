@@ -1267,20 +1267,20 @@ def _signed_midpoint_and_complement(
     input_bits = dtypes.iinfo(bits.dtype).bits
     if input_bits < w:
       bits_u = lax.shift_left(
-          bits_u, np.array(w - input_bits, dtype=uint_dtype)
+          bits_u, lax._const(uint_dtype, w - input_bits)
       )
     sign_bit = lax.bitwise_and(
-        bits_u, np.array(1 << (w - 1), dtype=uint_dtype)
+        bits_u, lax._const(uint_dtype, 1 << (w - 1))
     )
     # Shift left by 1 to drop `sign_bit`, leaving `2 * k` in bits `1 .. w-1`
     # (where `k` is the `(w - 1)`-bit integer in `0 .. 2^(w-1) - 1`).
-    two_k = lax.shift_left(bits_u, np.array(1, dtype=uint_dtype))
+    two_k = lax.shift_left(bits_u, lax._const(uint_dtype, 1))
 
     # Map `k` to `(k + 0.5) / 2^(w-1) = (2 * k + 1) * 2^-w`:
     # - at `k = 0`, `+x` and `-x` land at `+2^-w` and `-2^-w` instead of
     #   mapping both `+0` and `-0` to `0.0`;
     # - at `k = 2^(w-1) - 1`, `1 - |x| = 2^-w > 0`, avoiding `erfinv(1) = inf`.
-    abs_x_int = lax.bitwise_or(two_k, np.array(1, dtype=uint_dtype))
+    abs_x_int = lax.bitwise_or(two_k, lax._const(uint_dtype, 1))
 
     # Since `|x| = (2 * k + 1) * 2^-w`, `1 - |x| = ((2^w - 1) - 2 * k) * 2^-w`,
     # whose numerator `(2^w - 1) - two_k` is the bitwise complement `~two_k`.
@@ -1296,29 +1296,29 @@ def _signed_midpoint_and_complement(
     # - Near `x = 0`, `q` rounds up to `1.0`, giving `q * (1 + |x|) == 1.0`,
     #   while `erf_inv_core` scales its result by `x` so small values stay
     #   distinct.
-    scale = np.array(2.0 ** -w, compute_dtype)
+    scale = lax._const(compute_dtype, 2.0 ** -w)
     abs_x = lax.convert_element_type(abs_x_int, compute_dtype) * scale
     q = lax.convert_element_type(q_int, compute_dtype) * scale
   elif mode == "highest":
     assert isinstance(bits, tuple) and len(bits) == 2
     hi, lo = bits
-    sign_bit = lax.bitwise_and(hi, np.array(1 << (w - 1), dtype=uint_dtype))
+    sign_bit = lax.bitwise_and(hi, lax._const(uint_dtype, 1 << (w - 1)))
     # Same construction across two `w`-bit words `(hi, lo)`: shift left by 1
     # into `(two_k_hi, two_k_lo)` to drop `sign_bit`.
     two_k_hi = lax.bitwise_or(
-        lax.shift_left(hi, np.array(1, dtype=uint_dtype)),
-        lax.shift_right_logical(lo, np.array(w - 1, dtype=uint_dtype)),
+        lax.shift_left(hi, lax._const(uint_dtype, 1)),
+        lax.shift_right_logical(lo, lax._const(uint_dtype, w - 1)),
     )
-    two_k_lo = lax.shift_left(lo, np.array(1, dtype=uint_dtype))
+    two_k_lo = lax.shift_left(lo, lax._const(uint_dtype, 1))
     abs_x_hi = two_k_hi
-    abs_x_lo = lax.bitwise_or(two_k_lo, np.array(1, dtype=uint_dtype))
+    abs_x_lo = lax.bitwise_or(two_k_lo, lax._const(uint_dtype, 1))
     q_hi = lax.bitwise_not(two_k_hi)
     q_lo = lax.bitwise_not(two_k_lo)
     # Scale the high and low words separately by `2^-w` and `2^(-2*w)` before
     # adding in floating point so tail values down to `2^(-2*w)` do not round to
     # zero when `q_hi == 0`.
-    scale_hi = np.array(2.0 ** -w, compute_dtype)
-    scale_lo = np.array(2.0 ** (-2 * w), compute_dtype)
+    scale_hi = lax._const(compute_dtype, 2.0 ** -w)
+    scale_lo = lax._const(compute_dtype, 2.0 ** (-2 * w))
     abs_x = (
         lax.convert_element_type(abs_x_hi, compute_dtype) * scale_hi
         + lax.convert_element_type(abs_x_lo, compute_dtype) * scale_lo
@@ -1393,7 +1393,8 @@ def _normal_real(
     lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
     hi = np.array(1.0, dtype)
     u = uniform(key, shape, dtype, lo, hi, out_sharding=out_sharding)
-    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+    # lax._const fixes datatypes, np.array alone narrow to f32 unintentionally here
+    return lax.mul(lax._const(dtype, np.sqrt(2)), lax_special.erf_inv(u))
   compute_dtype = (
       dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
   )

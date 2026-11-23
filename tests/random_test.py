@@ -331,6 +331,14 @@ class PrngTest(jtu.JaxTestCase):
         self.assertEqual(bits64.shape, (3,))
         self.assertEqual(bits64.dtype, expected_dtype)
 
+  @parameterized.parameters("low", "high", "highest")
+  def testNormalExplicitX64DtypeAllow(self, mode):
+    # https://github.com/jax-ml/jax/issues/42818
+    with config.explicit_x64_dtypes(config.ExplicitX64Mode.ALLOW):
+      x = jax.random.normal(
+          jax.random.key(0), (4,), dtype=np.float64,  mode=mode)
+      self.assertEqual(x.dtype, np.dtype("float64"))
+
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBitsViewProperty(self, make_key):
