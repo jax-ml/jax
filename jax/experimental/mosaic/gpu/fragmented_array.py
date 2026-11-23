@@ -5838,8 +5838,8 @@ def optimization_barrier(*arrays):
               dynamic_position=[],
               static_position=ir.DenseI64ArrayAttr.get([i]),
           )
-          for i in range(num_i32_regs)
           for reg in array.registers.flat
+          for i in range(num_i32_regs)
       ]
       reg_constraint = "r"
     else:

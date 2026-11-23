@@ -3659,6 +3659,22 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jax.lax.iota(jnp.float32, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(jnp.bfloat16, jnp.int16, jnp.float8_e4m3fn)
+  def test_optimization_barrier_sub_32_bit(self, dtype):
+    # Large enough for several vector registers per thread, each holding
+    # several 32-bit words.
+    shape = (8, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.optimization_barrier(x_ref[...])
+
+    x = (jnp.arange(math.prod(shape)) % 100).astype(dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_optimization_barrier_constant(self):
     @functools.partial(
         self.kernel,
