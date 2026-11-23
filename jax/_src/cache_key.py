@@ -116,9 +116,10 @@ def get(
           lambda hash_obj: _hash_serialized_compile_options(
               hash_obj,
               compile_options,
-              # In case of GPU multi-process tasks we need to strip device
-              # assignment to use cache key as invariant between processes.
-              strip_device_assignment=(backend.platform == "gpu"),
+              # In case of GPU and CPU multi-process tasks we need to strip
+              # device assignment to use cache key as invariant between
+              # processes.
+              strip_device_assignment=(backend.platform in ("gpu", "cpu")),
           ),
       ),
       (

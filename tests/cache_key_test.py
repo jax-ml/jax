@@ -243,8 +243,15 @@ class CacheKeyTest(jtu.JaxTestCase):
     backend = xla_bridge.get_backend()
     hash_1 = cache_key.get(computation, devices, compile_options_1, backend)
     hash_2 = cache_key.get(computation, devices, compile_options_2, backend)
-    if backend.platform == "gpu":
+    if backend.platform in ("gpu", "cpu"):
       self.assertEqual(hash_1, hash_2)
+      compile_options_2p = compiler.get_compile_options(
+          num_replicas=1, num_partitions=2, device_assignment=np.array([[0, 1]])
+      )
+      hash_2p = cache_key.get(
+          computation, devices, compile_options_2p, backend
+      )
+      self.assertNotEqual(hash_1, hash_2p)
     else:
       self.assertNotEqual(hash_1, hash_2)
 
