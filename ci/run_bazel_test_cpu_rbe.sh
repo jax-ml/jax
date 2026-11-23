@@ -95,7 +95,8 @@ if [[ $os == "darwin" ]]; then
 elif [[ $os == "linux" ]] && [[ $arch == "aarch64" ]]; then
     rbe_config="rbe_cross_compile_${os}_${arch}"
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
-        test_strategy="--strategy=TestRunner=local"
+        # Cap concurrent local tests; 48 at once has exhausted memory on 192 GB arm64 runners.
+        test_strategy="--strategy=TestRunner=local --local_test_jobs=32"
         run_tests_locally=1
     fi
 else
