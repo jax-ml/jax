@@ -224,6 +224,7 @@ _OUT_SHARDING_CASES = [
     ('generalized_normal', lambda key, n, s: random.generalized_normal(key, 0.5, shape=(n,), out_sharding=s)),
     ('geometric', lambda key, n, s: random.geometric(key, p=0.5, shape=(n,), out_sharding=s)),
     ('gumbel', lambda key, n, s: random.gumbel(key, shape=(n,), out_sharding=s)),
+    ('gumbel_highest', lambda key, n, s: random.gumbel(key, shape=(n,), dtype=np.float32, mode='highest', out_sharding=s)),
     ('maxwell', lambda key, n, s: random.maxwell(key, shape=(n,), out_sharding=s)),
     ('multivariate_normal', lambda key, n, s: random.multivariate_normal(key, mean=jnp.zeros((n,)), cov=jnp.eye(n), shape=(n,), out_sharding=s)),
     ('laplace', lambda key, n, s: random.laplace(key, shape=(n,), out_sharding=s)),
@@ -1362,13 +1363,56 @@ class DistributionsTest(RandomTestBase):
         random.gumbel(key, (6,), np.float32, mode='highest'), expected, atol=atol, rtol=rtol)
 
     with config.threefry_partitionable(True):
-      samples = random.gumbel(
-          jax.random.key(0, impl='threefry2x32'), (8,), np.float32, mode='highest')
-    expected_samples = np.array(
-        [-1.0818492, -1.3463643, 0.9065792, 0.45828202,
-         0.1699446, 1.7096658, 0.9906217, -0.15658395],
+      samples_partitionable = random.gumbel(
+          jax.random.key(0, impl='threefry2x32'), (8,), np.float32,
+          mode='highest')
+    with config.threefry_partitionable(False):
+      samples_legacy = random.gumbel(
+          jax.random.key(0, impl='threefry2x32'), (8,), np.float32,
+          mode='highest')
+
+    expected_partitionable = np.array(
+        [0.61235917, 1.4117222, -1.2124273, 0.15724854,
+         0.27473807, 0.8247195, -0.7634463, -0.001195669],
         dtype=np.float32)
-    self.assertAllClose(samples, expected_samples, atol=atol, rtol=rtol)
+    expected_legacy = np.array(
+        [0.27031282, -1.2733037, 0.04318403, -0.70871335,
+         0.00323012, 1.4756193, -0.30236042, -0.64611065],
+        dtype=np.float32)
+
+    with self.subTest(name='threefry_partitionable=True'):
+      self.assertAllClose(
+          samples_partitionable, expected_partitionable, atol=atol, rtol=rtol)
+    with self.subTest(name='threefry_partitionable=False'):
+      self.assertAllClose(
+          samples_legacy, expected_legacy, atol=atol, rtol=rtol)
+
+  @parameterized.parameters(
+      ('threefry2x32', False, 2, (8,)),
+      ('threefry2x32', True, 2, (8,)),
+      ('threefry4x32', False, 2, (8,)),
+      ('philox2x32', False, 2, (8,)),
+      ('philox4x32', False, 2, (8,)),
+      ('rbg', False, 1, (2, 8)),
+      ('rbg', True, 1, (2, 8)),
+  )
+  def testGumbelHighestNumStreamsGating(
+      self, impl_name, partitionable, expected_streams, expected_shape):
+    f = lambda k: random.gumbel(k, (8,), np.float32, mode='highest')
+    with config.threefry_partitionable(partitionable):
+      key = jax.random.key(0, impl=impl_name)
+      jaxpr = jax.make_jaxpr(f)(key).jaxpr
+      eqns = [
+          e for j in (jaxpr, *core.subjaxprs(jaxpr)) for e in j.eqns
+          if e.primitive == prng_internal.random_bits_p
+      ]
+      self.assertLen(eqns, 1)
+      self.assertEqual(
+          (eqns[0].params['num_streams'], eqns[0].params['shape']),
+          (expected_streams, expected_shape))
+      samples = vmap(f)(random.split(key, 4))
+      self.assertEqual(samples.shape, (4, 8))
+      self.assertTrue(np.all(np.isfinite(samples)))
 
   def testSafeIntToFloat(self):
     dtype = np.float32

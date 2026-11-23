@@ -21,6 +21,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations
 * Changes
+  * {func}`jax.random.gumbel` (and {func}`jax.random.categorical`) with
+    `dtype=float32` and `mode="highest"` now draws two bit streams in a single
+    PRNG pass (`num_streams=2`), changing the exact random values produced for
+    a fixed key under multi-stream PRNGs (the output distribution is
+    unchanged).
 * Bug fixes
 
 ## JAX 0.12.1 (November 18, 2026)
