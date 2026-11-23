@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import contextlib
 import dataclasses
 import enum
@@ -39,7 +39,6 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
 from jax._src import pjit
-from jax._src.random import prng
 from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
@@ -48,6 +47,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
+from jax._src.random import prng
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.traceback_util import api_boundary
@@ -309,25 +309,31 @@ class KernelEvalContext:
 
 
 _illegal: Any = object()
+_unused: Any = object()
 
 
 class _SpEnv(threading.local):
 
   def __init__(self):
     self.scalar_prefetch = None
+    self.bypass_handler = False
 
 
 _sp_env = _SpEnv()
 
 
 @contextlib.contextmanager
-def _sp_context(*scalar_prefetch):
+def _sp_context(*scalar_prefetch, bypass_handler: bool | None = None):
   prev = _sp_env.scalar_prefetch
+  prev_bypass = _sp_env.bypass_handler
   _sp_env.scalar_prefetch = scalar_prefetch
+  if bypass_handler is not None:
+    _sp_env.bypass_handler = bypass_handler
   try:
     yield
   finally:
     _sp_env.scalar_prefetch = prev
+    _sp_env.bypass_handler = prev_bypass
 
 
 def _get_scalar_prefetch():
@@ -405,6 +411,7 @@ def pull_block_spec(
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
     strict_mode: bool = True,
+    output_input_aliases: Mapping[int, int] | None = None,
 ):
   """Pulls output ``BlockSpecs`` backward through ``f`` to derive input ``BlockSpecs``.
 
@@ -420,6 +427,11 @@ def pull_block_spec(
     strict_mode: If ``True``, converging paths to the same value must have
       equivalent block index transforms; if ``False``, only block shapes must
       match.
+    output_input_aliases: Optional mapping from flat output index to flat input
+      index indicating aliased input/output ``Refs``. Defaults to ``getattr(f,
+      'output_input_aliases', None)``. When provided, any aliased input that is
+      read (not ``no_block_spec``) must agree with its aliased output's
+      ``BlockSpec``.
 
   Returns:
     A function taking example ``(*args, **kwargs)`` (or their abstract types)
@@ -447,6 +459,25 @@ def pull_block_spec(
     assert all(used_invars)
     assert all(used_consts)
     read_usage_env = compute_usage(jaxpr, jaxpr_out_usages)
+    scalar_prefetch = tuple(
+        c
+        for c, sp in zip(
+            consts, _scalar_prefetch_mask(jaxpr, read_usage_env), strict=True
+        )
+        if sp
+    )
+    if non_scalars := [c for c in scalar_prefetch if jnp.ndim(c) != 0]:
+      raise ValueError(
+          f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
+          f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
+          ' Only scalars can be prefetched; index into the array outside the'
+          ' fusion and close over the resulting scalar instead.'
+      )
+    aliases = (
+        output_input_aliases
+        if output_input_aliases is not None
+        else getattr(f, 'output_input_aliases', None)
+    )
     in_block_specs, env = _pull_block_spec(
         jaxpr,
         tuple(flat_block_specs),
@@ -454,6 +485,7 @@ def pull_block_spec(
         read_usage_env=read_usage_env,
         grid_len=grid_len,
         strict_mode=strict_mode,
+        output_input_aliases=aliases,
     )
     kernel_fn = make_kernel_function(
         jaxpr,
@@ -466,15 +498,7 @@ def pull_block_spec(
     )
     # The scalars this fusion prefetches, in the order its index maps and body
     # expect to be handed them back.
-    kernel_fn.scalar_prefetch = tuple(
-        c for c, sp in zip(consts, _scalar_prefetch_mask(jaxpr, read_usage_env),
-                           strict=True) if sp)
-    if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
-      raise ValueError(
-          f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
-          f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
-          ' Only scalars can be prefetched; index into the array outside the'
-          ' fusion and close over the resulting scalar instead.')
+    kernel_fn.scalar_prefetch = scalar_prefetch
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
         functools.partial(
@@ -525,6 +549,340 @@ def _block_specs_equal(
   )
 
 
+def _is_zero_literal(atom: core.Atom) -> bool:
+  return (
+      isinstance(atom, core.Literal)
+      and isinstance(atom.val, (int, np.integer, np.ndarray))
+      and bool(np.all(atom.val == 0))
+  )
+
+
+def _literal_int(atom: core.Atom) -> int | None:
+  if (
+      isinstance(atom, core.Literal)
+      and isinstance(atom.val, (int, np.integer, np.ndarray))
+      and np.ndim(atom.val) == 0
+      and np.issubdtype(np.asarray(atom.val).dtype, np.integer)
+  ):
+    return int(atom.val)
+  return None
+
+
+def _eval_const_primitive(
+    prim: core.Primitive, args: Sequence[Any], params: Mapping[str, Any]
+) -> Any | None:
+  """Evaluates pure scalar integer/boolean primitives in NumPy without JAX dispatch."""
+  if prim is pjit.jit_p:
+    subjaxpr = params['jaxpr']
+    if len(subjaxpr.outvars) != 1:
+      return None
+    if any(
+        not isinstance(c, (int, float, bool, np.generic, np.ndarray))
+        for c in subjaxpr.consts
+    ):
+      return None
+    env: dict[core.Var, Any] = dict(
+        zip(subjaxpr.constvars, subjaxpr.consts, strict=True)
+    )
+    for v, a in zip(subjaxpr.invars, args, strict=True):
+      env[v] = a
+    for eqn in subjaxpr.eqns:
+      if eqn.effects or len(eqn.outvars) != 1:
+        return None
+      in_vals = [
+          v.val if isinstance(v, core.Literal) else env[v] for v in eqn.invars
+      ]
+      res = _eval_const_primitive(eqn.primitive, in_vals, eqn.params)
+      if res is None:
+        return None
+      env[eqn.outvars[0]] = res
+    outv = subjaxpr.outvars[0]
+    return outv.val if isinstance(outv, core.Literal) else env[outv]
+
+  np_args = [np.asarray(a) for a in args]
+  if any(a.ndim != 0 for a in np_args):
+    return None
+  if prim is lax.convert_element_type_p:
+    return np.asarray(np_args[0], dtype=params['new_dtype'])[()]
+  if prim is lax.neg_p:
+    return np.negative(np_args[0])
+  if prim is lax.abs_p:
+    return np.abs(np_args[0])
+  if prim is lax.sign_p:
+    return np.sign(np_args[0])
+  if prim is lax.not_p:
+    return (
+        np.logical_not(np_args[0])
+        if np_args[0].dtype == np.bool_
+        else np.bitwise_not(np_args[0])
+    )
+  if prim is lax.add_p:
+    return np.add(np_args[0], np_args[1])
+  if prim is lax.sub_p:
+    return np.subtract(np_args[0], np_args[1])
+  if prim is lax.mul_p:
+    return np.multiply(np_args[0], np_args[1])
+  if prim is lax.div_p or prim is lax.rem_p:
+    a, b = np_args
+    if not (
+        np.issubdtype(a.dtype, np.integer)
+        and np.issubdtype(b.dtype, np.integer)
+    ):
+      return None
+    a_i, b_i = int(a), int(b)
+    if b_i == 0:
+      return None
+    q = abs(a_i) // abs(b_i)
+    if (a_i < 0) != (b_i < 0):
+      q = -q
+    out = q if prim is lax.div_p else a_i - q * b_i
+    return np.asarray(out, dtype=a.dtype)[()]
+  if prim is lax.max_p:
+    return np.maximum(np_args[0], np_args[1])
+  if prim is lax.min_p:
+    return np.minimum(np_args[0], np_args[1])
+  if prim is lax.clamp_p:
+    return np.clip(np_args[1], np_args[0], np_args[2])
+  if prim is lax.eq_p:
+    return np.equal(np_args[0], np_args[1])
+  if prim is lax.ne_p:
+    return np.not_equal(np_args[0], np_args[1])
+  if prim is lax.lt_p:
+    return np.less(np_args[0], np_args[1])
+  if prim is lax.le_p:
+    return np.less_equal(np_args[0], np_args[1])
+  if prim is lax.gt_p:
+    return np.greater(np_args[0], np_args[1])
+  if prim is lax.ge_p:
+    return np.greater_equal(np_args[0], np_args[1])
+  if prim is lax.and_p:
+    return np.bitwise_and(np_args[0], np_args[1])
+  if prim is lax.or_p:
+    return np.bitwise_or(np_args[0], np_args[1])
+  if prim is lax.xor_p:
+    return np.bitwise_xor(np_args[0], np_args[1])
+  if prim is lax.select_n_p:
+    which = int(np_args[0])
+    cases = np_args[1:]
+    if 0 <= which < len(cases):
+      return cases[which]
+  return None
+
+
+def _normalize_index_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
+  """Simplifies an index-map jaxpr for symbolic equivalence checks."""
+  subst: dict[core.Var, core.Atom] = {}
+  origins: dict[core.Var, core.JaxprEqn] = {}
+  expr_to_var: dict[tuple[Any, ...], core.Var] = {}
+  new_eqns: list[core.JaxprEqn] = []
+
+  # Unify duplicate constvars with identical values so downstream CSE matches.
+  seen_consts: dict[tuple[Any, ...], core.Var] = {}
+  for cv, val in zip(jaxpr.constvars, jaxpr.consts, strict=True):
+    try:
+      ckey = (
+          cv.aval,
+          type(val),
+          val.tobytes() if isinstance(val, np.ndarray) else val,
+      )
+      hash(ckey)
+    except TypeError:
+      continue
+    if ckey in seen_consts:
+      subst[cv] = seen_consts[ckey]
+    else:
+      seen_consts[ckey] = cv
+
+  def canon_literal(atom: core.Literal) -> core.Literal:
+    if (
+        isinstance(atom.aval, core.ShapedArray)
+        and atom.aval.ndim == 0
+        and (
+            np.issubdtype(atom.aval.dtype, np.integer)
+            or atom.aval.dtype == np.bool_
+        )
+    ):
+      val = np.asarray(atom.val, dtype=atom.aval.dtype)[()]
+      return core.Literal(val, atom.aval.update(weak_type=False))
+    return atom
+
+  def resolve(atom: core.Atom) -> core.Atom:
+    if isinstance(atom, core.Var):
+      atom = subst.get(atom, atom)
+    if isinstance(atom, core.Literal):
+      return canon_literal(atom)
+    return atom
+
+  def same_atom(a: core.Atom, b: core.Atom) -> bool:
+    if isinstance(a, core.Var) and isinstance(b, core.Var):
+      return a is b
+    if isinstance(a, core.Literal) and isinstance(b, core.Literal):
+      return a.aval == b.aval and bool(np.array_equal(a.val, b.val))
+    return False
+
+  def simplify_add_sub(
+      prim: core.Primitive, x: core.Atom, y: core.Atom
+  ) -> core.Atom | None:
+    if prim is lax.add_p:
+      if _is_zero_literal(y):
+        return x
+      if _is_zero_literal(x):
+        return y
+      if isinstance(x, core.Var) and (ox := origins.get(x)) is not None:
+        if ox.primitive is lax.sub_p and same_atom(ox.invars[1], y):
+          return ox.invars[0]
+        if (
+            ox.primitive is lax.add_p
+            and (c1 := _literal_int(ox.invars[1])) is not None
+            and (c2 := _literal_int(y)) is not None
+            and c1 + c2 == 0
+        ):
+          return ox.invars[0]
+      if isinstance(y, core.Var) and (oy := origins.get(y)) is not None:
+        if oy.primitive is lax.sub_p and same_atom(oy.invars[1], x):
+          return oy.invars[0]
+    elif prim is lax.sub_p:
+      if _is_zero_literal(y):
+        return x
+      if same_atom(x, y):
+        return core.Literal(np.zeros(x.aval.shape, x.aval.dtype), x.aval)
+      if isinstance(x, core.Var) and (ox := origins.get(x)) is not None:
+        if ox.primitive is lax.add_p:
+          if same_atom(ox.invars[1], y):
+            return ox.invars[0]
+          if same_atom(ox.invars[0], y):
+            return ox.invars[1]
+    return None
+
+  for eqn in jaxpr.eqns:
+    # Drop debug checkify assertions (e.g. from _check_slice_alignment).
+    if (
+        eqn.primitive.name == 'check'
+        and not eqn.outvars
+        and eqn.params.get('debug', False)
+    ):
+      continue
+    invars = [resolve(v) for v in eqn.invars]
+    if not eqn.effects and len(eqn.outvars) == 1:
+      if all(isinstance(v, core.Literal) for v in invars):
+        out_val = _eval_const_primitive(
+            eqn.primitive, [v.val for v in invars], eqn.params
+        )
+        if out_val is not None:
+          val = np.asarray(out_val, dtype=eqn.outvars[0].aval.dtype)
+          if val.shape == eqn.outvars[0].aval.shape:
+            subst[eqn.outvars[0]] = core.Literal(
+                val[()] if val.ndim == 0 else val,
+                eqn.outvars[0].aval.update(weak_type=False),
+            )
+            continue
+      if (
+          eqn.primitive in (lax.add_p, lax.sub_p)
+          and (rep := simplify_add_sub(eqn.primitive, invars[0], invars[1]))
+          is not None
+      ):
+        subst[eqn.outvars[0]] = rep
+        continue
+      try:
+        key = (
+            eqn.primitive,
+            tuple(sorted(eqn.params.items())),
+            tuple(
+                ('var', v)
+                if isinstance(v, core.Var)
+                else (
+                    'lit',
+                    v.aval,
+                    v.val.tobytes() if isinstance(v.val, np.ndarray) else v.val,
+                )
+                for v in invars
+            ),
+        )
+        hash(key)
+      except TypeError:
+        key = None
+      if key is not None and key in expr_to_var:
+        subst[eqn.outvars[0]] = expr_to_var[key]
+        continue
+      new_eqn = eqn.replace(invars=invars)
+      new_eqns.append(new_eqn)
+      origins[eqn.outvars[0]] = new_eqn
+      if key is not None:
+        expr_to_var[key] = eqn.outvars[0]
+    else:
+      new_eqns.append(eqn.replace(invars=invars))
+
+  new_outvars = [resolve(v) for v in jaxpr.outvars]
+  new_effects = core.join_effects(*(e.effects for e in new_eqns))
+  return jaxpr.replace(eqns=new_eqns, outvars=new_outvars, effects=new_effects)
+
+
+def _check_aliased_block_specs(
+    jaxpr: core.Jaxpr,
+    flat_in_specs: Sequence[pallas_core.BlockSpec | pallas_core.NoBlockSpec],
+    flat_out_specs: Sequence[pallas_core.BlockSpec | pallas_core.NoBlockSpec],
+    in_block_transforms: Sequence[BlockIndexTransform | None],
+    out_block_transforms: Sequence[BlockIndexTransform | None],
+    output_input_aliases: Mapping[int, int],
+    *,
+    block_idxs_avals: tuple[Any, ...],
+    scalar_prefetch_avals: tuple[Any, ...],
+) -> None:
+  defining_eqn = {v: eqn for eqn in jaxpr.eqns for v in eqn.outvars}
+
+  def _unwrap_view(atom: core.Atom) -> core.Atom:
+    while (
+        isinstance(atom, core.Var)
+        and (eqn := defining_eqn.get(atom)) is not None
+        and eqn.primitive in (lax.reshape_p, core.pvary_p)
+    ):
+      atom = eqn.invars[0]
+    return atom
+
+  for out_idx, in_idx in output_input_aliases.items():
+    outvar = _unwrap_view(jaxpr.outvars[out_idx])
+    if (
+        isinstance(outvar, core.Var)
+        and (eqn := defining_eqn.get(outvar)) is not None
+        and eqn.primitive is lax.dynamic_update_slice_p
+        and eqn.invars[0].aval.shape != eqn.invars[1].aval.shape
+        and _unwrap_view(eqn.invars[0]) is not jaxpr.invars[in_idx]
+    ):
+      raise ValueError(
+          f'Aliased output {out_idx} performs a partial slice update on an'
+          f' intermediate value rather than input {in_idx} directly; multiple'
+          ' writes to the same Ref in one fusion are not supported.'
+      )
+
+    in_bs = flat_in_specs[in_idx]
+    out_bs = flat_out_specs[out_idx]
+    if in_bs is pallas_core.no_block_spec:
+      continue
+    if not _block_specs_equal(in_bs, out_bs, strict_mode=False):
+      raise ValueError(
+          f'Aliased input {in_idx} and output {out_idx} have incompatible'
+          f' block specs: {in_bs} vs {out_bs}.'
+      )
+    if in_bs.index_map is None and out_bs.index_map is None:
+      continue
+    if in_bs.index_map is None or out_bs.index_map is None:
+      raise ValueError(
+          f'Aliased input {in_idx} and output {out_idx} have mismatched'
+          f' index maps: {in_bs} vs {out_bs}.'
+      )
+    if not _block_transforms_equal(
+        in_block_transforms[in_idx],
+        out_block_transforms[out_idx],
+        block_idxs_avals,
+        scalar_prefetch_avals=scalar_prefetch_avals,
+        strict_mode=True,
+    ):
+      raise ValueError(
+          f'Aliased input {in_idx} and output {out_idx} have mismatched'
+          f' index maps: {in_bs} vs {out_bs}.'
+      )
+
+
 def _compare_index_transforms(
     idx_map1, idx_map2, block_idxs_avals, scalar_prefetch_avals=()
 ) -> bool:
@@ -539,30 +897,39 @@ def _compare_index_transforms(
           None if idx is None else tuple(0 if i is None else i for i in idx)
           for idx in idxs
       )
-      with _sp_context(*scalar_prefetch):
+      with _sp_context(*scalar_prefetch, bypass_handler=True):
         return idx_map(*idxs)
 
     return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
 
-  return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
+  return fuser_utils.compare_jaxprs(
+      _normalize_index_jaxpr(to_jaxpr(idx_map1)),
+      _normalize_index_jaxpr(to_jaxpr(idx_map2)),
+  )
 
 
 def _block_idxs_avals(
     block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     shape: tuple[int, ...],
-) -> tuple[core.ShapedArray | None, ...] | None:
+) -> tuple[Any, ...] | None:
   """Abstract block indices of `block_spec`, with `None` for those always 0."""
   if block_spec is pallas_core.no_block_spec:
     return None
   block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
   idx_aval = core.ShapedArray((), jnp.int32)
+  slice_aval = indexing.Slice(idx_aval, idx_aval)
   if len(block_shape) != len(shape):
-    return (idx_aval,) * len(block_shape)
+    return tuple(
+        slice_aval if isinstance(d, pallas_core.BoundedSlice) else idx_aval
+        for d in block_shape
+    )
   # A dimension covered by a single block can only have block index 0.
   return tuple(
       None
       if isinstance(d, pallas_core.Blocked) and d.block_size >= n
       or isinstance(d, pallas_core.Squeezed) and n == 1
+      else slice_aval
+      if isinstance(d, pallas_core.BoundedSlice)
       else idx_aval
       for d, n in zip(block_shape, shape, strict=True)
   )
@@ -607,6 +974,13 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
   handler, `scalar_prefetch` is shared by every fusion in the kernel and the
   handler selects this fusion's group out of it.
   """
+  if _sp_env.bypass_handler:
+    if len(scalar_prefetch) != num_expected:
+      raise ValueError(
+          f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
+          f' given {len(scalar_prefetch)}'
+      )
+    return scalar_prefetch
   scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
   if len(scalar_prefetch) != num_expected:
     raise ValueError(
@@ -786,6 +1160,8 @@ def _pull_block_transform(
     else:
       in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
     for v, in_block_transform in zip(eqn.invars, in_block_transforms, strict=True):
+      if in_block_transform is _unused:
+        continue
       if (
           not isinstance(v, core.Literal)
           and v in env
@@ -825,12 +1201,17 @@ def _pull_block_spec(
     scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int | None = None,
     strict_mode: bool = True,
+    output_input_aliases: Mapping[int, int] | None = None,
 ) -> tuple[
     tuple[pallas_core.BlockSpec | pallas_core.NoBlockSpec, ...],
     tuple[dict[core.Var, pallas_core.BlockSpec], dict[int, Any]],
 ]:
   # initialize block transforms to identity for each output
   out_block_transforms = _init_block_transforms(out_block_specs)
+  block_idxs_avals = tuple(
+      _block_idxs_avals(bs, v.aval.shape)
+      for bs, v in zip(out_block_specs, jaxpr.outvars, strict=True)
+  )
 
   in_block_transforms, (env, scalar_prefetch_fn_env) = _pull_block_transform(
       jaxpr,
@@ -840,10 +1221,7 @@ def _pull_block_spec(
       grid_len=grid_len,
       strict_mode=strict_mode,
       # Only here do block transforms take the output block indices directly.
-      block_idxs_avals=tuple(
-          _block_idxs_avals(bs, v.aval.shape)
-          for bs, v in zip(out_block_specs, jaxpr.outvars, strict=True)
-      ),
+      block_idxs_avals=block_idxs_avals,
   )
 
   # apply accumulated block transforms to get final block specs
@@ -852,6 +1230,27 @@ def _pull_block_spec(
   env = cast(dict[core.Var, pallas_core.BlockSpec], env)
   in_block_specs = tuple(_apply_block_transform(out_block_specs, bt)
                          for bt in in_block_transforms)
+
+  if output_input_aliases:
+    scalar_prefetch_avals = tuple(
+        v.aval
+        for v, sp in zip(
+            jaxpr.constvars,
+            _scalar_prefetch_mask(jaxpr, read_usage_env),
+            strict=True,
+        )
+        if sp
+    )
+    _check_aliased_block_specs(
+        jaxpr,
+        in_block_specs,
+        out_block_specs,
+        in_block_transforms,
+        out_block_transforms,
+        output_input_aliases,
+        block_idxs_avals=block_idxs_avals,
+        scalar_prefetch_avals=scalar_prefetch_avals,
+    )
 
   return (
       in_block_specs,
@@ -1118,6 +1517,7 @@ def _get_fusion_values(
 
   ret = new_kernel_fn, tuple(regular_values), tuple(scalar_prefetch_values)
   if discharge_refs and allow_additional_outputs:
+    new_kernel_fn.output_input_aliases = output_input_aliases
     return (*ret, output_input_aliases)
   return ret
 
@@ -1467,6 +1867,7 @@ def _offset_indexer(
     slice_start,
     slice_size,
     skip_divisibility_check: bool = False,
+    negate: bool = False,
 ):
   _check_slice_alignment(
       bs,
@@ -1479,13 +1880,17 @@ def _offset_indexer(
 
   match bs:
     case None | pallas_core.Squeezed() | pallas_core.Element():
-      return indexer + slice_start
+      return indexer - slice_start if negate else indexer + slice_start
     case int() | pallas_core.Blocked():
       block_size = pallas_core.get_block_size(bs)
       # indexer is a block index so we need to offset it by the block offset.
-      return indexer + slice_start // block_size
+      offset = slice_start // block_size
+      return indexer - offset if negate else indexer + offset
     case pallas_core.BoundedSlice():
-      return indexing.ds(indexer.start + slice_start, indexer.size)
+      start = (
+          indexer.start - slice_start if negate else indexer.start + slice_start
+      )
+      return indexing.ds(start, indexer.size)
     case _:
       raise ValueError(f'Unsupported block size {bs}')
 
@@ -1704,17 +2109,19 @@ def _dynamic_update_slice_rule(
     bs = block_transform.block_shape
     for i in range(len(out_idx)):
       out_idx[i] = _offset_indexer(
-          bs[i], out_idx[i], -clamped_starts[i], update_shape[i],
+          bs[i],
+          out_idx[i],
+          clamped_starts[i],
+          update_shape[i],
           skip_divisibility_check=operand_shape[i] == update_shape[i],
+          negate=True,
       )
     return tuple(out_idx)
 
   update_block_transform = block_transform.replace(
       block_index_transform=new_block_index_transform,
   )
-  return [None, update_block_transform] + [
-      None
-  ] * (len(ctx.avals_in) - 2)
+  return [_unused, update_block_transform] + [None] * (len(ctx.avals_in) - 2)
 
 
 @register_pull_block_spec_rule(lax.dot_general_p)
@@ -3046,7 +3453,10 @@ def _call_jaxpr_pull_block_spec_rule(
       read_usage_env=read_usage_env,
       strict_mode=ctx.strict_mode,
   )
-  return in_block_transforms
+  return tuple(
+      _unused if not read_usage_env(v) else bt
+      for v, bt in zip(jaxpr.invars, in_block_transforms, strict=True)
+  )
 
 
 @register_pull_block_spec_rule(custom_derivatives.custom_jvp_call_p)
@@ -3189,15 +3599,21 @@ def push_pull_block_spec(
     *block_specs: Any,
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
+    output_input_aliases: Mapping[int, int] | None = None,
     **block_spec_kwargs: Any,
 ):
   """Pushes ``BlockSpecs`` forward through an output fusion, then pulls them back.
 
-  For an output fusion ``f(values, *args, **kwargs)`` with closed-over side inputs
-  ``values`` (assigned ``no_block_spec`` during the forward push) and unfused kernel
-  outputs ``*args, **kwargs``, pushes ``block_specs`` forward through ``f`` and then
-  pulls the resulting output ``BlockSpecs`` backward (with ``strict_mode=False``) to
-  derive ``BlockSpecs`` for ``values`` and build the block-level kernel function.
+  For an output fusion ``f(values, *args, **kwargs)`` with closed-over side
+  inputs
+  ``values`` (assigned ``no_block_spec`` during the forward push) and unfused
+  kernel
+  outputs ``*args, **kwargs``, pushes ``block_specs`` forward through ``f`` and
+  then
+  pulls the resulting output ``BlockSpecs`` backward (with
+  ``strict_mode=False``) to
+  derive ``BlockSpecs`` for ``values`` and build the block-level kernel
+  function.
 
   Args:
     f: Output fusion function taking ``(values, *args, **kwargs)``.
@@ -3207,6 +3623,8 @@ def push_pull_block_spec(
       prefetch values from the kernel's scalar prefetch inputs.
     grid_len: Optional number of grid dimensions in the enclosing kernel; see
       ``pull_block_spec``.
+    output_input_aliases: Optional mapping from flat output index to flat input
+      index indicating aliased input/output ``Refs``; see ``pull_block_spec``.
     **block_spec_kwargs: ``BlockSpecs`` for the keyword kernel outputs
       ``**kwargs``.
 
@@ -3217,8 +3635,10 @@ def push_pull_block_spec(
     scalar_prefetch, values, *args, **kwargs)`` evaluates ``f`` on a single
     block, ``values_block_specs`` and ``kwarg_block_specs`` are the pulled
     ``BlockSpecs`` for ``values`` and ``**kwargs`` (pulled specs for positional
-    ``*args`` are omitted because they are already given by ``*block_specs``), and
-    ``out_type`` and ``out_block_specs`` are the ``ShapeDtypeStructs`` and pushed
+    ``*args`` are omitted because they are already given by ``*block_specs``),
+    and
+    ``out_type`` and ``out_block_specs`` are the ``ShapeDtypeStructs`` and
+    pushed
     ``BlockSpecs`` for the outputs of ``f``.
   """
   def wrapper(values, *args, **kwargs):
@@ -3244,7 +3664,10 @@ def push_pull_block_spec(
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=False,
-    )(values, *args, **kwargs)
+        output_input_aliases=output_input_aliases,
+    )(
+        values, *args, **kwargs
+    )
     # A push-pull mismatch indicates an unsound output fusion.
     # For example, if a kernel outputs x and y of shape (64, 128) with
     # incompatible block shapes (64, 64) and (64, 128), fusing
