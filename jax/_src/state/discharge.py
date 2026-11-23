@@ -298,15 +298,33 @@ def _eval_jaxpr_discharge_state(
         else:
           raise NotImplementedError(
               f"No state discharge rule implemented for primitive: {eqn.primitive}")
-        invals = map(env.read, eqn.invars)
+        invals = list(map(env.read, eqn.invars))
+        lin_info: list[tuple[bool, Any, Any]] = []
+        unpinned_invals = []
+        for inval in invals:
+          if isinstance(inval_aval := core.typeof(inval), AbstractLinVal):
+            unpinned = unpin(inval)
+            lin_info.append((True, inval_aval.memory_space, unpinned))
+            unpinned_invals.append(unpinned)
+          else:
+            lin_info.append((False, None, None))
+            unpinned_invals.append(inval)
+
         in_avals = [v.aval for v in eqn.invars]
         out_avals = [v.aval for v in eqn.outvars]
         ctx = DischargeContext(
             in_avals, out_avals, should_discharge, strip_memory_space
         )
-        new_invals, ans = rule(ctx, *invals, **eqn.params)
-        for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
-          if new_inval is not None:
+        new_invals, ans = rule(ctx, *unpinned_invals, **eqn.params)
+        for invar, should, (is_lin, mem_space, unpinned_orig), new_inval in zip(
+            eqn.invars, should_discharge, lin_info, new_invals
+        ):
+          if is_lin:
+            val_to_pin = new_inval if new_inval is not None else unpinned_orig
+            if not isinstance(core.typeof(val_to_pin), AbstractLinVal):
+              val_to_pin = pin(val_to_pin, to=mem_space)
+            env.write(invar, val_to_pin)
+          elif new_inval is not None:
             if not should:
               raise ValueError(
                   f"Did not ask for inval to be discharged but it was. ({invar=},"
@@ -500,13 +518,8 @@ def _get_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
-  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
-  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
-  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
-    x = unpin(x)
   y = _get_discharge(x, idx, tree)
-  x_new = pin(x, to=x_aval.memory_space) if is_lin else None
-  return (x_new,) + (None,) * len(idx), y
+  return (None,) * (len(idx) + 1), y
 
 
 def _index_array(x, indexer: indexing.NDIndexer):
@@ -649,13 +662,7 @@ def _swap_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
-  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
-  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
-  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
-    x = unpin(x)
   z, x_new = _swap_discharge(x, val, idx, tree)
-  if is_lin:
-    x_new = pin(x_new, to=x_aval.memory_space)
   x_new = constrain(x_new, ms, ctx.strip_memory_space)
   return (x_new, None) + (None,) * len(idx), z
 
@@ -669,13 +676,7 @@ def _addupdate_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
-  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
-  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
-  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
-    x = unpin(x)
   ans = _addupdate_discharge(x, val, idx, tree)
-  if is_lin:
-    ans = pin(ans, to=x_aval.memory_space)
   ans = constrain(ans, ms, ctx.strip_memory_space)
   return (ans, None) + (None,) * len(idx), []
 

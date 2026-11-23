@@ -2289,6 +2289,191 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = jitted_f(x)
       self.assertAllClose(y, expected)
 
+  def test_new_ref_pinned_cond(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42823
+    def f(pred, x):
+      ref = jax.new_ref(x, pin=True)
+      def true_fun():
+        ref[...] = ref[...] * 2.0
+      def false_fun():
+        ref[...] = ref[...] + 1.0
+      lax.cond(pred, true_fun, false_fun)
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(4.0, dtype=jnp.float32)
+    jitted_f = jax.jit(f)
+    txt_true = jitted_f.lower(True, x).as_text("hlo")
+    self.assertIn("Pin", txt_true)
+    self.assertIn("Unpin", txt_true)
+    txt_false = jitted_f.lower(False, x).as_text("hlo")
+    self.assertIn("Pin", txt_false)
+    self.assertIn("Unpin", txt_false)
+
+    discharged = discharge_state(jax.make_jaxpr(f)(True, x))
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertIn("pin", prims)
+    self.assertIn("unpin", prims)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      self.assertAllClose(jitted_f(True, x), x * 2.0)
+      self.assertAllClose(jitted_f(False, x), x + 1.0)
+
+    # Verify pin=False behaves identically
+    def f_unpinned(pred, x):
+      ref = jax.new_ref(x, pin=False)
+      def true_fun():
+        ref[...] = ref[...] * 2.0
+      def false_fun():
+        ref[...] = ref[...] + 1.0
+      lax.cond(pred, true_fun, false_fun)
+      return jax.ref.freeze(ref)
+
+    self.assertAllClose(jax.jit(f_unpinned)(True, x), x * 2.0)
+    self.assertAllClose(jax.jit(f_unpinned)(False, x), x + 1.0)
+
+  def test_new_ref_pinned_scan(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42823
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      def body(carry, elem):
+        ref[...] = ref[...] + elem
+        return carry + 1, ref[...]
+      carry, ys = lax.scan(body, 0, jnp.arange(3, dtype=jnp.float32))
+      return carry, ys, jax.ref.freeze(ref)
+
+    x = jnp.ones(4, dtype=jnp.float32)
+    expected_carry = 3
+    expected_ref = x + 0.0 + 1.0 + 2.0
+    expected_ys = jnp.stack([x, x + 1.0, x + 3.0])
+
+    jitted_f = jax.jit(f)
+    txt = jitted_f.lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    discharged = discharge_state(jax.make_jaxpr(f)(x))
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertIn("pin", prims)
+    self.assertIn("unpin", prims)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      carry, ys, final_ref = jitted_f(x)
+      self.assertEqual(carry, expected_carry)
+      self.assertAllClose(ys, expected_ys)
+      self.assertAllClose(final_ref, expected_ref)
+
+    def f_unpinned(x):
+      ref = jax.new_ref(x, pin=False)
+      def body(carry, elem):
+        ref[...] = ref[...] + elem
+        return carry + 1, ref[...]
+      carry, ys = lax.scan(body, 0, jnp.arange(3, dtype=jnp.float32))
+      return carry, ys, jax.ref.freeze(ref)
+
+    carry_u, ys_u, final_ref_u = jax.jit(f_unpinned)(x)
+    self.assertEqual(carry_u, expected_carry)
+    self.assertAllClose(ys_u, expected_ys)
+    self.assertAllClose(final_ref_u, expected_ref)
+
+  def test_new_ref_pinned_fori_loop(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42823
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      def body(i, _):
+        ref[...] = ref[...] + 2.0
+      lax.fori_loop(0, 3, body, None)
+      return jax.ref.freeze(ref)
+
+    x = jnp.ones(4, dtype=jnp.float32)
+    expected = x + 6.0
+
+    jitted_f = jax.jit(f)
+    txt = jitted_f.lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    discharged = discharge_state(jax.make_jaxpr(f)(x))
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertIn("pin", prims)
+    self.assertIn("unpin", prims)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      self.assertAllClose(jitted_f(x), expected)
+
+    def f_unpinned(x):
+      ref = jax.new_ref(x, pin=False)
+      def body(i, _):
+        ref[...] = ref[...] + 2.0
+      lax.fori_loop(0, 3, body, None)
+      return jax.ref.freeze(ref)
+
+    self.assertAllClose(jax.jit(f_unpinned)(x), expected)
+
+  def test_new_ref_pinned_autodiff(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42823
+    def f_cond(x):
+      ref = jax.new_ref(x, pin=True)
+      def true_fun():
+        ref[...] = ref[...] ** 2.0
+      def false_fun():
+        ref[...] = ref[...] + 1.0
+      lax.cond(True, true_fun, false_fun)
+      return jnp.sum(jax.ref.freeze(ref))
+
+    def f_scan(x):
+      ref = jax.new_ref(x, pin=True)
+      def body(carry, elem):
+        ref[...] = ref[...] ** 2.0
+        return carry + 1.0, None
+      lax.scan(body, 0.0, None, length=2)
+      return jnp.sum(jax.ref.freeze(ref))
+
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+
+    jvp_cond = lambda x: jax.jvp(f_cond, (x,), (jnp.ones_like(x),))[1]
+    txt = jax.jit(jvp_cond).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    grad_cond = jax.grad(f_cond)
+    txt = jax.jit(grad_cond).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    vg_cond = jax.value_and_grad(f_cond)
+    txt = jax.jit(vg_cond).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    jvp_scan = lambda x: jax.jvp(f_scan, (x,), (jnp.ones_like(x),))[1]
+    txt = jax.jit(jvp_scan).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    grad_scan = jax.grad(f_scan)
+    txt = jax.jit(grad_scan).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    vg_scan = jax.value_and_grad(f_scan)
+    txt = jax.jit(vg_scan).lower(x).as_text("hlo")
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    def f_cond_unpinned(x):
+      ref = jax.new_ref(x, pin=False)
+      def true_fun():
+        ref[...] = ref[...] ** 2.0
+      def false_fun():
+        ref[...] = ref[...] + 1.0
+      lax.cond(True, true_fun, false_fun)
+      return jnp.sum(jax.ref.freeze(ref))
+
+    self.assertAllClose(jax.grad(f_cond_unpinned)(x), 2.0 * x)
+    val, g = jax.value_and_grad(f_cond_unpinned)(x)
+    self.assertAllClose(val, jnp.sum(x ** 2.0))
+    self.assertAllClose(g, 2.0 * x)
+
   def test_discharged_aval_non_ref_preserves_memory_space(self):
     aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
     discharged = discharged_aval(aval, discharge=True, strip_memory_space=True)
