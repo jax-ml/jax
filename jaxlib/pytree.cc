@@ -224,7 +224,8 @@ PyTreeKind PyTreeRegistry::KindOfObject(
       *custom = nullptr;
     }
     return registration->kind;
-  } else if (nb::isinstance<nb::tuple>(obj) && nb::hasattr(obj, "_fields")) {
+  } else if (enable_namedtuple_ && nb::isinstance<nb::tuple>(obj) &&
+             nb::hasattr(obj, "_fields")) {
     // We can only identify namedtuples heuristically, here by the presence of
     // a _fields attribute.
     return PyTreeKind::kNamedTuple;
@@ -238,6 +239,13 @@ PyTreeKind PyTreeRegistry::KindOfObject(
   ft_lock_guard lock(mu_);
   auto it = registrations_.find(type);
   return it == registrations_.end() ? nullptr : it->second.get();
+}
+
+bool PyTreeRegistry::IsNamedTupleType(nb::handle type) const {
+  return enable_namedtuple_ && PyType_Check(type.ptr()) &&
+         PyType_IsSubtype(reinterpret_cast<PyTypeObject*>(type.ptr()),
+                          &PyTuple_Type) != 0 &&
+         nb::hasattr(type, "_fields");
 }
 
 /*static*/ std::vector<nb::object> GetSortedPyDictKeys(PyObject* py_dict) {
@@ -974,14 +982,23 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
     }
 
     case PyTreeKind::kDataclass: {
-      nb::kwargs kwargs;
-      auto meta_size = node.custom->meta_fields.size();
-      for (int i = 0; i < meta_size; ++i) {
-        kwargs[node.custom->meta_fields[i]] =
-            nb::borrow(nb::tuple(node.node_data)[i]);
-      }
       auto data_size = node.custom->data_fields.size();
-      for (int i = 0; i < data_size; ++i) {
+      if (node.arity < 0 || data_size != static_cast<size_t>(node.arity)) {
+        throw std::invalid_argument("Dataclass data_fields arity mismatch.");
+      }
+      if (!node.node_data || !nb::isinstance<nb::tuple>(node.node_data)) {
+        throw std::invalid_argument("Dataclass metadata must be a tuple.");
+      }
+      nb::tuple meta_tuple = nb::borrow<nb::tuple>(node.node_data);
+      auto meta_size = node.custom->meta_fields.size();
+      if (meta_tuple.size() != meta_size) {
+        throw std::invalid_argument("Dataclass meta_fields arity mismatch.");
+      }
+      nb::kwargs kwargs;
+      for (size_t i = 0; i < meta_size; ++i) {
+        kwargs[node.custom->meta_fields[i]] = nb::borrow(meta_tuple[i]);
+      }
+      for (size_t i = 0; i < data_size; ++i) {
         kwargs[node.custom->data_fields[i]] = std::move(children[i]);
       }
       return node.custom->type(**kwargs);
@@ -1738,10 +1755,35 @@ nb_class_ptr<PyTreeDef> PyTreeDef::FromNodeDataAndChildren(
     nb::iterable children) {
   nb_class_ptr<PyTreeDef> result =
       make_nb_class<PyTreeDef>(std::move(registry));
+  if (node_data == std::nullopt) {
+    if (children.begin() != children.end()) {
+      throw std::invalid_argument("Leaf PyTreeDef cannot have children.");
+    }
+    result->traversal_.emplace_back();
+    auto& node = result->traversal_.back();
+    node.arity = 0;
+    node.custom = nullptr;
+    node.kind = PyTreeKind::kLeaf;
+    node.num_leaves = 1;
+    node.num_nodes = 1;
+    return result;
+  }
   int num_leaves = 0;
   int arity = 0;
   for (nb::handle pchild : children) {
     const PyTreeDef& child = nb::cast<const PyTreeDef&>(pchild);
+    if (child.registry() != result->registry()) {
+      throw std::invalid_argument(
+          "PyTree registries of PyTreeDefs passed to "
+          "from_node_data_and_children() must match.");
+    }
+    if (child.traversal_.empty() ||
+        child.traversal_.back().num_nodes !=
+            static_cast<int>(child.traversal_.size())) {
+      throw std::invalid_argument(
+          "Malformed child PyTreeDef passed to "
+          "from_node_data_and_children().");
+    }
     absl::c_copy(child.traversal_, std::back_inserter(result->traversal_));
     num_leaves += child.num_leaves();
     ++arity;
@@ -1752,37 +1794,63 @@ nb_class_ptr<PyTreeDef> PyTreeDef::FromNodeDataAndChildren(
   node.custom = nullptr;
   node.num_leaves = num_leaves;
   node.num_nodes = result->traversal_.size();
-  if (node_data == std::nullopt) {
-    node.kind = PyTreeKind::kLeaf;
-    ++node.num_leaves;
-    return result;
-  }
-  int is_nt = PyObject_IsSubclass(node_data->first.ptr(),
-                                  reinterpret_cast<PyObject*>(&PyTuple_Type));
-  if (is_nt == -1) {
-    throw nb::python_error();
-  }
-  if (is_nt != 0 && nb::hasattr(node_data->first, "_fields")) {
-    node.kind = PyTreeKind::kNamedTuple;
-    node.node_data = node_data->first;
-    return result;
-  }
   auto* registration = result->registry()->Lookup(node_data->first);
   if (registration == nullptr) {
-    throw std::logic_error(absl::StrFormat(
+    if (result->registry()->IsNamedTupleType(node_data->first)) {
+      node.kind = PyTreeKind::kNamedTuple;
+      node.node_data = node_data->first;
+      return result;
+    }
+    throw std::invalid_argument(absl::StrFormat(
         "Could not find type: %s.",
         nb::cast<absl::string_view>(nb::repr(node_data->first))));
   }
   node.kind = registration->kind;
-  if (node.kind == PyTreeKind::kCustom || node.kind == PyTreeKind::kDataclass) {
+  if (node.kind == PyTreeKind::kCustom) {
     node.custom = registration;
     node.node_data = node_data->second;
-  } else if (node.kind == PyTreeKind::kNamedTuple) {
-    node.node_data = node_data->first;
+  } else if (node.kind == PyTreeKind::kDataclass) {
+    node.custom = registration;
+    nb::tuple meta_tuple;
+    if (nb::isinstance<nb::tuple>(node_data->second)) {
+      meta_tuple = nb::borrow<nb::tuple>(node_data->second);
+    } else if (nb::isinstance<nb::list>(node_data->second)) {
+      meta_tuple =
+          nb::steal<nb::tuple>(PyList_AsTuple(node_data->second.ptr()));
+      if (!meta_tuple.ptr()) {
+        throw nb::python_error();
+      }
+    } else {
+      throw std::invalid_argument(absl::StrFormat(
+          "Dataclass meta_fields in FromNodeDataAndChildren must be a tuple "
+          "or list, got %s.",
+          nb::cast<absl::string_view>(nb::repr(node_data->second.type()))));
+    }
+    if (meta_tuple.size() != registration->meta_fields.size()) {
+      throw std::invalid_argument(absl::StrFormat(
+          "Dataclass meta_fields arity mismatch in FromNodeDataAndChildren: "
+          "expected %d, got %d.",
+          registration->meta_fields.size(), meta_tuple.size()));
+    }
+    if (static_cast<size_t>(arity) != registration->data_fields.size()) {
+      throw std::invalid_argument(absl::StrFormat(
+          "Dataclass data_fields arity mismatch in FromNodeDataAndChildren: "
+          "expected %d, got %d.",
+          registration->data_fields.size(), arity));
+    }
+    node.node_data = std::move(meta_tuple);
   } else if (node.kind == PyTreeKind::kDict ||
              node.kind == PyTreeKind::kFrozenDict) {
     node.sorted_dict_keys =
         nb::cast<std::vector<nb::object>>(node_data->second);
+    if (node.sorted_dict_keys.size() != static_cast<size_t>(arity)) {
+      throw std::invalid_argument(absl::StrFormat(
+          "Dict keys and values failed to match in FromNodeDataAndChildren: "
+          "expected %d keys, got %d.",
+          arity, node.sorted_dict_keys.size()));
+    }
+  } else if (node.kind == PyTreeKind::kNone && arity != 0) {
+    throw std::invalid_argument("None PyTreeDef cannot have children.");
   }
   return result;
 }
@@ -1937,14 +2005,8 @@ void BuildPytreeSubmodule(nb::module_& m) {
   registry.def(
       "is_node",
       [](const PyTreeRegistry& registry, nb::handle type) {
-        if (registry.Lookup(type) != nullptr) return true;
-        if (PyType_Check(type.ptr()) &&
-            PyType_IsSubtype(reinterpret_cast<PyTypeObject*>(type.ptr()),
-                             &PyTuple_Type) != 0 &&
-            nb::hasattr(type, "_fields")) {
-          return true;
-        }
-        return false;
+        return registry.Lookup(type) != nullptr ||
+               registry.IsNamedTupleType(type);
       },
       nb::arg("type"), nb::sig("def is_node(self, type: type) -> bool"));
   registry.def("__reduce__", [](nb::object self) {
@@ -2039,7 +2101,6 @@ void BuildPytreeSubmodule(nb::module_& m) {
       nb::sig(
           // clang-format off
         "def from_node_data_and_children("
-        "self, "
         "registry: PyTreeRegistry, "
         "node_data: tuple[type, Any] | None, "
         "children: typing.Iterable[PyTreeDef]"
