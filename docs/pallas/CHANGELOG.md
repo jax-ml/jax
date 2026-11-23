@@ -13,6 +13,17 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### TPU
+
+* Deprecations
+
+  * Implicit indices in {func}`jax.pallas.tpu.emit_pipeline` are deprecated.
+    Pass the temporary `_explicit_indices=True` parameter (to be removed after
+    migration) and accept {class}`jax.pallas.tpu.PipelineStep` as the first
+    body argument instead of calling `program_id`.
+
+## Release with JAX 0.12.1 (November 18, 2026)
+
 * Deprecations
 
   * `jax.experimental.pallas.pallas_call_p` is deprecated and will be removed

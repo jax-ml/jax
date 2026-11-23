@@ -1983,6 +1983,21 @@ use_emit_pipeline_primitive = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+pallas_tpu_pipeline_explicit_indices = bool_state(
+    name='jax_pallas_tpu_pipeline_explicit_indices',
+    default=False,
+    help=(
+        'If True, pltpu.emit_pipeline* passes a pltpu.PipelineStep as the '
+        'first argument to `body` by default.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+# Temporary allowlist of file path suffixes whose pltpu.emit_pipeline* calls
+# still default to _explicit_indices=False.
+pallas_tpu_emit_pipeline_legacy_files: tuple[str, ...] = ()
+
 
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
