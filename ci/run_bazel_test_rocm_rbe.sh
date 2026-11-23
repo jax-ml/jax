@@ -101,6 +101,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     "--@rules_python//python/config_settings:py_freethreaded=${FREETHREADED_FLAG_VALUE}" \
     "--action_env=JAX_ENABLE_X64=${JAXCI_ENABLE_X64}" \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
+    --test_env=XLA_FLAGS=--xla_gpu_blas_max_algorithms=8 \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
