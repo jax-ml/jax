@@ -552,6 +552,26 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = rng.randn(5)
     jax.jacrev(f)(b)  # doesn't crash
 
+  @jtu.sample_product(solver=['cg', 'gmres', 'bicgstab'])
+  def test_reverse_mode_through_custom_root(self, solver):
+    # See https://github.com/jax-ml/jax/issues/33872
+    isolve = getattr(jax.scipy.sparse.linalg, solver)
+    rng = np.random.RandomState(0)
+    a = posify(rng.randn(3, 3)) + 3 * np.eye(3)
+    b = rng.randn(3)
+
+    def linear_solve(a, b):
+      f = lambda y: matmul_high_precision(a, y) - b
+      solution = jnp.linalg.solve(a, b)
+      tangent_solve = lambda g, y: isolve(g, y)[0]
+      return lax.custom_root(f, jnp.zeros_like(b), lambda _, __: solution,
+                             tangent_solve)
+
+    loss = lambda solve: lambda a, b: jnp.sum(solve(a, b) ** 2)
+    expected = jax.grad(loss(jnp.linalg.solve), (0, 1))(a, b)
+    actual = jax.grad(loss(linear_solve), (0, 1))(a, b)
+    self.assertAllClose(expected, actual, rtol=1e-4, atol=1e-4)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

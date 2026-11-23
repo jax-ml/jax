@@ -138,6 +138,8 @@ def _ldexp_tree(tree, exp):
 
 
 def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
+  if x0 is None:
+    x0 = tree_map(jnp.zeros_like, b)
   # Rescale by a power of two so inner products do not underflow or overflow
   # for extreme right-hand side or initial-guess magnitudes (e.g. reverse-mode
   # cotangents), while keeping normal-range arithmetic bitwise identical.
@@ -196,6 +198,8 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 # aliases for working with pytrees
 
 def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
+  if x0 is None:
+    x0 = tree_map(jnp.zeros_like, b)
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.bicgstab
   bs = _vdot_real_tree(b, b)
@@ -248,9 +252,9 @@ def _shapes(pytree):
 
 def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
             maxiter=None, M=None, check_symmetric=False):
-  if x0 is None:
-    x0 = tree_map(jnp.zeros_like, b)
-
+  # The solves must not close over values computed from `b` (such as a default
+  # x0), or custom_linear_solve cannot be transposed with respect to `b`. A
+  # default x0 is therefore built inside each solve.
   b, x0 = api.device_put((b, x0))
 
   if maxiter is None:
@@ -262,21 +266,22 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
   A = _normalize_matvec(A)
   M = _normalize_matvec(M)
 
-  if tree_structure(x0) != tree_structure(b):
-    raise ValueError(
-        'x0 and b must have matching tree structure: '
-        f'{tree_structure(x0)} vs {tree_structure(b)}')
+  if x0 is not None:
+    if tree_structure(x0) != tree_structure(b):
+      raise ValueError(
+          'x0 and b must have matching tree structure: '
+          f'{tree_structure(x0)} vs {tree_structure(b)}')
 
-  if _shapes(x0) != _shapes(b):
-    raise ValueError(
-        'arrays in x0 and b must have matching shapes: '
-        f'{_shapes(x0)} vs {_shapes(b)}')
+    if _shapes(x0) != _shapes(b):
+      raise ValueError(
+          'arrays in x0 and b must have matching shapes: '
+          f'{_shapes(x0)} vs {_shapes(b)}')
 
   isolve_solve = partial(
       _isolve_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
   transpose_solve = partial(
       _isolve_solve,
-      x0=tree_map(jnp.zeros_like, x0),
+      x0=None,
       tol=tol,
       atol=atol,
       maxiter=maxiter,
@@ -727,8 +732,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   jax.lax.custom_linear_solve
   """
 
-  if x0 is None:
-    x0 = tree_map(jnp.zeros_like, b)
   if M is None:
     M = _identity
   A = _normalize_matvec(A)
@@ -741,17 +744,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     maxiter = 10 * size  # copied from scipy
   restart = min(restart, size)
 
-  if tree_structure(x0) != tree_structure(b):
+  if x0 is not None and tree_structure(x0) != tree_structure(b):
     raise ValueError(
         'x0 and b must have matching tree structure: '
         f'{tree_structure(x0)} vs {tree_structure(b)}')
-
-  b_norm = _norm(b)
-  atol = jnp.maximum(tol * b_norm, atol)
-
-  Mb = M(b)
-  Mb_norm = _norm(Mb)
-  ptol = Mb_norm * jnp.minimum(1.0, atol / b_norm)
 
   if solve_method == 'incremental':
     gmres_func = _gmres_incremental
@@ -761,8 +757,15 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     raise ValueError(f"invalid solve_method {solve_method}, must be either "
                      "'incremental' or 'batched'")
 
+  # As in _isolve, the solve computes the default x0 and the tolerances from
+  # its own right-hand side, so that it can be transposed with respect to `b`.
   def _solve(A, b):
-    return _gmres_solve(A, b, x0, atol, ptol, restart, maxiter, M, gmres_func)
+    x0_ = tree_map(jnp.zeros_like, b) if x0 is None else x0
+    b_norm = _norm(b)
+    atol_ = jnp.maximum(tol * b_norm, atol)
+    ptol = _norm(M(b)) * jnp.minimum(1.0, atol_ / b_norm)
+    return _gmres_solve(A, b, x0_, atol_, ptol, restart, maxiter, M,
+                        gmres_func)
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
   failed = jnp.isnan(_norm(x))

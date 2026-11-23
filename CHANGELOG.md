@@ -22,6 +22,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
 * Changes
 * Bug fixes
+  * {func}`jax.scipy.sparse.linalg.cg`, {func}`~jax.scipy.sparse.linalg.gmres`
+    and {func}`~jax.scipy.sparse.linalg.bicgstab` can now be differentiated in
+    reverse mode when used as the tangent solve of {func}`jax.lax.custom_root`
+    or inside a {func}`jax.custom_jvp` rule, which previously raised
+    `NotImplementedError` ({jax-issue}`#33872`, {jax-issue}`#5309`).
 
 ## JAX 0.12.1 (November 18, 2026)
 
