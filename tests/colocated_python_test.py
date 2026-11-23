@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.sharding_impls import make_single_device_sharding
 from jax.experimental import colocated_python
+from jax.experimental.colocated_python import api as colocated_python_api
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
 import jax.numpy as jnp
@@ -73,6 +74,76 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         np.array(cpu_devices).reshape((1, 1)), ("x", "y")
     )
     self.assertEqual(cpu_mesh1, cpu_mesh2)
+
+  def test_colocated_cpu_devices_by_colocation_id(self):
+    class _FakeClient:
+
+      def __init__(self):
+        self._devices = []
+
+      def _get_all_devices(self):
+        return self._devices
+
+    class _FakeDevice:
+
+      def __init__(self, name, device_kind, colocation_id, client):
+        self._name = name
+        self.device_kind = device_kind
+        self.colocation_id = colocation_id
+        self.client = client
+
+      def __repr__(self):
+        return self._name
+
+    # Happy path: 1:1 matching in input order, ignoring unrequested ambiguity.
+    client = _FakeClient()
+    tpu0 = _FakeDevice("tpu0", "tpu", 0, client)
+    tpu1 = _FakeDevice("tpu1", "tpu", 1, client)
+    cpu0 = _FakeDevice("cpu0", "cpu", 0, client)
+    cpu1 = _FakeDevice("cpu1", "cpu", 1, client)
+    cpu_dup_a = _FakeDevice("cpu_dup_a", "cpu", 99, client)
+    cpu_dup_b = _FakeDevice("cpu_dup_b", "cpu", 99, client)
+    client._devices = [tpu0, tpu1, cpu0, cpu1, cpu_dup_a, cpu_dup_b]
+
+    self.assertEqual(
+        colocated_python_api._colocated_cpu_devices_cached((tpu1, tpu0)),
+        [cpu1, cpu0],
+    )
+    self.assertEqual(
+        colocated_python_api._colocated_cpu_devices_cached((cpu0,)),
+        [cpu0],
+    )
+
+    # No CPU devices on client.
+    no_cpu_client = _FakeClient()
+    tpu_only = _FakeDevice("tpu_only", "tpu", 0, no_cpu_client)
+    no_cpu_client._devices = [tpu_only]
+    with self.assertRaisesRegex(ValueError, "No CPU devices found"):
+      colocated_python_api._colocated_cpu_devices_cached((tpu_only,))
+
+    # Requested device has no matching colocation_id.
+    missing_client = _FakeClient()
+    tpu_ok = _FakeDevice("tpu_ok", "tpu", 0, missing_client)
+    tpu_missing = _FakeDevice("tpu_missing", "tpu", 42, missing_client)
+    cpu_ok = _FakeDevice("cpu_ok", "cpu", 0, missing_client)
+    missing_client._devices = [tpu_ok, tpu_missing, cpu_ok]
+    with self.assertRaisesRegex(
+        ValueError, "Device tpu_missing has no colocated devices"
+    ):
+      colocated_python_api._colocated_cpu_devices_cached((tpu_ok, tpu_missing))
+
+    # Requested device has ambiguous colocation_id (error names requested device).
+    ambig_client = _FakeClient()
+    tpu_ambig = _FakeDevice("tpu_ambig", "tpu", 7, ambig_client)
+    cpu_ambig_a = _FakeDevice("cpu_ambig_a", "cpu", 7, ambig_client)
+    cpu_ambig_b = _FakeDevice("cpu_ambig_b", "cpu", 7, ambig_client)
+    ambig_client._devices = [tpu_ambig, cpu_ambig_a, cpu_ambig_b]
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Ambiguous colocated devices; device tpu_ambig has 2 colocated"
+        r" devices: \[cpu_ambig_a, cpu_ambig_b\]",
+    ):
+      colocated_python_api._colocated_cpu_devices_cached((tpu_ambig,))
 
   def test_serialization_roundtrip(self):
     cpu_devices = colocated_python.colocated_cpu_devices(
