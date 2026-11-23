@@ -21,6 +21,7 @@ message MosaicGpuKernelProto {
   bool uses_xla_collective_metadata = 14;
   bool skip_device_barrier = 15;
   optional int64 collective_id = 16;
+  bool uses_pdl = 17;
 
   reserved 6;
   reserved "init_func_name";

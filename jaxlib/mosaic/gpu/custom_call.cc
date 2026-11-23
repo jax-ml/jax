@@ -158,6 +158,8 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/executable_run_options.h"
+#include "xla/ffi/api/kernel_api.h"
+#include "xla/ffi/api/kernel_c_api.h"
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
@@ -489,7 +491,7 @@ absl::StatusOr<std::string> GetHostFuncName(mlir::ModuleOp module_op) {
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
                  MosaicHostFunc* host_func, bool is_nvshmem_used,
-                 bool is_multimem_used, std::string object_file,
+                 bool is_multimem_used, bool uses_pdl, std::string object_file,
                  std::string host_func_name, std::string gpu_binary,
                  std::string kernel_name, int32_t smem_bytes,
                  int32_t cluster_size)
@@ -497,6 +499,7 @@ struct CompiledKernel {
         host_func(host_func),
         is_nvshmem_used(is_nvshmem_used),
         is_multimem_used(is_multimem_used),
+        uses_pdl(uses_pdl),
         gpu_binary(std::move(gpu_binary)),
         kernel_name(std::move(kernel_name)),
         smem_bytes(smem_bytes),
@@ -513,6 +516,7 @@ struct CompiledKernel {
   const MosaicHostFunc* host_func;
   bool is_nvshmem_used = false;
   bool is_multimem_used = false;
+  bool uses_pdl = false;
   std::string gpu_binary;
   std::string kernel_name;
   int32_t smem_bytes = 0;
@@ -689,8 +693,9 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    bool is_nvshmem_used, bool is_multimem_used, std::string gpu_binary,
-    std::string kernel_name, int32_t smem_bytes, int32_t cluster_size) {
+    bool is_nvshmem_used, bool is_multimem_used, bool uses_pdl,
+    std::string gpu_binary, std::string kernel_name, int32_t smem_bytes,
+    int32_t cluster_size) {
   EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -803,7 +808,7 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   MosaicHostFunc* host_func = host_sym->toPtr<MosaicHostFunc*>();
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_func, is_nvshmem_used, is_multimem_used,
+      std::move(lljit), host_func, is_nvshmem_used, is_multimem_used, uses_pdl,
       std::move(object_file_str), std::move(host_func_name),
       std::move(gpu_binary), std::move(kernel_name), smem_bytes, cluster_size);
 }
@@ -893,6 +898,8 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
 
   bool use_nvshmem = is_nvshmem_used(*module);
   bool multimem_used = is_multimem_used(*module);
+  // Set by `_lower_as_gpu_kernel` in jax/experimental/mosaic/gpu/core.py.
+  bool uses_pdl = (*module)->hasAttr("mosaic_gpu.uses_pdl");
   mosaic::gpu::DumpOptions dump_opts =
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
   RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
@@ -932,8 +939,9 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   ASSIGN_OR_RETURN(auto host_func_name, GetHostFuncName(*module));
 
   return CreateAndInitJIT(std::move(object_file), std::move(host_func_name),
-                          use_nvshmem, multimem_used, std::move(gpu_binary),
-                          std::move(kernel_name), smem_bytes, cluster_size);
+                          use_nvshmem, multimem_used, uses_pdl,
+                          std::move(gpu_binary), std::move(kernel_name),
+                          smem_bytes, cluster_size);
 }
 
 struct KernelCache {
@@ -1006,6 +1014,38 @@ struct InitResult {
   CUfunction function;
 };
 
+// Checks that `device` can run a kernel that uses multimem instructions.
+absl::Status ValidateMultimemSupport(const CompiledKernel& kernel,
+                                     CUdevice device) {
+  int supports_multicast;
+  CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
+      &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
+  if (supports_multicast == 0) {
+    return absl::FailedPreconditionError(
+        "System does not support multicast memory; multimem instructions "
+        "cannot be used.");
+  }
+
+  if (kernel.is_nvshmem_used) {
+    int nvshmem_world_size = NvshmemApi::Default().n_pes();
+    // multimem instructions require multicast memory; mgpu will emit
+    // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
+    // addresses, which will return nullptr and lead to memory errors if
+    // multicast is not supported on the device
+    // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
+    // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
+    if (nvshmem_world_size == 1) {
+      // There is only one device, so NVSHMEM will not configure multicast
+      // mappings and nvshmemx_mc_ptr will return nullptr.
+      return absl::FailedPreconditionError(
+          "Multicast memory mappings are not configured with only one "
+          "device; multimem instructions cannot be used.");
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
@@ -1016,32 +1056,7 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_multimem_used) {
     CUdevice device;
     CUDA_RETURN_IF_ERROR(cuCtxGetDevice(&device));
-    int supports_multicast;
-    CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
-        &supports_multicast, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device));
-    if (supports_multicast == 0) {
-      return absl::FailedPreconditionError(
-          "System does not support multicast memory; multimem instructions "
-          "cannot be used.");
-    }
-
-    if (kernel.is_nvshmem_used) {
-      int nvshmem_world_size = NvshmemApi::Default().n_pes();
-      // multimem instructions require multicast memory; mgpu will emit
-      // device-side calls to nvshmemx_mc_ptr to translate unicast->multicast
-      // addresses, which will return nullptr and lead to memory errors if
-      // multicast is not supported on the device
-      // https://docs.nvidia.com/nvshmem/api/using.html#communication-model
-      // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-multimem
-      // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/virtual-memory-management.html#multicast-memory-sharing
-      if (nvshmem_world_size == 1) {
-        // There is only one device, so NVSHMEM will not configure multicast
-        // mappings and nvshmemx_mc_ptr will return nullptr.
-        return absl::FailedPreconditionError(
-            "Multicast memory mappings are not configured with only one "
-            "device; multimem instructions cannot be used.");
-      }
-    }
+    RETURN_IF_ERROR(ValidateMultimemSupport(kernel, device));
   }
   CUmodule module = nullptr;
   CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
@@ -1149,10 +1164,11 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
     return absl::InternalError(
         "Failed to serialize CustomCallResources: CompiledKernel is null");
   }
-  kernel_proto.set_version(5);
+  kernel_proto.set_version(6);
   kernel_proto.set_object_file(kernel->object_file);
   kernel_proto.set_is_nvshmem_used(kernel->is_nvshmem_used);
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
+  kernel_proto.set_uses_pdl(kernel->uses_pdl);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
   kernel_proto.set_gpu_binary(kernel->gpu_binary);
@@ -1189,7 +1205,7 @@ CustomCallResources::Deserialize(absl::string_view data) {
   std::memcpy(resources->hash.data(), kernel_proto.kernel_hash().data(),
               sizeof(KernelHash));
 
-  if (kernel_proto.version() != 5) {
+  if (kernel_proto.version() != 6) {
     return absl::InternalError(absl::StrCat(
         "Unsupported Mosaic GPU kernel version: ", kernel_proto.version()));
   }
@@ -1221,8 +1237,9 @@ CustomCallResources::Deserialize(absl::string_view data) {
                 llvm::MemoryBuffer::getMemBuffer(kernel_proto.object_file(),
                                                  "kernel"),
                 std::move(host_func_name), kernel_proto.is_nvshmem_used(),
-                kernel_proto.is_multimem_used(), std::move(gpu_binary),
-                std::move(kernel_name), smem_bytes, cluster_size);
+                kernel_proto.is_multimem_used(), kernel_proto.uses_pdl(),
+                std::move(gpu_binary), std::move(kernel_name), smem_bytes,
+                cluster_size);
           }));
   return resources;
 }
@@ -1503,16 +1520,14 @@ absl::Status MosaicGpuPrepare(
   // lazily initialize library handles/plans (e.g. cuBLAS, cuSOLVER, or cuDNN),
   // or load a CUDA module on first execute.
   command_buffer_requests->SetRequiresWarmup(false);
-  // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
-  // CUDA has a system-wide mutex around this call which can cause a deadlock
-  // if user tries to load the module on one GPU while another GPU is executing
-  // the same module. To prevent this we need to initialize all modules used
-  // by several devices before the first execution.
-  // See more details:
-  // https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html#impact-on-concurrent-kernel-execution
-  // This operation should be done at Prepare stage since XLA launches a
-  // rendez-vous between Prepare and Initialize, which we need here to make sure
-  // that modules were loaded on all devices before the first execution.
+  // Module initialization calls cuModuleLoadData, which takes the per-context
+  // write lock and implicitly synchronizes the context. Doing this during
+  // execution can deadlock with concurrent collective kernels on the same
+  // device
+  // (https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html#impact-on-concurrent-kernel-execution).
+  // Initializing during Prepare ensures all devices finish loading before
+  // XLA's clique acquisition and post-initialize rendezvous, and before any
+  // device starts executing.
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
   ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
@@ -1797,6 +1812,35 @@ absl::Status MosaicGpuInitialize(
   return absl::OkStatus();
 }
 
+// Host values in the returned args point into `cfg.host_bytes`, so `cfg` must
+// outlive them and stay unchanged.
+std::pair<llvm::SmallVector<ffi::KernelArg, 8>, XLA_FFI_LaunchDims>
+BuildKernelArgsAndDims(const mosaic::gpu::MosaicKernelSpec& cfg) {
+  llvm::SmallVector<ffi::KernelArg, 8> kernel_args;
+  kernel_args.reserve(cfg.args.size());
+  for (const auto& arg : cfg.args) {
+    if (const auto* host =
+            std::get_if<mosaic::gpu::MosaicKernelSpec::HostArg>(&arg)) {
+      kernel_args.push_back(ffi::HostValue{cfg.host_bytes.data() + host->offset,
+                                           static_cast<size_t>(host->size)});
+    } else {
+      kernel_args.push_back(ffi::DevicePointer{
+          std::get<mosaic::gpu::MosaicKernelSpec::DeviceArg>(arg).ptr});
+    }
+  }
+  XLA_FFI_LaunchDims dims{
+      /*grid=*/{static_cast<int32_t>(cfg.grid.x),
+                static_cast<int32_t>(cfg.grid.y),
+                static_cast<int32_t>(cfg.grid.z)},
+      /*block=*/
+      {static_cast<int32_t>(cfg.block.x), static_cast<int32_t>(cfg.block.y),
+       static_cast<int32_t>(cfg.block.z)},
+      /*cluster=*/
+      {static_cast<int32_t>(cfg.cluster.x), static_cast<int32_t>(cfg.cluster.y),
+       static_cast<int32_t>(cfg.cluster.z)}};
+  return {std::move(kernel_args), dims};
+}
+
 // Collects input/output buffer pointers (plus device and host collective
 // metadata pointers when applicable), invokes `kernel->host_func` to populate
 // the kernel launch specification, and resolves the communicator for a
@@ -1891,29 +1935,7 @@ absl::Status MosaicGpuRecord(
       BuildKernelSpec(collective_params, collective_cliques, inputs, results,
                       *resources, device_state, device_ordinal));
 
-  // Translate from MosaicKernelSpec to ffi::KernelArg.
-  llvm::SmallVector<ffi::KernelArg, 8> kernel_args;
-  kernel_args.reserve(cfg.args.size());
-  for (const auto& arg : cfg.args) {
-    if (const auto* host =
-            std::get_if<mosaic::gpu::MosaicKernelSpec::HostArg>(&arg)) {
-      kernel_args.push_back(ffi::HostValue{cfg.host_bytes.data() + host->offset,
-                                           static_cast<size_t>(host->size)});
-    } else {
-      kernel_args.push_back(ffi::DevicePointer{
-          std::get<mosaic::gpu::MosaicKernelSpec::DeviceArg>(arg).ptr});
-    }
-  }
-  XLA_FFI_LaunchDims dims{
-      /*grid=*/{static_cast<int32_t>(cfg.grid.x),
-                static_cast<int32_t>(cfg.grid.y),
-                static_cast<int32_t>(cfg.grid.z)},
-      /*block=*/
-      {static_cast<int32_t>(cfg.block.x), static_cast<int32_t>(cfg.block.y),
-       static_cast<int32_t>(cfg.block.z)},
-      /*cluster=*/
-      {static_cast<int32_t>(cfg.cluster.x), static_cast<int32_t>(cfg.cluster.y),
-       static_cast<int32_t>(cfg.cluster.z)}};
+  auto [kernel_args, dims] = BuildKernelArgsAndDims(cfg);
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
