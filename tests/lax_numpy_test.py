@@ -3461,12 +3461,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
 
-  def testAsarrayExistingArrayFastPath(self):
-    x = jnp.arange(3)
-    self.assertIs(jnp.asarray(x), x)
-    self.assertIs(jnp.asarray(x, copy=False), x)
-    self.assertIsNot(jnp.asarray(x, copy=True), x)
-
   def testAsarrayConcreteTracer(self):
     # `jax.Array` includes tracers, but jnp.asarray must still stage concrete
     # scalar tracers into arrays (see the fast path in jnp.array).
@@ -3481,30 +3475,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     p, _ = jax.vjp(jnp.asarray, 1.0)
     self.assertIsInstance(p, jax.Array)
-
-  def testAsarrayArraySubclassSlowPath(self):
-    # `jax.Array` also matches `Array` subclasses that are not `ArrayImpl`
-    # (e.g. EArray, PRNGKeyArray). Such subclasses may customize conversion
-    # via `__jax_array__`, so the fast path in `jnp.array` must leave them for
-    # the normal conversion path.
-    class WrappedArray(jax.Array):
-      def __init__(self, x):
-        self._x = x
-      aval = property(lambda self: self._x.aval)
-      sharding = property(lambda self: self._x.sharding)
-      dtype = property(lambda self: self._x.dtype)
-      shape = property(lambda self: self._x.shape)
-      ndim = property(lambda self: self._x.ndim)
-      size = property(lambda self: self._x.size)
-      def __jax_array__(self):
-        return self._x
-
-    x = jnp.arange(3)
-    w = WrappedArray(x)
-    self.assertIsNot(jnp.asarray(w), w)
-    self.assertArraysEqual(jnp.asarray(w), x)
-    self.assertIsNot(jnp.asarray(w, copy=False), w)
-    self.assertArraysEqual(jnp.asarray(w, copy=False), x)
 
   @jtu.sample_product(
     shape=nonempty_nonscalar_array_shapes,

@@ -188,13 +188,10 @@ def array(object: Any, dtype: DTypeLike | None = None, *, copy: bool = True,
   # Fast path: if we're not actually doing any conversion, in many cases we
   # can call lax.stage to lift the value into the trace.
   if dtype is None and device is None and out_sharding is None and ndmin == 0:
-    if isinstance(object, core.Tracer) and not core.is_concrete(object):
-      return lax._array_copy(object) if copy else object
-    # Restrict the fast path to materialized arrays: `isinstance(x, Array)` is
-    # also True for tracers and for `Array` subclasses such as `EArray`,
-    # `PRNGKeyArray`, and `UnreducedArray`, which may still need the conversion
-    # path below. ArrayImpl covers the eager execution path being optimized.
-    if isinstance(object, ArrayImpl):
+    # Fast path for eager array inputs and non-concrete tracers
+    if isinstance(object, ArrayImpl) or (
+        isinstance(object, core.Tracer) and not core.is_concrete(object)
+    ):
       return lax._array_copy(object) if copy else object
     if isinstance(object, (int, float, complex, np.number)):
       return lax.stage(object)
