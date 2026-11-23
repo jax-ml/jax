@@ -1902,6 +1902,36 @@ class GeneralRefTest(jtu.JaxTestCase):
   #   self.assertIs(type(jaxpr.outvars[0].aval), AbstractRef)
   #   self.assertIs(type(jaxpr.outvars[0].aval.inner_aval), core.ShapedArray)
 
+  def test_jacfwd_of_new_ref_freeze(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42821
+    x = jnp.arange(4, dtype=jnp.float32) + 1
+    jac = jax.jacfwd(lambda z: jax.freeze(jax.new_ref(z)))(x)
+    self.assertAllClose(jac, jnp.eye(4, dtype=jnp.float32), check_dtypes=True)
+
+  def test_jacfwd_of_ref_mutation_matches_jacrev(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42821
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[...] = ref[...] ** 3
+      return jax.freeze(ref)
+
+    x = jnp.arange(4, dtype=jnp.float32) + 1
+    fwd = jax.jacfwd(f)(x)
+    rev = jax.jacrev(f)(x)
+    self.assertAllClose(fwd, rev, check_dtypes=True)
+
+  def test_jacfwd_of_ref_scalar_reduction_matches_jacrev(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42821
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[...] = ref[...] ** 3
+      return jnp.sum(jax.freeze(ref))
+
+    x = jnp.arange(4, dtype=jnp.float32) + 1
+    fwd = jax.jacfwd(f)(x)
+    rev = jax.jacrev(f)(x)
+    self.assertAllClose(fwd, rev, check_dtypes=True)
+
 
 class RunStateTest(jtu.JaxTestCase):
 
