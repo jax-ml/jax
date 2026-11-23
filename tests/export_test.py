@@ -419,6 +419,73 @@ class JaxExportTest(jtu.JaxTestCase):
           serialized_name="test_pytree_namedtuple_error.SomeType",
       )
 
+    if jax._src.lib.jaxlib_extension_version >= 528:
+      CustomNT = collections.namedtuple("CustomNT", ("a", "meta"))
+      tree_util.register_pytree_node(
+          CustomNT,
+          lambda o: ((o.a,), o.meta),
+          lambda meta, children: CustomNT(children[0], meta),
+      )
+      export.register_pytree_node_serialization(
+          CustomNT,
+          serialized_name="test_pytree_namedtuple_error.CustomNT",
+          serialize_auxdata=lambda m: m.encode("utf-8"),
+          deserialize_auxdata=lambda b: b.decode("utf-8"),
+      )
+      ser = export.export(jax.jit(lambda x: x))(CustomNT(jnp.int32(3), "tag")).serialize()
+      exp2 = export.deserialize(ser)
+      res = exp2.call(CustomNT(jnp.int32(5), "tag"))
+      self.assertEqual(res, CustomNT(jnp.int32(5), "tag"))
+
+  def test_pytree_dataclass_iterable_auxdata(self):
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
+
+    @functools.partial(
+        tree_util.register_dataclass,
+        data_fields=("x",),
+        meta_fields=("tag",),
+    )
+    @dataclasses.dataclass
+    class CustomDC:
+      x: jax.Array
+      tag: int
+
+    export.register_pytree_node_serialization(
+        CustomDC,
+        serialized_name="test_pytree_dataclass_iterable_auxdata.CustomDC",
+        serialize_auxdata=lambda aux: str(int(aux[0])).encode("utf-8"),
+        # Return a non-tuple/non-list iterable (ndarray) as dataclass auxdata.
+        deserialize_auxdata=lambda b: np.array([int(b.decode("utf-8"))]),
+    )
+    x = CustomDC(jnp.int32(3), 17)
+    exp = export.export(jax.jit(lambda v: v))(x)
+    exp2 = export.deserialize(exp.serialize())
+    res = exp2.call(CustomDC(jnp.int32(5), 17))
+    self.assertEqual(res, CustomDC(jnp.int32(5), 17))
+
+    if lib.jaxlib_extension_version >= 528:
+      @functools.partial(
+          tree_util.register_dataclass,
+          data_fields=("x",),
+          meta_fields=("tag",),
+      )
+      @dataclasses.dataclass
+      class BadDC:
+        x: jax.Array
+        tag: int
+
+      export.register_pytree_node_serialization(
+          BadDC,
+          serialized_name="test_pytree_dataclass_iterable_auxdata.BadDC",
+          serialize_auxdata=lambda aux: str(int(aux[0])).encode("utf-8"),
+          deserialize_auxdata=lambda b: np.array(int(b.decode("utf-8"))),
+      )
+      bad_ser = export.export(jax.jit(lambda v: v))(
+          BadDC(jnp.int32(3), 17)
+      ).serialize()
+      with self.assertRaises(ValueError):
+        export.deserialize(bad_ser)
+
   def test_pytree_custom_types(self):
     if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
     x1 = collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)])
