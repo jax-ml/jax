@@ -21,6 +21,7 @@ import numpy as np
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src.array import ArrayImpl
 from jax._src import dtypes
 from jax._src import literals
 from jax._src import tree_util
@@ -189,10 +190,11 @@ def array(object: Any, dtype: DTypeLike | None = None, *, copy: bool = True,
   if dtype is None and device is None and out_sharding is None and ndmin == 0:
     if isinstance(object, core.Tracer) and not core.is_concrete(object):
       return lax._array_copy(object) if copy else object
-    # `isinstance(x, Array)` is also True for tracers with array avals, but
-    # concrete tracers (e.g. a JVPTracer wrapping a Python scalar) still need
-    # `_convert_element_type` below to be staged into arrays.
-    if isinstance(object, Array) and not isinstance(object, core.Tracer):
+    # Restrict the fast path to materialized arrays: `isinstance(x, Array)` is
+    # also True for tracers and for `Array` subclasses such as `EArray`,
+    # `PRNGKeyArray`, and `UnreducedArray`, which may still need the conversion
+    # path below. ArrayImpl covers the eager execution path being optimized.
+    if isinstance(object, ArrayImpl):
       return lax._array_copy(object) if copy else object
     if isinstance(object, (int, float, complex, np.number)):
       return lax.stage(object)
