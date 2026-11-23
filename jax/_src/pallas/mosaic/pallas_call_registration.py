@@ -459,6 +459,12 @@ def pallas_call_tpu_lowering_rule(
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
 
+  if mosaic_params.use_compiler_pipeline_emitter:
+    raise ValueError(
+        "pallas_call does not support use_compiler_pipeline_emitter= in"
+        " compiler_params="
+    )
+
   tag = _extract_single_barrier_semaphore_tag(jaxpr)
 
   jax_mesh = None
@@ -675,8 +681,23 @@ def mpmd_map_tpu_lowering_rule(
       isinstance(v.aval, jax_core.ShapedArray) and not v.aval.shape
       for v in some_jaxpr.invars
   ]
+  if mosaic_params.use_compiler_pipeline_emitter:
+    if len(meshes) != 1:
+      raise NotImplementedError(
+          "use_compiler_pipeline_emitter does not support multi-kernel"
+          " mpmd_map."
+      )
+    if any(is_scalar_input):
+      raise NotImplementedError(
+          "Closed-over scalar inputs are not supported with"
+          " use_compiler_pipeline_emitter."
+      )
 
-  with mlir_ctx, ir.Location.unknown(mlir_ctx):
+  with (
+      mlir_ctx,
+      ir.Location.unknown(mlir_ctx),
+      xla_metadata.clear_xla_metadata(),
+  ):
     mosaic_module = ir.Module.create()
     for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
       if not hasattr(mesh, "core_type") or not hasattr(
@@ -734,17 +755,32 @@ def mpmd_map_tpu_lowering_rule(
             jaxpr, mesh, (*meshes, *external_meshes)
         )
 
-      lowering.lower_jaxpr_into_unpipelined_module(
-          ctx,
-          mosaic_module,
-          jaxpr,
-          jax_mesh=jax_mesh,
-          pallas_mesh=mesh,
-          name=mlir.sanitize_name(jaxpr.debug_info.func_name),
-          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
-          num_scratch=num_scratch,
-          needs_layout_passes=mosaic_params.needs_layout_passes,
-      )
+      if mosaic_params.use_compiler_pipeline_emitter:
+        lowering.lower_emit_pipeline_into_pipelined_module(
+            ctx,
+            mosaic_module,
+            jaxpr,
+            name=mlir.sanitize_name(jaxpr.debug_info.func_name),
+            pallas_mesh=mesh,
+            jax_mesh=jax_mesh,
+            dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+            num_inputs=len(in_nodes),
+            num_scratch=num_scratch,
+            fuse_transposed_lhs_in_matmul=mosaic_params.fuse_transposed_lhs_in_matmul,
+        )
+      else:
+        lowering.lower_jaxpr_into_unpipelined_module(
+            ctx,
+            mosaic_module,
+            jaxpr,
+            jax_mesh=jax_mesh,
+            pallas_mesh=mesh,
+            name=mlir.sanitize_name(jaxpr.debug_info.func_name),
+            dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+            num_scratch=num_scratch,
+            needs_layout_passes=mosaic_params.needs_layout_passes,
+            fuse_transposed_lhs_in_matmul=mosaic_params.fuse_transposed_lhs_in_matmul,
+        )
 
   if debug:
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)

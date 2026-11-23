@@ -1484,6 +1484,190 @@ def _get_mesh_shape_and_semantics(
   return mesh_shape, dimension_semantics
 
 
+def _match_emit_pipeline_eqn(
+    jaxpr: jax_core.Jaxpr,
+    *,
+    num_inputs: int,
+    num_scratch: int,
+    pallas_mesh: pallas_core.Mesh,
+) -> tuple[dict[str, Any], Any, pallas_core.GridMapping, list[jax_core.Var]]:
+  if len(jaxpr.eqns) != 1 or jaxpr.eqns[0].primitive.name != "emit_pipeline":
+    raise ValueError(
+        "use_compiler_pipeline_emitter requires pltpu.emit_pipeline to be the"
+        " only top-level equation in the kernel jaxpr (traced with"
+        " jax_use_emit_pipeline_primitive=True), got"
+        f" {[e.primitive for e in jaxpr.eqns]}."
+    )
+
+  eqn = jaxpr.eqns[0]
+  params = eqn.params
+  prim_args = params["args_tree"].unflatten(eqn.invars)
+  if prim_args.all_index_map_consts:
+    raise NotImplementedError(
+        "Scalar prefetch is not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  if prim_args.dynamic_grid_spec:
+    raise NotImplementedError(
+        "Dynamic grid bounds are not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  if (
+      prim_args.allocations is not None
+      or params["tiling"] is not None
+      or params["no_pipelining"]
+      or params["output_wait_read_only"]
+      or params["core_axis"] is not None
+      or params["core_axis_name"] is not None
+  ):
+    raise NotImplementedError(
+        "Unsupported pltpu.emit_pipeline options for"
+        " use_compiler_pipeline_emitter."
+    )
+
+  scratch_avals = (
+      tuple(v.aval for v in jaxpr.invars[-num_scratch:]) if num_scratch else ()
+  )
+  grid_mapping: pallas_core.GridMapping = params["grid_mapping"].replace(
+      scratch_avals=scratch_avals,
+  )
+  if grid_mapping.vmapped_dims:
+    raise NotImplementedError(
+        "vmap is not yet supported with use_compiler_pipeline_emitter."
+    )
+  dim_semantics = tuple(
+      _canonicalize_dimension_semantic(s) for s in params["dimension_semantics"]
+  )
+  if len(dim_semantics) != len(grid_mapping.static_grid) or any(
+      s not in ("parallel", "arbitrary") for s in dim_semantics
+  ):
+    raise ValueError(
+        f"Invalid dimension_semantics for grid {grid_mapping.static_grid}:"
+        f" {params['dimension_semantics']}."
+    )
+
+  io_invars = jaxpr.invars[grid_mapping.slice_block_ops]
+  scratch_invars = jaxpr.invars[grid_mapping.slice_scratch_ops]
+  refs, _ = tree_util.tracing_registry.flatten(
+      params["refs_tree"].unflatten(prim_args.refs_flat),
+      lambda x: isinstance(x, state.TransformedRef),
+  )
+  if (
+      len(jaxpr.invars)
+      != len(grid_mapping.block_mappings) + grid_mapping.num_scratch_operands
+      or grid_mapping.num_inputs != num_inputs
+      or tuple(refs) != tuple(io_invars)
+  ):
+    raise ValueError(
+        "pltpu.emit_pipeline inputs and outputs must match the kernel"
+        " input/output Refs positionally without slicing, transforms, or"
+        " omission when use_compiler_pipeline_emitter=True."
+    )
+  for v in io_invars:
+    ms = tpu_core.memory_space_to_tpu_memory_space(
+        pallas_core.get_memory_space_aval(v.aval), tpu_core.CoreType.TC
+    )
+    if ms not in (ANY, tpu_core.MemorySpace.HBM):
+      raise ValueError(
+          "Expected kernel input/output Refs in HBM or ANY for"
+          f" use_compiler_pipeline_emitter, got {ms}."
+      )
+  if not set(prim_args.body_consts).issubset(scratch_invars):
+    raise ValueError(
+        "pltpu.emit_pipeline body may only close over top-level kernel"
+        " scratch Refs when use_compiler_pipeline_emitter=True."
+    )
+  all_effects = set(params["body_jaxpr"].effects).union(
+      *(bm.index_map_jaxpr.effects for bm in grid_mapping.block_mappings)
+  )
+  if any(
+      isinstance(e, jax_core.NamedAxisEffect) and e.name in pallas_mesh.shape
+      for e in all_effects
+  ):
+    raise NotImplementedError(
+        "Querying pallas_mesh axes is not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  return params, prim_args, grid_mapping, scratch_invars
+
+
+def lower_emit_pipeline_into_pipelined_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    pallas_mesh: pallas_core.Mesh,
+    jax_mesh: mesh_lib.Mesh | None,
+    dynamic_shape_replacement_enabled: bool = False,
+    num_inputs: int,
+    num_scratch: int,
+    fuse_transposed_lhs_in_matmul: bool = False,
+) -> None:
+  if pallas_mesh is None:
+    raise ValueError("Mesh must be provided.")
+  if pallas_mesh.core_type != tpu_core.CoreType.TC:
+    raise ValueError(
+        "use_compiler_pipeline_emitter is only supported on TensorCore."
+    )
+  if (
+      getattr(pallas_mesh, "num_cores", 1) > 1
+      or math.prod(pallas_mesh.shape.values()) > 1
+  ):
+    raise NotImplementedError(
+        "use_compiler_pipeline_emitter does not yet support multi-core"
+        " TensorCoreMesh."
+    )
+  params, prim_args, grid_mapping, scratch_invars = _match_emit_pipeline_eqn(
+      jaxpr,
+      num_inputs=num_inputs,
+      num_scratch=num_scratch,
+      pallas_mesh=pallas_mesh,
+  )
+
+  num_grid = len(grid_mapping.static_grid)
+  body_jaxpr: jax_core.Jaxpr = params["body_jaxpr"]
+  io_vars = body_jaxpr.invars[2 * num_grid + 1 :]
+  assert len(io_vars) == len(grid_mapping.block_mappings)
+
+  def new_body(*args):
+    io_args, scratch_args = split_list(args, [len(io_vars)])
+    scratch_by_invar = dict(zip(scratch_invars, scratch_args))
+    consts = [scratch_by_invar[v] for v in prim_args.body_consts]
+    idx = [primitives.program_id(i) for i in range(num_grid)]
+    sizes = [jnp.int32(primitives.num_programs(i)) for i in range(num_grid)]
+    local_idx = jnp.int32(0)
+    if params["_explicit_indices"]:
+      for i, s in zip(idx, sizes):
+        local_idx = local_idx * s + i
+    return jax_core.eval_jaxpr(
+        body_jaxpr, consts, *idx, local_idx, *sizes, *io_args
+    )
+
+  in_avals = [*(v.aval for v in io_vars), *grid_mapping.scratch_avals]
+  with grid_mapping.trace_env():
+    pipelined_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        new_body,
+        ft.flatten_args(*in_avals),
+        jaxpr.debug_info.with_unknown_names(),
+    )
+  assert not pipelined_jaxpr.consts
+  # The compiler shards PARALLEL dims across all physical TensorCores on a
+  # megacore device, so always emit ARBITRARY to honor single-core execution.
+  lower_jaxpr_into_pipelined_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      pipelined_jaxpr,
+      name=name,
+      dimension_semantics=("arbitrary",) * num_grid,
+      kernel_type=tpu_core.CoreType.TC,
+      mesh=jax_mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
+  )
+
+
 def lower_jaxpr_into_unpipelined_module(
     lowering_context: mlir.LoweringRuleContext,
     module: ir.Module,

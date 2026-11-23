@@ -734,8 +734,15 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
             x[start : start + length, :, j * 256 : (j + 1) * 256] + 10,
         )
 
-  @parameterized.product(no_pipelining=[False, True])
-  def test_pipeline_matmul(self, no_pipelining):
+  @parameterized.product(
+      no_pipelining=[False, True],
+      use_compiler_pipeline_emitter=[False, True],
+  )
+  def test_pipeline_matmul(self, no_pipelining, use_compiler_pipeline_emitter):
+    if use_compiler_pipeline_emitter and (
+        no_pipelining or not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Unsupported with use_compiler_pipeline_emitter')
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
     y = jax.random.uniform(k2, (512, 512))
@@ -756,19 +763,34 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
               pl.BlockSpec((128, 128), lambda i, j, k: (k, j)),
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
+          dimension_semantics=(
+              pltpu.PARALLEL,
+              pltpu.PARALLEL,
+              pltpu.ARBITRARY,
+          ),
           no_pipelining=no_pipelining,
           _explicit_indices=True,
       )(x_ref, y_ref, z_ref)
 
-    z = pl.pallas_call(
-        matmul_kernel,
-        out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
-        in_specs=[
-            pl.BlockSpec(memory_space=pl.ANY),
-            pl.BlockSpec(memory_space=pl.ANY),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-    )
+    if use_compiler_pipeline_emitter:
+      z = pl.kernel(
+          matmul_kernel,
+          out_type=jax.ShapeDtypeStruct((512, 512), jnp.float32),
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          compiler_params=pltpu.CompilerParams(
+              use_compiler_pipeline_emitter=True
+          ),
+      )
+    else:
+      z = pl.pallas_call(
+          matmul_kernel,
+          out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
+          in_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pl.ANY),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )
 
     jax.block_until_ready(z(x, y))
     jax.block_until_ready(jnp.dot(x, y))
@@ -950,8 +972,17 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     ):
       run(x)
 
+  @parameterized.product(use_compiler_pipeline_emitter=[False, True])
   @jtu.ignore_warning(category=DeprecationWarning)
-  def test_static_num_programs_in_index_map_and_body(self):
+  def test_static_num_programs_in_index_map_and_body(
+      self, use_compiler_pipeline_emitter
+  ):
+    if (
+        use_compiler_pipeline_emitter
+        and not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
+
     def index_map(i):
       n = pl.num_programs(0)
       self.assertIsInstance(n, int)
@@ -972,16 +1003,33 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
       )(x_hbm_ref, o_hbm_ref)
 
     x = jnp.arange(512, dtype=jnp.float32)
-    out = pl.pallas_call(
-        kernel,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
-        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
-        out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
-    )(x)
+    if use_compiler_pipeline_emitter:
+      out = pl.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((512,), jnp.float32),
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          compiler_params=pltpu.CompilerParams(
+              use_compiler_pipeline_emitter=True
+          ),
+      )(x)
+    else:
+      out = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+      )(x)
     expected = x.reshape(4, 128)[::-1].reshape(512) + 4.0
     np.testing.assert_allclose(out, expected)
 
-  def test_pipeline_scratches(self):
+  @parameterized.product(use_compiler_pipeline_emitter=[False, True])
+  def test_pipeline_scratches(self, use_compiler_pipeline_emitter):
+    if (
+        use_compiler_pipeline_emitter
+        and not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
+
     def pipeline_body(step, x_ref, o_ref, scratch_ref):
       del step  # Unused.
       scratch_ref[...] = x_ref[...] + 1.0
@@ -997,14 +1045,87 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
       )(x_hbm_ref, o_hbm_ref, scratches=[scratch_ref])
 
     x = jnp.arange(512, dtype=jnp.float32)
-    out = pl.pallas_call(
-        kernel,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
-        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
-        out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
-        scratch_shapes=[pltpu.VMEM((128,), jnp.float32)],
-    )(x)
+    if use_compiler_pipeline_emitter:
+      out = pl.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((512,), jnp.float32),
+          scratch_types=[pltpu.VMEM((128,), jnp.float32)],
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          compiler_params=pltpu.CompilerParams(
+              use_compiler_pipeline_emitter=True
+          ),
+      )(x)
+    else:
+      out = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+          scratch_shapes=[pltpu.VMEM((128,), jnp.float32)],
+      )(x)
     np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
+  @parameterized.product(use_compiler_pipeline_emitter=[False, True])
+  def test_pipeline_local_index(self, use_compiler_pipeline_emitter):
+    if (
+        use_compiler_pipeline_emitter
+        and not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
+
+    def body(step, o_ref):
+      o_ref[...] = jnp.broadcast_to(step.local_index, o_ref.shape)
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 384), jnp.int32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+        compiler_params=pltpu.CompilerParams(
+            use_compiler_pipeline_emitter=use_compiler_pipeline_emitter
+        ),
+    )
+    def kernel(o_ref):
+      pltpu.emit_pipeline(
+          body,
+          grid=(2, 3),
+          out_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+          _explicit_indices=True,
+      )(o_ref)
+
+    expected = np.arange(6).reshape(2, 3).repeat(8, axis=0).repeat(128, axis=1)
+    np.testing.assert_array_equal(kernel(), expected)
+
+  @jtu.thread_unsafe_test()
+  def test_compiler_pipeline_emitter_lowering(self):
+    if not config.use_emit_pipeline_primitive.value:
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
+
+    def body(step, o_ref):
+      del step  # Unused.
+      o_ref[...] = jnp.zeros_like(o_ref)
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 384), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+        compiler_params=pltpu.CompilerParams(
+            use_compiler_pipeline_emitter=True
+        ),
+        debug=True,
+    )
+    def kernel(o_ref):
+      pltpu.emit_pipeline(
+          body,
+          grid=(2, 3),
+          out_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+          _explicit_indices=True,
+      )(o_ref)
+
+    with jtu.capture_stdout() as get_output:
+      kernel()
+
+    module = get_output()
+    self.assertIn('iteration_bounds = array<i64: 2, 3>', module)
+    self.assertIn('window_bounds = array<i64: 8, 128>', module)
+    self.assertNotIn('scf.for', module)
 
   def test_allocations_rebind_closed_over_tracer(self):
     def pipeline_body(step, x_ref, o_ref):
@@ -1767,7 +1888,14 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, msg):
         make_ref(spec, jnp.float32, count, grid_rank=2, use_lookahead=True)
 
-  def test_single_buffered_output(self):
+  @parameterized.product(use_compiler_pipeline_emitter=[False, True])
+  def test_single_buffered_output(self, use_compiler_pipeline_emitter):
+    if (
+        use_compiler_pipeline_emitter
+        and not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
+
     def body(step, o_ref):
       @pl.when(step.index[1] == 0)
       def _():
@@ -1781,9 +1909,18 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
         pipeline_mode=pl.Buffered(buffer_count=1),
     )
 
+    mesh = (
+        pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+        if use_compiler_pipeline_emitter
+        else pltpu.TensorCoreMesh(axis_name='core')
+    )
+
     @pl.kernel(
         out_type=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
-        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        mesh=mesh,
+        compiler_params=pltpu.CompilerParams(
+            use_compiler_pipeline_emitter=use_compiler_pipeline_emitter
+        ),
     )
     def run_kernel(o_ref):
       pltpu.emit_pipeline(
@@ -2731,17 +2868,39 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
       self.skipTest('Only works with TPU v5')
     super().setUp()
 
-  @parameterized.product(dynamic_grid=[True, False])
-  def test_transformed_refs_as_inputs(self, dynamic_grid):
+  @parameterized.product(
+      dynamic_grid=[True, False],
+      use_compiler_pipeline_emitter=[False, True],
+  )
+  def test_transformed_refs_as_inputs(
+      self, dynamic_grid, use_compiler_pipeline_emitter
+  ):
+    if use_compiler_pipeline_emitter and (
+        dynamic_grid or not config.use_emit_pipeline_primitive.value
+    ):
+      self.skipTest('Unsupported with use_compiler_pipeline_emitter')
+
     def body(step, x, o):
       del step  # Unused.
       o[...] = x[...]
+
+    mesh = (
+        pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+        if use_compiler_pipeline_emitter
+        else pltpu.TensorCoreMesh(axis_name='core')
+    )
 
     @jax.jit
     def fn(x):
       out_type = jax.ShapeDtypeStruct(x.shape[1:], x.dtype)
 
-      @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+      @pl.kernel(
+          out_type=out_type,
+          mesh=mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_compiler_pipeline_emitter=use_compiler_pipeline_emitter
+          ),
+      )
       def run_kernel(x_ref, o_ref):
         x_ref = x_ref.at[1, ...]
         bs = x_ref.shape[:-1] + (256,)
@@ -2756,7 +2915,11 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
       return run_kernel(x)
 
     x = jnp.arange(2 * 16 * 512, dtype=jnp.float32).reshape((2, 16, 512))
-    np.testing.assert_allclose(fn(x), x[1, ...])
+    if use_compiler_pipeline_emitter:
+      with self.assertRaisesRegex(ValueError, 'without slicing, transforms'):
+        fn(x)
+    else:
+      np.testing.assert_allclose(fn(x), x[1, ...])
 
   @parameterized.product(dynamic_grid=[True, False])
   def test_transformed_refs_as_inputs_nested(self, dynamic_grid):
@@ -3475,10 +3638,20 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
       self.skipTest('Only works with TPU v5 or newer.')
     super().setUp()
 
-  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
-  def test_non_flat_args(self, dynamic_grid, use_vmap):
+  @parameterized.product(
+      dynamic_grid=[True, False],
+      use_vmap=[True, False],
+      use_compiler_pipeline_emitter=[False, True],
+  )
+  def test_non_flat_args(
+      self, dynamic_grid, use_vmap, use_compiler_pipeline_emitter
+  ):
     if use_vmap and not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('Non-primitive emit_pipeline does not support vmap.')
+    if use_compiler_pipeline_emitter and (
+        dynamic_grid or use_vmap or not jax.config.jax_use_emit_pipeline_primitive
+    ):
+      self.skipTest('Unsupported with use_compiler_pipeline_emitter.')
     if use_vmap:
       out_type = [(), (jax.ShapeDtypeStruct((4, 512), jnp.float32),
                       jax.ShapeDtypeStruct((4, 512), jnp.float32))]
@@ -3493,7 +3666,19 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
       out_refs[1][0][...] = in_refs[0][0][...] + in_refs[2][0][...]
       out_refs[1][1][...] = in_refs[2][1][...]
 
-    @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+    mesh = (
+        pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+        if use_compiler_pipeline_emitter
+        else pltpu.TensorCoreMesh(axis_name='core')
+    )
+
+    @pl.kernel(
+        out_type=out_type,
+        mesh=mesh,
+        compiler_params=pltpu.CompilerParams(
+            use_compiler_pipeline_emitter=use_compiler_pipeline_emitter
+        ),
+    )
     def run_kernel(x_ref, y_ref, z_ref, out_xy_ref, out_z_ref):
       in_specs = ([(pl.BlockSpec((256,), lambda i: (i,)),), (),
                   (pl.BlockSpec((256,), lambda i: (i,)),
@@ -3514,10 +3699,18 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out[1][0], x + x * 2)
     np.testing.assert_allclose(out[1][1], x * 3)
 
-  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
-  def test_non_flat_args_and_scratch(self, dynamic_grid, use_vmap):
+  @parameterized.product(
+      dynamic_grid=[True, False],
+      use_vmap=[True, False],
+      use_compiler_pipeline_emitter=[False, True],
+  )
+  def test_non_flat_args_and_scratch(
+      self, dynamic_grid, use_vmap, use_compiler_pipeline_emitter
+  ):
     if not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('Requires jax_use_emit_pipeline_primitive')
+    if use_compiler_pipeline_emitter and (dynamic_grid or use_vmap):
+      self.skipTest('Unsupported with use_compiler_pipeline_emitter.')
 
     if use_vmap:
       out_type = [(), (jax.ShapeDtypeStruct((4, 512), jnp.float32),
@@ -3542,7 +3735,19 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
       scratch2_list[0][...] = in_refs[2][1][...]
       out_refs[1][1][...] = scratch2_list[0][...]
 
-    @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+    mesh = (
+        pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+        if use_compiler_pipeline_emitter
+        else pltpu.TensorCoreMesh(axis_name='core')
+    )
+
+    @pl.kernel(
+        out_type=out_type,
+        mesh=mesh,
+        compiler_params=pltpu.CompilerParams(
+            use_compiler_pipeline_emitter=use_compiler_pipeline_emitter
+        ),
+    )
     def run_kernel(x_ref, y_ref, z_ref, out_xy_ref, out_z_ref):
       in_specs = ([(pl.BlockSpec((256,), lambda i: (i,)),), (),
                    (pl.BlockSpec((256,), lambda i: (i,)),

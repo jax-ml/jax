@@ -126,6 +126,10 @@ class CompilerParams:
       profitable and therefore should be used sparingly.
     opt_level: Optimization level. This flag is only used for ``SC_*_SUBCORE``
       kernels and it implicitly defaults to O3.
+    use_compiler_pipeline_emitter: Lower a top-level ``pltpu.emit_pipeline`` in
+      a single-core kernel via the compiler pipeline emitter instead of
+      emitting an explicit loop in Pallas. Requires
+      ``jax_use_emit_pipeline_primitive=True``.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -145,6 +149,7 @@ class CompilerParams:
   needs_layout_passes: bool = True
   fuse_transposed_lhs_in_matmul: bool = False
   opt_level: OptLevel | None = None
+  use_compiler_pipeline_emitter: bool = False
 
   def __init__(
       self,
@@ -165,6 +170,7 @@ class CompilerParams:
       needs_layout_passes: bool = True,
       fuse_transposed_lhs_in_matmul: bool = False,
       opt_level: OptLevel | None = None,
+      use_compiler_pipeline_emitter: bool = False,
   ):
     object.__setattr__(
         self,
@@ -207,6 +213,11 @@ class CompilerParams:
         fuse_transposed_lhs_in_matmul,
     )
     object.__setattr__(self, "opt_level", opt_level)
+    object.__setattr__(
+        self,
+        "use_compiler_pipeline_emitter",
+        use_compiler_pipeline_emitter,
+    )
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
