@@ -3925,6 +3925,113 @@ class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
   USE_TC_TILING = True
 
 
+class UnusedBufferLayoutTest(PallasSCTest):
+
+  def test_unused_buffer_layouts(self):
+    # A kernel that only orders work around its buffers, like an RDMA lock,
+    # never uses them. Their layouts then stay unconstrained, so XLA does not
+    # copy the buffers to row major around the kernel.
+    if jtu.is_device_tpu(8, "i"):
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+          num_subcores=1,
+      )
+    else:
+      mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+    def sc_kernel(body, tc_tiling=True, **kwargs):
+      return pl.kernel(
+          body,
+          mesh=mesh,
+          compiler_params=pltpu.CompilerParams(use_tc_tiling_on_sc=tc_tiling),
+          **kwargs,
+      )
+
+    def lock(*xs, memory_space=pltpu.HBM, tc_tiling=True):
+      refs = [jax.new_ref(x, memory_space=memory_space) for x in xs]
+      sc_kernel(pltpu.touch, tc_tiling)(refs)
+      return [jax.freeze(r) for r in refs]
+
+    def lock_and_read_second(x, y):
+      # Only y is used besides touch.
+      def body(x_ref, y_ref):
+        pltpu.touch(x_ref)
+        pltpu.touch(y_ref)
+        z_ref = jax.empty_ref(
+            jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+            memory_space=pltpu.HBM,
+        )
+        pltpu.sync_copy(y_ref, z_ref)
+
+      refs = [jax.new_ref(a, memory_space=pltpu.HBM) for a in (x, y)]
+      sc_kernel(body)(*refs)
+      return [jax.freeze(r) for r in refs]
+
+    device_mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+
+    @jax.shard_map(
+        mesh=device_mesh, in_specs=jax.P(), out_specs=jax.P(), check_vma=False
+    )
+    def lock_and_signal(*xs):
+      def body(*refs):
+        *refs, sem = refs
+        jax.tree.map(pltpu.touch, refs)
+        pl.semaphore_signal(sem, device_id={"x": 0})
+        pl.semaphore_wait(sem)
+
+      refs = [jax.new_ref(x, memory_space=pltpu.HBM) for x in xs]
+      sc_kernel(body, scratch_types=(pltpu.SemaphoreType.REGULAR(()),))(*refs)
+      return [jax.freeze(r) for r in refs]
+
+    def tc_lock(*xs):
+      refs = [jax.new_ref(x, memory_space=pltpu.HBM) for x in xs]
+      pl.kernel(
+          pltpu.touch, mesh=pltpu.TensorCoreMesh(axis_name="t", num_cores=1)
+      )(refs)
+      return [jax.freeze(r) for r in refs]
+
+    x = jnp.arange(8 * 16 * 128, dtype=jnp.float32).reshape(8, 16, 128)
+
+    def constrains_layouts(f, export=False):
+      if export:
+        text = jax.export.export(jax.jit(f), platforms=["tpu"])(
+            x, x
+        ).mlir_module()
+      else:
+        text = jax.jit(f).lower(x, x).as_text()
+      constrained = "operand_layouts" in text
+      self.assertEqual(constrained, "result_layouts" in text)
+      return constrained
+
+    self.assertFalse(constrains_layouts(lock))
+    # SparseCore tiling flattens buffers in row major order.
+    self.assertTrue(
+        constrains_layouts(functools.partial(lock, tc_tiling=False))
+    )
+    # HLO constrains all layouts or none, so one used buffer keeps them all.
+    self.assertTrue(constrains_layouts(lock_and_read_second))
+    # Peers may write the buffers once a communicating kernel runs.
+    self.assertTrue(constrains_layouts(lock_and_signal))
+    # The TensorCore emitter verifies the tiling of every buffer.
+    self.assertTrue(constrains_layouts(tc_lock))
+    # Buffers outside HBM are copied into the core.
+    self.assertTrue(
+        constrains_layouts(functools.partial(lock, memory_space=pltpu.SMEM))
+    )
+    # An exported program may meet a compiler that requires row major buffers.
+    self.assertTrue(constrains_layouts(lock, export=True))
+
+    # Without constraints the buffers keep their producers' layouts.
+    @jax.jit
+    def lock_transposed(x, y):
+      xs = lock(jnp.transpose(-x, (1, 0, 2)), jnp.transpose(y + 1, (1, 0, 2)))
+      return [jnp.transpose(a, (1, 0, 2)) for a in xs]
+
+    np.testing.assert_array_equal(lock_transposed(x, x), [-x, x + 1])
+
+
 class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
 
   def setUp(self):
