@@ -95,8 +95,8 @@ class PyHloXlaTransform : public xla::HloXlaTransform {
       return absl::InternalError("Failed to parse transformed HLO module");
     }
 
-    // Rebuild the module from the transformed proto using the shared helper.
-    auto status = xla::UpdateHloModuleFromProto(module, transformed_proto);
+    // Rebuild the module from the transformed proto.
+    absl::Status status = module->UpdateFromProto(transformed_proto);
     if (!status.ok()) {
       return status;
     }
