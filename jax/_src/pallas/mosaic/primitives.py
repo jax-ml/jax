@@ -225,6 +225,7 @@ class AsyncCopyDescriptor:
   device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
   _unsafe_no_write_effect: bool = False
+  priority: int = 0
   _used: bool = dataclasses.field(
       default=False, init=False, compare=False, hash=False
   )
@@ -267,8 +268,10 @@ class AsyncCopyDescriptor:
           self.src_ref, self.dst_ref, self.dst_sem, self.src_sem, device_id
       )
 
-  def start(self, priority: int = 0, *, add: bool = False):
+  def start(self, priority: int | None = None, *, add: bool = False):
     self._used = True
+    if priority is None:
+      priority = self.priority
     flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(
         *flat_args,
@@ -802,6 +805,7 @@ def make_async_copy(
     *,
     src_sem=None,
     _unsafe_no_write_effect: bool = False,
+    priority: int = 0,
 ) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
@@ -812,6 +816,7 @@ def make_async_copy(
     src_sem: Optional semaphore tracking completion of the read from `src_ref`.
     _unsafe_no_write_effect: If True, emits `ReadEffect` instead of
       `WriteEffect` on `dst_ref`.
+    priority: DMA priority queue index (``0`` is the primary, in-order thread).
 
   Returns:
     An AsyncCopyDescriptor.
@@ -824,6 +829,7 @@ def make_async_copy(
       None,
       primitives.DeviceIdType.MESH,
       _unsafe_no_write_effect=_unsafe_no_write_effect,
+      priority=priority,
   )
 
 
@@ -844,6 +850,7 @@ def async_copy(
       sem,
       src_sem=src_sem,
       _unsafe_no_write_effect=_unsafe_no_write_effect,
+      priority=priority,
   )
   copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
@@ -856,6 +863,8 @@ def make_async_remote_copy(
     recv_sem,
     device_id: MultiDimDeviceId | IntDeviceId | None,
     device_id_type: primitives.DeviceIdType | None = None,
+    *,
+    priority: int = 0,
 ) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
@@ -875,6 +884,8 @@ def make_async_remote_copy(
       is typed as optional only because callers commonly hold it in an optional
       field, but `None` is rejected.
     device_id_type: The type of the device id.
+    priority: DMA priority queue index. Mosaic only supports ``0`` for remote
+      copies.
 
   Returns:
     An AsyncCopyDescriptor.
@@ -904,6 +915,7 @@ def make_async_remote_copy(
       send_sem,
       device_id,
       device_id_type=device_id_type,
+      priority=priority,
   )
 
 
@@ -914,11 +926,20 @@ def async_remote_copy(
     recv_sem,
     device_id,
     device_id_type: primitives.DeviceIdType | None = None,
+    *,
+    priority: int = 0,
 ) -> AsyncCopyDescriptor:
   """Issues a remote DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
-                                           device_id, device_id_type)
-  copy_descriptor.start()
+  copy_descriptor = make_async_remote_copy(
+      src_ref,
+      dst_ref,
+      send_sem,
+      recv_sem,
+      device_id,
+      device_id_type,
+      priority=priority,
+  )
+  copy_descriptor.start(priority=priority)
   return copy_descriptor
 
 
