@@ -3748,7 +3748,7 @@ def _lower_jaxpr_to_for_loop(
     consts,
     *args,
     has_loop_index: bool,
-    unroll: int | None = None,
+    unroll: int = 1,
 ):
   _consts_avals, arg_avals = util.split_list(ctx.avals_in, [len(consts)])
   arg_avals = arg_avals[has_loop_index:]
@@ -3771,19 +3771,15 @@ def _lower_jaxpr_to_for_loop(
         for a, v, av in zip(is_acc, vals, avals)
     ]
 
-  def loop(base_loop_index, body_args):
+  def const(v: int) -> ir.Value:
+    return _ir_constant(v, start.type)
+
+  def unroll_body(base_idx: ir.Value, body_args, num_steps: int):
     outs = body_args
-    if unroll is not None:
-      base_loop_index = arith_dialect.muli(
-          base_loop_index, _ir_constant(unroll, start.type)
-      )
-    base_loop_index = arith_dialect.addi(base_loop_index, start)
-    for step in range(unroll or 1):
+    for step in range(num_steps):
       if has_loop_index:
-        loop_index = arith_dialect.addi(
-            base_loop_index, _ir_constant(step, start.type)
-        )
-        jaxpr_args = [*consts, loop_index, *outs]
+        idx = arith_dialect.addi(base_idx, const(step)) if step else base_idx
+        jaxpr_args = [*consts, idx, *outs]
       else:
         jaxpr_args = [*consts, *outs]
       outs = lower_jaxpr_to_mosaic_gpu(
@@ -3791,27 +3787,36 @@ def _lower_jaxpr_to_for_loop(
       )
     return as_values(outs, out_avals)
 
-  if unroll is not None:
-    if not isinstance(length, int):
+  if isinstance(length, ir.Value):
+    if unroll != 1:
       raise NotImplementedError(
-          "``length`` must be an integer when ``unroll` is specified, got"
+          "``length`` must be an integer when ``unroll`` is specified, got"
           f" {length}"
       )
-    if length % unroll:
-      # TODO(slebedev): Emit an epilogue taking care of the remaining steps.
-      raise NotImplementedError(
-          f"``unroll`` must divide ``length``, got {unroll=} and {length=}"
-      )
-    if unroll == length:
-      # Special-case: the loop is fully unrolled.
-      return loop(_ir_constant(0, start.type), as_values(args, arg_avals))
-    return mgpu.fori(
-        _ir_constant(length // unroll, start.type), as_values(args, arg_avals)
-    )(loop).results
+    trip_count, main_steps, remainder = length, 0, 0
+  elif unroll == 0 or length // unroll <= 1:
+    trip_count, main_steps, remainder = None, 0, length
   else:
-    if not isinstance(length, ir.Value):
-      length = _ir_constant(length, start.type)
-    return mgpu.fori(length, as_values(args, arg_avals))(loop).results
+    num_trips, remainder = divmod(length, unroll)
+    trip_count, main_steps = const(num_trips), num_trips * unroll
+
+  carry = as_values(args, arg_avals)
+  if trip_count is not None:
+    def main_loop(i, body_args):
+      base_idx = start
+      if has_loop_index:
+        if unroll > 1:
+          i = arith_dialect.muli(i, const(unroll))
+        base_idx = arith_dialect.addi(start, i)
+      return unroll_body(base_idx, body_args, unroll)
+
+    carry = mgpu.fori(trip_count, carry)(main_loop).results
+
+  if remainder:
+    if has_loop_index and main_steps:
+      start = arith_dialect.addi(start, const(main_steps))
+    carry = unroll_body(start, carry, remainder)
+  return carry
 
 
 @register_lowering_rule(lax.scan_p, mgpu.LoweringSemantics.Lane)
