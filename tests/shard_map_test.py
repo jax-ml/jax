@@ -6878,6 +6878,39 @@ class ShardMapTest(jtu.JaxTestCase):
         "Unreduced axes can only refer to mesh axes that is of type `Explicit`"):
       g(np.arange(4))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_token(self, mesh):
+    x = jax.device_put(np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
+
+    @jax.jit
+    def f(a):
+      tok = lax.create_token()
+      def body(t, a_local):
+        return lax.optimization_barrier((t, a_local * 2.0))
+      _, out = jax.shard_map(body, out_specs=(P(), P('x', 'y')))(tok, a)
+      return out
+
+    out = f(x)
+    self.assertArraysEqual(out, x * 2.0)
+
+    def tok_id(t):
+      return t
+
+    @jax.jit
+    def bad_in():
+      return jax.shard_map(tok_id, in_specs=P('x'), out_specs=P())(
+          lax.create_token())
+
+    @jax.jit
+    def bad_out():
+      return jax.shard_map(tok_id, in_specs=P(), out_specs=P('x'))(
+          lax.create_token())
+
+    with self.assertRaisesRegex(ValueError, 'in_specs for token'):
+      bad_in.lower()
+    with self.assertRaisesRegex(ValueError, 'out_specs for token'):
+      bad_out.lower()
+
 
 class FunSpec(NamedTuple):
   name: str

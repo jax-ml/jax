@@ -274,9 +274,10 @@ def _shard_map[F: Callable](
 
     if (in_specs is Infer and
         all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
-      arg_s = [typeof(a).sharding for a in args_flat]
       assert all(i is Infer for i in in_specs_flat), in_specs_flat
-      in_specs_flat = [_manual_spec(axis_names, s.spec, mesh) for s in arg_s]
+      in_specs_flat = [P() if typeof(a) is core.abstract_token
+                       else _manual_spec(axis_names, typeof(a).sharding.spec, mesh)
+                       for a in args_flat]
 
     in_tree = args_flat.tree
     which_dyn = [s is not None for s in in_specs_flat]
@@ -294,6 +295,8 @@ def _shard_map[F: Callable](
         if not isinstance(s, P):
           continue
         arg_aval = typeof(a)
+        if arg_aval is core.abstract_token:
+          continue
         s = s._normalized_spec_for_aval(arg_aval.ndim)
         if config.remove_size_one_mesh_axis_from_type.value:
           s = remove_size_one_mesh_axis_from_spec(s, mesh)
@@ -336,6 +339,8 @@ def _shard_map[F: Callable](
         if not isinstance(spec, P):
           return val
         aval = typeof(val)
+        if aval is core.abstract_token:
+          return val
         val = pvary(val, tuple(_spec_to_vma(spec) - aval.mat.varying))
         return val
       if check_vma:
@@ -546,8 +551,16 @@ def _check_specs_vs_args(
     dyn_argnums: Sequence[int], in_specs_flat: Sequence[P],
     xs: Sequence) -> None:
   in_avals = map(core.shaped_abstractify, xs)
-  fail = [a if isinstance(p, P) and len(p) > a.ndim else no_fail
-          for p, a in zip(in_specs_flat, in_avals)]
+  fail = []
+  for a, p in zip(in_avals, in_specs_flat):
+    if a is core.abstract_token:
+      if p != P():
+        raise ValueError(f"in_specs for token argument must be P(), got {p}.")
+      fail.append(no_fail)
+    elif isinstance(p, P) and len(p) > a.ndim:
+      fail.append(a)
+    else:
+      fail.append(no_fail)
   if any(f is not no_fail for f in fail):
     fail = _expand_fail(in_tree, dyn_argnums, fail)
     msg = _spec_rank_error(SpecErrorType.input, f, in_tree, in_specs, fail)
@@ -977,6 +990,12 @@ def _shard_future(mesh, manual_axes, check_vma, spec, aval: core.AbstractFuture)
   return aval.update(inner_aval=inner_aval)
 core.shard_aval_handlers[core.AbstractFuture] = _shard_future
 
+def _shard_token(mesh, manual_axes, check_vma, spec, aval: core.AbstractToken):
+  if spec != P():
+    raise ValueError(f"in_specs for token must be P(), got {spec}")
+  return aval
+core.shard_aval_handlers[core.AbstractToken] = _shard_token
+
 def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
                           ) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
@@ -1046,6 +1065,12 @@ def _unshard_future(mesh, check_vma, spec, aval: core.AbstractFuture):
   return aval.update(inner_aval=inner_aval)
 core.unshard_aval_handlers[core.AbstractFuture] = _unshard_future
 
+def _unshard_token(mesh, check_vma, spec, aval: core.AbstractToken):
+  if spec != P():
+    raise ValueError(f"out_specs for token must be P(), got {spec}")
+  return aval
+core.unshard_aval_handlers[core.AbstractToken] = _unshard_token
+
 # Type-checking
 
 def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
@@ -1061,7 +1086,8 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
     core.check_jaxpr(jaxpr)
   if check_vma:
     for v, os in zip(jaxpr.outvars, out_specs):
-      if isinstance(os, P) and not _valid_repeats(mesh, v.aval.mat, os):
+      if (isinstance(os, P) and v.aval is not core.abstract_token and
+          not _valid_repeats(mesh, v.aval.mat, os)):
         raise core.JaxprTypeError(
             "shard_map can't prove output is sufficiently replicated")
   return _shard_map_abstract_eval(jaxpr=jaxpr, mesh=mesh, out_specs=out_specs,
@@ -1089,6 +1115,8 @@ def _valid_repeats(mesh: Mesh, mat: core.ManualAxisType, spec) -> bool:
 def _shardy_shard_map_sharding(
     ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec, aval
 ) -> sharding_impls.SdyArray:
+  if aval is core.abstract_token:
+    return _get_token_sharding(ctx, mesh)
   if aval.sharding.mesh.are_all_axes_explicit_or_manual:
     ns = _make_scoped_manual_sharding(ctx, mesh, aval.sharding.spec)
   else:
@@ -1363,8 +1391,16 @@ def _unmatch(mesh, check_vma, in_spec, manual_axes, x):
                    out_specs=dst, check_vma=check_vma, axis_names=manual_axes)(x)
 
 def _check_names(specs, avals: ft.FlatTree) -> None:
-  fail = [a if isinstance(sp, P) and sp and len(sp) > a.ndim else no_fail
-          for sp, a in zip(specs, avals)]
+  fail = []
+  for sp, a in zip(specs, avals):
+    if a is core.abstract_token:
+      if sp != P():
+        raise ValueError(f"out_specs for token must be P(), got {sp}.")
+      fail.append(no_fail)
+    elif isinstance(sp, P) and sp and len(sp) > a.ndim:
+      fail.append(a)
+    else:
+      fail.append(no_fail)
   if any(f is not no_fail for f in fail):
     raise _SpecError(fail, avals.tree)
 
@@ -1372,7 +1408,8 @@ class _SpecError(Exception):
   pass
 
 def _check_mats(mesh, specs, avals):
-  fail = [a.mat if isinstance(sp, P) and not _valid_repeats(mesh, a.mat, sp)
+  fail = [a.mat if (isinstance(sp, P) and a is not core.abstract_token and
+                    not _valid_repeats(mesh, a.mat, sp))
           else no_fail for sp, a in zip(specs, avals)]
   if any(f is not no_fail for f in fail):
     raise _RepError(fail, avals.tree)

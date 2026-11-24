@@ -2738,6 +2738,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     lowered_text = f_arrays.lower(x, y).as_text()
     self.assertIn('sdy.manual_computation', lowered_text)
     self.assertIn('stablehlo.optimization_barrier', lowered_text)
+    self.assertIn(': tensor<2x2xf32>, tensor<2x4xf32>', lowered_text)
 
     out = f_arrays(x, y)
     self.assertEqual(out.sharding, expected.sharding)
@@ -2767,11 +2768,47 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       exp_tok = f_token(x)
 
     tok_lowered_text = f_token.lower(x).as_text()
+    self.assertIn('sdy.manual_computation', tok_lowered_text)
     self.assertIn('stablehlo.optimization_barrier', tok_lowered_text)
-    self.assertNotIn('sdy.manual_computation', tok_lowered_text)
+    self.assertIn(': !stablehlo.token, tensor<2x2xf32>', tok_lowered_text)
     out_tok = f_token(x)
     self.assertEqual(out_tok.sharding, exp_tok.sharding)
     self.assertAllClose(out_tok, exp_tok)
+
+    ref_aval = jax._src.state.types.AbstractRef(
+        jax._src.core.ShapedArray((4,), np.float32))
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Partitioning rule for `optimization_barrier`'):
+      jax._src.lax.lax._optimization_barrier_collective_rule([ref_aval], [])
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_remat_prevent_cse(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4) / 16.0
+    np_y = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0) / 16.0
+    x = jax.device_put(np_x, P('x', 'y'))
+    y = jax.device_put(np_y, P('x', None))
+
+    @functools.partial(remat, prevent_cse=True)
+    def step(a, b):
+      return jnp.sin(a) * jnp.cos(b)
+
+    def loss(a, b):
+      return step(a, b).sum()
+
+    grad_fn = jax.jit(jax.grad(loss, argnums=(0, 1)))
+    with mesh.jax_partitioning(False):
+      exp_gx, exp_gy = grad_fn(x, y)
+
+    lowered_text = grad_fn.lower(x, y).as_text()
+    self.assertEqual(lowered_text.count('stablehlo.optimization_barrier'), 1)
+    self.assertIn(
+        ': tensor<2x2xf32>, tensor<2x4xf32>, tensor<2x2xf32>', lowered_text)
+
+    out_gx, out_gy = grad_fn(x, y)
+    self.assertEqual(out_gx.sharding, exp_gx.sharding)
+    self.assertEqual(out_gy.sharding, exp_gy.sharding)
+    self.assertAllClose(out_gx, exp_gx)
+    self.assertAllClose(out_gy, exp_gy)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_device_put_passthrough(self, mesh):

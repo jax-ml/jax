@@ -2586,13 +2586,16 @@ def _maybe_lower_with_shard_map(
     return None
   assert isinstance(partitioning_rule, PartitioningRule)
 
-  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_in)
-  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_out)
+  assert all(isinstance(a, (core.ShapedArray, core.AbstractToken))
+             for a in ctx.avals_in)
+  assert all(isinstance(a, (core.ShapedArray, core.AbstractToken))
+             for a in ctx.avals_out)
 
   if partitioning_rule.per_shard_params:
     params = params | partitioning_rule.per_shard_params
 
-  out_specs = [a.sharding.spec for a in ctx.avals_out]
+  out_specs = [PartitionSpec() if isinstance(a, core.AbstractToken)
+               else a.sharding.spec for a in ctx.avals_out]
   if not _prim.multiple_results:
     out_specs, = out_specs
 

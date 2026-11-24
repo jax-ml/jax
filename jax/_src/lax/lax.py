@@ -12236,8 +12236,10 @@ def _optimization_barrier_lowering_rule(ctx, *args):
   return treedef.unflatten(out)
 
 def _optimization_barrier_collective_rule(in_avals, out_avals):
-  if not all(isinstance(a, core.ShapedArray) for a in in_avals):
-    return None
+  for a in in_avals:
+    if not isinstance(a, (core.ShapedArray, core.AbstractToken)):
+      raise NotImplementedError(
+          f'Partitioning rule for `optimization_barrier` does not support {a}.')
   return mlir.PartitioningRule()
 
 mlir.register_lowering(
