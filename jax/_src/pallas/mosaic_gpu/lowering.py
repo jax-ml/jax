@@ -484,6 +484,12 @@ class ModuleContext:
   )
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
   _tmem_allocation_counter: int = dataclasses.field(default=0, init=False)
+  _smem_alias_ids: dict[tuple[int, int, int], int] = dataclasses.field(
+      default_factory=dict, init=False
+  )
+  _tmem_alias_ids: dict[tuple[int, int, int], int] = dataclasses.field(
+      default_factory=dict, init=False
+  )
 
   def next_smem_allocation_id(self) -> int:
     assert self.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
@@ -494,6 +500,24 @@ class ModuleContext:
     assert self.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
     self._tmem_allocation_counter += 1
     return self._tmem_allocation_counter
+
+  def smem_alias_id(
+      self, offset: int, alloc_id: int, alias_group_idx: int
+  ) -> int:
+    key = (offset, alloc_id, alias_group_idx)
+    if (alias_id := self._smem_alias_ids.get(key)) is None:
+      alias_id = self.next_smem_allocation_id()
+      self._smem_alias_ids[key] = alias_id
+    return alias_id
+
+  def tmem_alias_id(
+      self, offset: int, alloc_id: int, alias_group_idx: int
+  ) -> int:
+    key = (offset, alloc_id, alias_group_idx)
+    if (alias_id := self._tmem_alias_ids.get(key)) is None:
+      alias_id = self.next_tmem_allocation_id()
+      self._tmem_alias_ids[key] = alias_id
+    return alias_id
 
   @property
   def single_lane_predicate(self) -> ir.Value:
@@ -1294,7 +1318,7 @@ def _extract_aliased_ref(
   ref_aval: state_types.AbstractRef,
   transform_avals: Sequence[state_types.Transform],
   transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
+  module_ctx: ModuleContext,
   scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     ir.Value,
@@ -1310,7 +1334,7 @@ def _extract_aliased_ref(
   ref_aval: state_types.AbstractRef,
   transform_avals: Sequence[state_types.Transform],
   transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
+  module_ctx: ModuleContext,
   scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     tcgen05.TMEMRef,
@@ -1325,7 +1349,7 @@ def _extract_aliased_ref(
     ref_aval: state_types.AbstractRef,
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
-    lowering_semantics: mgpu.LoweringSemantics,
+    module_ctx: ModuleContext,
     scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     ir.Value | tcgen05.TMEMRef,
@@ -1380,7 +1404,7 @@ def _extract_aliased_ref(
           ref_ty = ir.MemRefType.get(
               transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
           )
-          if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+          if module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
             if not isinstance(ref.owner, mgpu.dialect.SliceSMEMOp):
               # This restriction can be lifted by:
               # - Using memref ops to get the pointer and offset of the base ref.
@@ -1396,8 +1420,6 @@ def _extract_aliased_ref(
 
             assert ref.owner.alias_id is not None
             alloc_id = ref.owner.alias_id.value
-            # TODO(bchetioui): Use a scheme resilient to hash collisions.
-            alias_id = hash((offset, alloc_id, alias_group_idx))
             # The composite key formed of `(offset, alloc_id, alias_group_idx)`
             # is a unique identifier across:
             #   - different RefUnions (different `alloc_id`, since two
@@ -1408,6 +1430,9 @@ def _extract_aliased_ref(
             #     `offset` which is the offset of the particular element to
             #     the beginning of the RefUnion). This only holds in the absence
             #     of 0-sized refs, which don't serve a practical purpose anyway.
+            alias_id = module_ctx.smem_alias_id(
+                offset, alloc_id, alias_group_idx
+            )
             ref = mgpu.dialect.slice_smem(
                 ref_ty, total_offset, alias_id=alias_id
             )
@@ -1436,14 +1461,12 @@ def _extract_aliased_ref(
           )
           alloc_id = source_slice_op.alias_id
           assert alloc_id is not None
-          # TODO(bchetioui): Use a scheme resilient to hash collisions.
-          alias_id = hash((offset, alloc_id.value, alias_group_idx))
-          slice_op = mgpu.dialect.SliceTmemOp(
-              ref_ty, source_slice_op.source, total_offset
+          alias_id = module_ctx.tmem_alias_id(
+              offset, alloc_id.value, alias_group_idx
           )
-          i64 = ir.IntegerType.get_signless(64)
-          slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
-          ref = slice_op.result
+          ref = mgpu.dialect.slice_tmem(
+              ref_ty, source_slice_op.source, total_offset, alias_id=alias_id
+          )
           assert layout is not None
           layout_attr = mgpu.layouts.to_layout_attr(layout)
           ref = mgpu.dialect.tmem_layout_cast(ref, layout_attr)
@@ -1686,7 +1709,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
       ref_aval,
       transform_avals,
       transforms,
-      ctx.module_ctx.lowering_semantics,
+      ctx.module_ctx,
       scratch_transforms if ref_aval.memory_space == gpu_core.TMEM else (),
   )
 

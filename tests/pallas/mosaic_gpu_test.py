@@ -5838,6 +5838,68 @@ class PallasCallWGTest(
     self.assertLen(kernel_hashes, 2)
     self.assertLen(set(kernel_hashes), 1)
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_smem_refunion_alias_ids_are_deterministic(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.RefUnion(
+                plgpu.SMEM((256,), jnp.float32),
+                [
+                    plgpu.SMEM((128,), jnp.float32),
+                    plgpu.SMEM((128,), jnp.float32),
+                ],
+            ),
+            plgpu.RefUnion(plgpu.SMEM((128,), jnp.float32)),
+        ],
+    )
+    def kernel(o_gmem, plain_smem, union1, union2):
+      del o_gmem
+
+      def _touch(ref):
+        @plgpu.inline_mgpu(arg_types=(plgpu.RefType(),))
+        def f(ctx, smem_ref):
+          del ctx, smem_ref
+
+        f(ref)
+
+      ref1_g0, [ref1_g1_a, ref1_g1_b] = union1
+      [ref2_g0] = union2
+      _touch(plain_smem)
+      # Accessing the same aliased member twice must reuse its alias_id.
+      _touch(ref1_g0)
+      _touch(ref1_g0)
+      # Distinct group (same offset), distinct offset (same group), and
+      # distinct RefUnion must each receive distinct alias_ids that do not
+      # collide with plain allocation IDs.
+      _touch(ref1_g1_a)
+      _touch(ref1_g1_b)
+      _touch(ref2_g0)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
+        jax.jit(kernel).lower()
+      [dump_file] = [
+          f
+          for f in os.listdir(dump_dir)
+          if f.endswith(".before_layout_inference.txt")
+      ]
+      with open(os.path.join(dump_dir, dump_file)) as f:
+        ir_text = f.read()
+
+    alias_ids = [
+        int(m)
+        for m in re.findall(
+            r"mosaic_gpu\.slice_smem[^\n]*alias_id\s*=\s*(-?\d+)\s*:\s*i64",
+            ir_text,
+        )
+    ]
+    # Base scratch allocations get IDs 1 (plain), 2 (union1, DCE'd), and 3
+    # (union2, DCE'd). Extracted members get 4 (reused on second access and
+    # CSE'd), 5, 6, 7.
+    self.assertEqual(alias_ids, [1, 4, 5, 6, 7])
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 
@@ -9050,7 +9112,56 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 class PallasCallTCGen05WGTest(
     PallasCallTCGen05Test, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
-  ...
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_tmem_refunion_alias_ids_are_deterministic(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), jnp.float32),
+        scratch_types=[
+            plgpu.TMEM((128, 64), jnp.float32),
+            plgpu.RefUnion(
+                plgpu.TMEM((128, 64), jnp.float32),
+                [
+                    plgpu.TMEM((128, 32), jnp.float32),
+                    plgpu.TMEM((128, 32), jnp.float32),
+                ],
+            ),
+            plgpu.RefUnion(plgpu.TMEM((128, 64), jnp.float32)),
+        ],
+    )
+    def kernel(o_ref, plain_tmem, union1, union2):
+      del o_ref
+      ref1_g0, [ref1_g1_a, ref1_g1_b] = union1
+      [ref2_g0] = union2
+      plgpu.print_layout("plain: {}", plain_tmem)
+      plgpu.print_layout("r1_g0_a: {}", ref1_g0)
+      plgpu.print_layout("r1_g0_b: {}", ref1_g0)
+      plgpu.print_layout("r1_g1_a: {}", ref1_g1_a)
+      plgpu.print_layout("r1_g1_b: {}", ref1_g1_b)
+      plgpu.print_layout("r2_g0: {}", ref2_g0)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir), self.capture_stdout():
+        jax.jit(kernel).lower()
+      [dump_file] = [
+          f
+          for f in os.listdir(dump_dir)
+          if f.endswith(".before_layout_inference.txt")
+      ]
+      with open(os.path.join(dump_dir, dump_file)) as f:
+        ir_text = f.read()
+
+    alias_ids = [
+        int(m)
+        for m in re.findall(
+            r"mosaic_gpu\.slice_tmem[^\n]*alias_id\s*=\s*(-?\d+)\s*:\s*i64",
+            ir_text,
+        )
+    ]
+    # Base TMEM allocations get IDs 1 (plain), 2 (union1, DCE'd), and 3
+    # (union2, DCE'd). Extracted members get 4 (reused on second access and
+    # CSE'd), 5, 6, 7.
+    self.assertEqual(alias_ids, [1, 4, 5, 6, 7])
 
 
 class PipelineTest(PallasTest):
