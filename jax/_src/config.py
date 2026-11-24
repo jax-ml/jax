@@ -2560,3 +2560,14 @@ jax_partitioning = bool_state(
     include_in_trace_context=True,
     include_in_jaxpr_eqn_ctx=True,
 )
+
+cpu_flush_subnormals = bool_state(
+    name='jax_cpu_flush_subnormals',
+    default=True,
+    help=(
+        'If True (the default), flushes subnormal floating-point inputs and'
+        ' outputs to zero on CPU.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)

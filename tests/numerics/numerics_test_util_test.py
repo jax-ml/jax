@@ -732,17 +732,20 @@ class UlpDiffTest(jtu.JaxTestCase):
   def test_f16_default_non_ftz(self):
     # float16 defaults to non-FTZ mode across all platforms, and GPU defaults to
     # non-FTZ mode across all floating-point dtypes.
-    self.assertFalse(util._default_ftz(jnp.float16))
-    self.assertFalse(util._default_ftz(np.float16))
-    expected_non_f16 = jtu.device_under_test() != "gpu"
-    self.assertEqual(util._default_ftz(jnp.bfloat16), expected_non_f16)
-    self.assertEqual(util._default_ftz(jnp.float32), expected_non_f16)
-    self.assertEqual(util._default_ftz(jnp.float64), expected_non_f16)
+    self.assertFalse(util.default_ftz(jnp.float16))
+    self.assertFalse(util.default_ftz(np.float16))
+    dut = jtu.device_under_test()
+    expected_non_f16 = dut != "gpu" and (
+        dut != "cpu" or jax.config.jax_cpu_flush_subnormals
+    )
+    self.assertEqual(util.default_ftz(jnp.bfloat16), expected_non_f16)
+    self.assertEqual(util.default_ftz(jnp.float32), expected_non_f16)
+    self.assertEqual(util.default_ftz(jnp.float64), expected_non_f16)
 
-    # _resolve_override falls back to _default_ftz for float16 when omitted.
+    # _resolve_override falls back to default_ftz for float16 when omitted.
     self.assertFalse(
         util._resolve_override(
-            None, "tpu", jnp.float16, util._default_ftz(jnp.float16)
+            None, "tpu", jnp.float16, util.default_ftz(jnp.float16)
         )
     )
     self.assertFalse(
@@ -750,13 +753,13 @@ class UlpDiffTest(jtu.JaxTestCase):
             [("gpu", {jnp.bfloat16: False})],
             "gpu",
             jnp.float16,
-            util._default_ftz(jnp.float16),
+            util.default_ftz(jnp.float16),
         )
     )
     # Explicit scalar override is respected.
     self.assertTrue(
         util._resolve_override(
-            True, "tpu", jnp.float16, util._default_ftz(jnp.float16)
+            True, "tpu", jnp.float16, util.default_ftz(jnp.float16)
         )
     )
 
