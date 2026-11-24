@@ -743,10 +743,10 @@ class NotOfType(_BaseConstraint):
     return isinstance(self.expr, Constant)
 
   def _constant_holds(self) -> bool:
-    # TODO(olechwierowicz): We should raise here because this constraint is
-    # supposed to be used only for register expressions.
     if not isinstance(self.expr, RegisterLayout):
-      return True
+      raise ValueError(
+          f"NotOfType can only be applied to registers, got {self.expr}"
+      )
     return not isinstance(self.expr.value, self.type)
 
   def __str__(self):
