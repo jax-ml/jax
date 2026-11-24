@@ -293,6 +293,7 @@ cc_library(
     name = "nvshmem",
     hdrs = ["nvshmem.h"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

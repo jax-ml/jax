@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdlib>
 #include <mutex>
 
+#include "absl/base/attributes.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "cuda_runtime_api.h"
 
@@ -49,25 +50,26 @@ class NvshmemApi {
     return instance;
   }
 
-  int cumodule_init(CUmodule module) {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI int cumodule_init(CUmodule module) {
     std::lock_guard<std::mutex> lock(mutex_);
     return nvshmemx_cumodule_init(module);
   }
 
-  int cumodule_finalize(CUmodule module) {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI int cumodule_finalize(CUmodule module) {
     std::lock_guard<std::mutex> lock(mutex_);
     return nvshmemx_cumodule_finalize(module);
   }
 
-  void barrier_all_on_stream(cudaStream_t stream) {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI void barrier_all_on_stream(
+      cudaStream_t stream) {
     nvshmemx_barrier_all_on_stream(stream);
   }
 
-  bool is_loaded() {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI bool is_loaded() {
     return nvshmemx_init_status != nullptr && nvshmemx_init_status() == 2;
   }
 
-  int n_pes() { return nvshmem_n_pes(); }
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI int n_pes() { return nvshmem_n_pes(); }
 
   NvshmemApi(NvshmemApi const&) = delete;
   void operator=(NvshmemApi const&) = delete;
