@@ -26,6 +26,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     PRNG pass (`num_streams=2`), changing the exact random values produced for
     a fixed key under multi-stream PRNGs (the output distribution is
     unchanged).
+  * A {func}`jax.jit`-decorated function with `compiler_options` can now be
+    called inside another `jit` or transformed with, e.g., {func}`jax.grad` or
+    {func}`jax.linearize`. Under top-level transformations its
+    `compiler_options` still apply; inside another `jit` they are ignored
+    (logged at `WARNING` when `jax_log_compiles` is enabled). Previously this
+    raised a `ValueError`.
 * Bug fixes
 
 ## JAX 0.12.1 (November 18, 2026)

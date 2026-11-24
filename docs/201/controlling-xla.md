@@ -37,9 +37,11 @@ f_opt = jax.jit(f, compiler_options={
 f_opt(1.0)
 ```
 
-One restriction: `compiler_options` must be given on the top-level `jit`,
-the one whose compilation it configures, rather than on a jitted function
-called from inside another jitted function.
+Note that `compiler_options` only takes effect on the top-level `jit`,
+the one whose compilation it configures. When a jitted function with
+`compiler_options` is called inside another `jit`, its `compiler_options`
+are ignored (logged at `WARNING` when `jax_log_compiles` is enabled, and
+`DEBUG` otherwise).
 
 Alongside XLA's debug-option flags, `compiler_options` also accepts XLA's
 [compilation-effort knobs](https://openxla.org/xla/effort_levels),

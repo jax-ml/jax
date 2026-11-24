@@ -4765,20 +4765,96 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cpp_count(), 2)
     self.assertEqual(lowering_count(), 1)
 
-  def test_compiler_options_nested_jit_error(self):
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_compiler_options_nested_jit_ignored_and_logged(self):
     @jax.jit(compiler_options={"invalid_key": "invalid_value"})
     def g(x):
       return x * 2
 
     @jax.jit
     def f(x):
-      x = x + 2
-      return g(x)
+      return g(x + 2)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        '`compiler_options` can only be passed to top-level `jax.jit`'):
-      f(jnp.arange(4))
+    @jax.jit
+    def f_grad(x):
+      return jax.grad(lambda y: g(y).sum())(x)
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    msg = ("Ignoring compiler_options={'invalid_key': 'invalid_value'} "
+           "specified on nested jit 'g'")
+    with config.log_compiles(True):
+      with self.assertLogs('jax._src.pjit', level='WARNING') as log:
+        self.assertArraysEqual(f(x), (x + 2) * 2)
+    self.assertTrue(
+        any(
+            msg in m
+            and 'test_compiler_options_nested_jit_ignored_and_logged' in m
+            for m in log.output
+        ),
+        log.output,
+    )
+
+    with config.log_compiles(False):
+      with self.assertLogs('jax._src.pjit', level='DEBUG') as log:
+        self.assertArraysEqual(f_grad(x), jnp.full_like(x, 2.))
+    levels = {r.levelname for r in log.records if msg in r.getMessage()}
+    self.assertEqual(levels, {'DEBUG'})
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_compiler_options_nested_jax_early_inline(self):
+    @jax.jit(
+        inline=jax.Inline.JAX_EARLY,
+        compiler_options={"invalid_key": "invalid_value"},
+    )
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      return g(x) + 1
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    with config.log_compiles(True):
+      with self.assertLogs('jax._src.pjit', level='WARNING') as log:
+        lowered = f.lower(x)
+    self.assertNotIn('inlineable = "jax_early"', lowered.as_text())
+    self.assertTrue(
+        any("Ignoring compiler_options=" in m for m in log.output), log.output)
+    self.assertArraysEqual(lowered.compile()(x), x * 2 + 1)
+
+  def test_compiler_options_top_level_transforms(self):
+    @jax.jit(compiler_options={"xla_embed_ir_in_executable": True})
+    def g_valid(x):
+      return jnp.sum(x * x)
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    kvs = (("xla_embed_ir_in_executable", True),)
+    self.assertEqual(
+        jax.make_jaxpr(g_valid)(x).eqns[0].params["compiler_options_kvs"], kvs)
+    self.assertArraysEqual(jax.grad(g_valid)(x), 2 * x)
+    self.assertArraysEqual(jax.vmap(g_valid)(x[:, None]), x * x)
+    self.assertArraysEqual(jax.checkpoint(g_valid)(x), jnp.sum(x * x))
+    y, f_lin = jax.linearize(g_valid, x)
+    self.assertArraysEqual(y, jnp.sum(x * x))
+    self.assertArraysEqual(f_lin(jnp.ones_like(x)), jnp.sum(2 * x))
+    # The staged tangent computation keeps g_valid's compiler_options.
+    self.assertTrue(any(e.params.get("compiler_options_kvs") == kvs
+                        for e in jax.make_jaxpr(f_lin)(x).eqns))
+
+    @jax.jit(compiler_options={"invalid_key": "invalid_value"})
+    def g_invalid(x):
+      return jnp.sum(x * x)
+
+    # Staging alone does not compile, so it does not raise.
+    jax.make_jaxpr(g_invalid)(x)
+
+    # Top-level transforms still compile with g_invalid's compiler_options.
+    for fun in [lambda: jax.grad(g_invalid)(x),
+                lambda: jax.vmap(g_invalid)(x[:, None]),
+                lambda: jax.linearize(g_invalid, x)]:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'"):
+        fun()
 
   def test_wsc_aval_cache_hit(self):
     mesh = jtu.create_mesh((2,), 'x')
