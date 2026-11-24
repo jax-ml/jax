@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import enum
 import inspect
+from typing import Protocol
 
 from jax._src import xla_bridge
 from jax._src.lib import _jax
@@ -28,6 +29,22 @@ from jax._src.lib import _xla
 class PipelineStage(enum.Enum):
   PRE_SCHEDULER = 0
   POST_SCHEDULER = 1
+
+
+class _HloTransformCallback(Protocol):
+  """A transform callback that receives only the serialized HloModuleProto."""
+
+  def __call__(self, hlo_module: bytes, /) -> bytes | None:
+    ...
+
+
+class _HloTransformCallbackWithConfig(Protocol):
+  """A transform callback that also receives the serialized module config."""
+
+  def __call__(
+      self, hlo_module: bytes, /, *, module_config: bytes
+  ) -> bytes | None:
+    ...
 
 
 def _normalize_platforms(
@@ -42,23 +59,42 @@ def _normalize_platforms(
 
 
 def _accepts_module_config(callback: Callable[..., bytes | None]) -> bool:
-  """Whether `callback` can be called as ``callback(hlo_module, module_config=...)``."""
+  """Whether `callback` can be called as ``callback(hlo_module, module_config=...)``.
+
+  Raises:
+    TypeError: if `callback` cannot take the module config by keyword but
+      requires more than one positional argument, so it would fail when XLA
+      invokes it during compilation.
+  """
   try:
     params = inspect.signature(callback).parameters
   except (TypeError, ValueError):  # ValueError: no introspectable signature.
     return False
   param = params.get("module_config")
   if param is not None:
-    return param.kind in (
+    by_keyword = param.kind in (
         inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-  return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+  else:
+    by_keyword = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+  required_positional = [
+      p for p in params.values()
+      if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD)
+      and p.default is inspect.Parameter.empty
+      and not (by_keyword and p is param)
+  ]
+  if len(required_positional) > 1:
+    raise TypeError(
+        f"{callback!r} requires {len(required_positional)} positional "
+        "arguments; an XLA transform callback takes the serialized HLO module "
+        "positionally and, optionally, the module config as a keyword "
+        "argument named `module_config`.")
+  return by_keyword
 
 
 def register_hlo_module_transformation(
-    callback: (
-        Callable[[bytes], bytes | None]
-        | Callable[[bytes, bytes], bytes | None]
-    ),
+    callback: _HloTransformCallback | _HloTransformCallbackWithConfig,
     *,
     name: str,
     stage: PipelineStage = PipelineStage.PRE_SCHEDULER,

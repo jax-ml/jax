@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
@@ -101,6 +102,8 @@ class XlaTransformTest(jtu.JaxTestCase):
       jex_xla.PipelineStage.POST_SCHEDULER,
   )
   def test_callback_receives_module_config(self, stage):
+    if jaxlib_extension_version < 530:
+      self.skipTest("Requires jaxlib with module_config support")
     seen = []
 
     def record(serialized_hlo: bytes, *, module_config: bytes) -> None:
@@ -124,6 +127,20 @@ class XlaTransformTest(jtu.JaxTestCase):
         "fdo_profile": profile})(x)
     # HloModuleConfigProto.fdo_profile is a bytes field, so it appears verbatim.
     self.assertTrue(any(profile in c for c in seen), seen)
+
+  def test_callback_without_keyword_module_config_is_rejected(self):
+    def other_name(serialized_hlo: bytes, config: bytes) -> None:
+      del serialized_hlo, config
+
+    def positional_only(serialized_hlo: bytes, module_config: bytes, /) -> None:
+      del serialized_hlo, module_config
+
+    for callback in (other_name, positional_only):
+      with self.subTest(callback.__name__):
+        with self.assertRaisesRegex(TypeError, "module_config"):
+          jex_xla.register_hlo_module_transformation(
+              callback,  # pyrefly: ignore[bad-argument-type]
+              name=f"rejected_{callback.__name__}_test")
 
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
