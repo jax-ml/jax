@@ -573,6 +573,114 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertTrue(np.isnan(out[2:, :]).all())
     self.assertTrue(np.isnan(out[:, 22:]).all())
 
+  @parameterized.product(
+      dtype_name=['float64', 'int64', 'complex64'],
+      location=['input', 'output', 'scratch', 'run_scoped'],
+  )
+  def test_padded_buffer_bounds_rejects_64bit_dtypes(
+      self, dtype_name, location
+  ):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    )
+    with jax.enable_x64(True), jax.sharding.use_abstract_mesh(abstract_mesh):
+      dtype = jnp.dtype(dtype_name)
+      if location == 'input':
+
+        def kernel(x_ref, o_ref):
+          del x_ref
+          o_ref[...] = jnp.zeros(o_ref.shape, o_ref.dtype)
+
+        x = jnp.zeros((8, 128), dtype)
+        fn = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+        )
+      elif location == 'output':
+
+        def kernel(x_ref, o_ref):
+          o_ref[...] = x_ref[...].astype(dtype)
+
+        x = jnp.zeros((8, 128), jnp.float32)
+        fn = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+            interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+        )
+      elif location == 'scratch':
+
+        def kernel(x_ref, o_ref, s_ref):
+          del s_ref
+          o_ref[...] = x_ref[...]
+
+        x = jnp.zeros((8, 128), jnp.float32)
+        fn = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_shapes=[pltpu.VMEM((8, 128), dtype)],
+            interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+        )
+      else:
+
+        def kernel(x_ref, o_ref):
+          def scoped(s_ref):
+            del s_ref
+            o_ref[...] = x_ref[...]
+
+          pl.run_scoped(scoped, pltpu.VMEM((8, 128), dtype))
+
+        x = jnp.zeros((8, 128), jnp.float32)
+        fn = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+        )
+
+      with self.assertRaisesRegex(
+          ValueError,
+          r"TPU interpret mode with buffer_bounds='padded' does not support"
+          r' dtype',
+      ):
+        jax.jit(fn)(x).block_until_ready()
+
+  def test_padded_buffer_bounds_allows_smem_64bit_and_logical_64bit(self):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    )
+    with jax.enable_x64(True), jax.sharding.use_abstract_mesh(abstract_mesh):
+      # SMEM scratch is never padded, so 64-bit SMEM buffers remain allowed.
+      def smem_kernel(x_ref, o_ref, s_ref):
+        s_ref[0] = jnp.float64(1.0)
+        o_ref[...] = x_ref[...] + s_ref[0].astype(jnp.float32)
+
+      x_f32 = jnp.ones((8, 128), jnp.float32)
+      out = jax.jit(
+          pl.pallas_call(
+              smem_kernel,
+              out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+              scratch_shapes=[pltpu.SMEM((1,), jnp.float64)],
+              interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+          )
+      )(x_f32)
+      np.testing.assert_array_equal(out, jnp.full((8, 128), 2.0, jnp.float32))
+
+      # buffer_bounds='logical' continues to support 64-bit dtypes.
+      def logical_kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + jnp.float64(1.0)
+
+      x_f64 = jnp.ones((8, 128), jnp.float64)
+      out_f64 = jax.jit(
+          pl.pallas_call(
+              logical_kernel,
+              out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float64),
+              interpret=pltpu.InterpretParams(buffer_bounds='logical'),
+          )
+      )(x_f64)
+      np.testing.assert_array_equal(
+          out_f64, jnp.full((8, 128), 2.0, jnp.float64)
+      )
+
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
       del indices

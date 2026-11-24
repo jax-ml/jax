@@ -13,9 +13,13 @@
 # limitations under the License.
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src import tpu_info
 from jax.experimental.pallas import tpu as pltpu
+import jax.numpy as jnp
 
 
 class TpuInfoTest(jtu.JaxTestCase):
@@ -214,6 +218,53 @@ class TpuInfoStaticTest(jtu.JaxTestCase):
             info.is_matmul_supported("bfloat16", "bfloat16"),
             msg=f"{version} bf16",
         )
+
+  @parameterized.product(
+      dtype_name=["float64", "int64", "uint64", "complex64", "complex128"],
+      shape=[(128,), (8, 128), (2, 16, 128)],
+      tiling=[tpu_info.Tiling.COMPACT, tpu_info.Tiling.SPARSE_CORE],
+  )
+  def test_infer_tiling_rejects_large_dtypes(self, dtype_name, shape, tiling):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice("TPU v6e", 1, "tpu")
+    )
+    with jax.enable_x64(True), jax.sharding.use_abstract_mesh(abstract_mesh):
+      aval = jax_core.ShapedArray(shape, jnp.dtype(dtype_name))
+      with self.assertRaisesRegex(
+          ValueError, "Cannot infer TPU tiling for dtype"
+      ):
+        tpu_info.infer_tiling(aval, tiling=tiling)
+
+  def test_infer_tiling_valid_dtypes(self):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice("TPU v6e", 1, "tpu")
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      self.assertEqual(
+          tpu_info.infer_tiling(jax_core.ShapedArray((8, 128), jnp.float32)),
+          (8, 128),
+      )
+      self.assertEqual(
+          tpu_info.infer_tiling(jax_core.ShapedArray((2, 128), jnp.bfloat16)),
+          (2, 128),
+      )
+      self.assertEqual(
+          tpu_info.infer_tiling(jax_core.ShapedArray((1, 128), jnp.int8)),
+          (4, 128),
+      )
+      self.assertEqual(
+          tpu_info.infer_tiling(jax_core.ShapedArray((1, 128), jnp.int4)),
+          (8, 128),
+      )
+
+  @parameterized.parameters(0, -1)
+  def test_get_tiling_factor_rejects_nonpositive_packing(self, packing):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice("TPU v6e", 1, "tpu")
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      with self.assertRaisesRegex(ValueError, "packing must be positive"):
+        tpu_info._get_tiling_factor(8, 8, packing)
 
 
 if __name__ == "__main__":

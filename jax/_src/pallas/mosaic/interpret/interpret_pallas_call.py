@@ -328,6 +328,16 @@ def _validate(token, device_id):
   return token
 
 
+def _validate_padded_buffer_dtype(
+    logical_shape: tuple[int, ...], dtype: np.dtype
+) -> None:
+  if logical_shape != () and dtype.itemsize > 4:
+    raise ValueError(
+        f"TPU interpret mode with buffer_bounds='padded' does not support"
+        f" dtype {dtype} (itemsize {dtype.itemsize} > 4 bytes)."
+    )
+
+
 def _get_padded_shape(
     logical_shape: tuple[int, ...], dtype: jnp.dtype
 ) -> tuple[int, ...]:
@@ -335,10 +345,7 @@ def _get_padded_shape(
   if logical_shape == ():
     return ()
 
-  # TODO(nrink): Replace this assertion with raising an exception early if
-  # dtype `float64` is used in TPU interpret mode. (`float64` has itemsize
-  # of 8, and an itemsize > 4 will cause infinite looping in `infer_tiling`.)
-  assert dtype.itemsize <= 4
+  _validate_padded_buffer_dtype(logical_shape, np.dtype(dtype))
   tile_shape = tpu_info.infer_tiling(
       jax.core.ShapedArray(shape=logical_shape, dtype=dtype)
   )
@@ -1543,6 +1550,13 @@ def _interpret_jaxpr(
               )
             else:
               memory_space = _forward_any_to_hbm(v.aval.memory_space)
+            if (
+                ctx.interpret_params.buffer_bounds == 'padded'
+                and memory_space is not mosaic_core.MemorySpace.SMEM
+            ):
+              _validate_padded_buffer_dtype(
+                  v.aval.shape, np.dtype(v.aval.dtype)
+              )
             token, alloc = _call_allocate_buffer(
                 token,
                 ctx.device_id,
@@ -2042,6 +2056,25 @@ def interpret_pallas_call(
       args,
       [grid_mapping.num_dynamic_grid_bounds, grid_mapping.num_index_operands],
   )
+  if interpret_params.buffer_bounds == 'padded':
+    for arg in input_args:
+      _validate_padded_buffer_dtype(arg.shape, np.dtype(arg.dtype))
+    for bm in grid_mapping.block_mappings_output:
+      _validate_padded_buffer_dtype(
+          bm.array_aval.shape, np.dtype(bm.array_aval.dtype)
+      )
+    num_io = grid_mapping.num_inputs + grid_mapping.num_outputs
+    for var in jaxpr.invars[grid_mapping.num_index_operands + num_io :]:
+      aval = var.aval
+      memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
+      if (
+          memory_space is not _SEMAPHORE
+          and memory_space is not mosaic_core.MemorySpace.SMEM
+      ):
+        _validate_padded_buffer_dtype(
+            aval.shape,  # pyrefly: ignore[missing-attribute]
+            np.dtype(aval.dtype),  # pyrefly: ignore[missing-attribute]
+        )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
       a if not isinstance(a, pallas_core.DynamicGridDim)

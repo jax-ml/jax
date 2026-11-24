@@ -645,6 +645,8 @@ class Tiling(enum.Enum):
 
 def _get_tiling_factor(src: int, max_tiling: int, packing: int) -> int:
   # This roughly mirrors ``getTilingFactor`` in infer-memref-layout.
+  if packing <= 0:
+    raise ValueError(f"packing must be positive, got {packing}.")
   tpu_generation = get_tpu_info().generation
   tiling = (1 + int(tpu_generation < 4)) * packing
   while tiling < min(src, max_tiling):
@@ -672,6 +674,11 @@ def infer_tiling(
   if ty.dtype == dtypes.dtype("int4"):
     packing = 8
   else:
+    if ty.dtype.itemsize == 0 or ty.dtype.itemsize > 4:
+      raise ValueError(
+          f"Cannot infer TPU tiling for dtype {ty.dtype} with itemsize"
+          f" {ty.dtype.itemsize} bytes; expected itemsize in 1..4 bytes."
+      )
     packing = 4 // ty.dtype.itemsize
 
   if tiling is None:
