@@ -12,7 +12,6 @@ TPU specific documentation.
    matmul
    sparse
    distributed
-   core_map
    sparsecore
    fuser
    prng
