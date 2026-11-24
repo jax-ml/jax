@@ -42,11 +42,17 @@ def _normalize_platforms(
 
 
 def _register(
-    native_callback: Callable[..., bytes | None],
+    callback: Callable[..., bytes | None],
     name: str,
     stage: PipelineStage,
     platforms: Sequence[str] | str | None,
+    *,
+    pass_module_config: bool,
 ) -> None:
+  # Only pass the flag when set, so that 1-arg registration also works with
+  # jaxlibs that predate it.
+  kwargs = {"pass_module_config": True} if pass_module_config else {}
+
   # Unconditionally trigger backend initialization so that all PJRT plugins are loaded
   # before we try to access them.
   xla_bridge.backends()
@@ -54,11 +60,11 @@ def _register(
   for platform in _normalize_platforms(platforms):
     if platform == "cpu":
       # Register CPU directly as it's the only non-PJRT C API backend.
-      _xla.register_xla_transform(name, stage.value, native_callback)
+      _xla.register_xla_transform(name, stage.value, callback, **kwargs)
       continue
     c_api = _jax.get_pjrt_plugin(platform)
     _xla.register_xla_transform_c_api(
-        c_api, name, stage.value, native_callback)
+        c_api, name, stage.value, callback, **kwargs)
 
 
 def register_hlo_module_transformation(
@@ -93,16 +99,7 @@ def register_hlo_module_transformation(
       ``"tpu"``). If ``None``, the pass is registered for all known backends by
       default. Can be a single platform string or a sequence of strings.
   """
-  if jaxlib_extension_version < 530:
-    # Older jaxlibs call the callback with the HLO module only.
-    _register(callback, name, stage, platforms)
-    return
-  register_hlo_module_transformation2(
-      lambda hlo_module, module_config: callback(hlo_module),
-      name=name,
-      stage=stage,
-      platforms=platforms,
-  )
+  _register(callback, name, stage, platforms, pass_module_config=False)
 
 
 def register_hlo_module_transformation2(
@@ -139,7 +136,7 @@ def register_hlo_module_transformation2(
   if jaxlib_extension_version < 530:
     raise NotImplementedError(
         "register_hlo_module_transformation2 requires a newer jaxlib.")
-  _register(callback, name, stage, platforms)
+  _register(callback, name, stage, platforms, pass_module_config=True)
 
 
 def clear_hlo_module_transformation(

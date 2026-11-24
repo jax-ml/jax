@@ -49,21 +49,31 @@ namespace {
 
 // An HloXlaTransform that delegates to a Python callback.
 //
-// The callback receives a serialized HloModuleProto (bytes) and the serialized
-// HloModuleConfigProto of the module's compilation (bytes), and returns either
-// modified serialized HloModuleProto bytes if the module was changed, or None
-// if no changes were made.
+// The callback receives a serialized HloModuleProto (bytes). if
+// `pass_module_config` is true, the serialized HloModuleConfigProto of the
+// module's compilation is also passed. It returns either modified serialized
+// HloModuleProto bytes if the module was changed, or None if no changes were
+// made.
 class PyHloXlaTransform : public xla::HloXlaTransform {
  public:
-  PyHloXlaTransform(std::string name, nb::object callback)
-      : HloXlaTransform(std::move(name)), callback_(std::move(callback)) {}
+  PyHloXlaTransform(std::string name, nb::object callback,
+                    bool pass_module_config)
+      : HloXlaTransform(std::move(name)),
+        callback_(std::move(callback)),
+        pass_module_config_(pass_module_config) {}
 
   absl::StatusOr<bool> Transform(xla::HloModule* module) override {
-    // Serialize the HLO module to a proto.
+    // Serialize the HLO module and its config to protos.
     xla::HloModuleProto proto = module->ToProto();
     std::string serialized_proto;
     if (!tsl::SerializeToStringDeterministic(proto, &serialized_proto)) {
       return absl::InternalError("Failed to serialize HLO module");
+    }
+    std::string serialized_config;
+    if (pass_module_config_ &&
+        !tsl::SerializeToStringDeterministic(module->config().ToProto(),
+                                             &serialized_config)) {
+      return absl::InternalError("Failed to serialize HLO module config");
     }
 
     std::string returned_proto_bytes;
@@ -74,14 +84,14 @@ class PyHloXlaTransform : public xla::HloXlaTransform {
       nb::gil_scoped_acquire gil;
       try {
         nb::bytes input_bytes(serialized_proto.data(), serialized_proto.size());
-        std::string serialized_config;
-        if (!tsl::SerializeToStringDeterministic(module->config().ToProto(),
-                                                 &serialized_config)) {
-          return absl::InternalError("Failed to serialize HLO module config");
+        nb::object result;
+        if (pass_module_config_) {
+          nb::bytes config_bytes(serialized_config.data(),
+                                 serialized_config.size());
+          result = callback_(input_bytes, config_bytes);
+        } else {
+          result = callback_(input_bytes);
         }
-        nb::bytes config_bytes(serialized_config.data(),
-                               serialized_config.size());
-        nb::object result = callback_(input_bytes, config_bytes);
 
         if (!result.is_none()) {
           nb::bytes result_bytes = nb::cast<nb::bytes>(result);
@@ -115,12 +125,14 @@ class PyHloXlaTransform : public xla::HloXlaTransform {
 
  private:
   nb::object callback_;
+  bool pass_module_config_;
 };
 
 // State for a PJRT C API callback. Intentionally leaked since registered
 // transforms persist for the lifetime of the process.
 struct CApiCallbackState {
   nb::object py_callback;
+  bool pass_module_config = false;
   PJRT_XlaTransform_Callbacks callbacks;
 };
 
@@ -150,15 +162,20 @@ void CApiTransformHloModuleCallback(PJRT_XlaTransform_Callbacks* callbacks,
   nb::gil_scoped_acquire gil;
   try {
     nb::bytes input_bytes(args->hlo_module.data, args->hlo_module.size);
-    // A plugin built against an older header has a smaller struct with no
-    // hlo_module_config member.
-    nb::bytes config_bytes("", 0);
-    if (args->struct_size >=
-        PJRT_STRUCT_SIZE(PJRT_XlaTransform_Args, hlo_module_config)) {
-      config_bytes =
-          nb::bytes(args->hlo_module_config.data, args->hlo_module_config.size);
+    nb::object result;
+    if (state->pass_module_config) {
+      // A plugin built against an older header has a smaller struct with no
+      // hlo_module_config member.
+      nb::bytes config_bytes("", 0);
+      if (args->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_XlaTransform_Args, hlo_module_config)) {
+        config_bytes = nb::bytes(args->hlo_module_config.data,
+                                 args->hlo_module_config.size);
+      }
+      result = state->py_callback(input_bytes, config_bytes);
+    } else {
+      result = state->py_callback(input_bytes);
     }
-    nb::object result = state->py_callback(input_bytes, config_bytes);
 
     if (result.is_none()) {
       args->changed = false;
@@ -190,7 +207,8 @@ NB_MODULE(_xla, m) {
   // This is used for in-process backends (e.g. CPU).
   m.def(
       "register_xla_transform",
-      [](std::string name, int stage, nb::object callback) {
+      [](std::string name, int stage, nb::object callback,
+         bool pass_module_config) {
         xla::HloXlaTransform::PipelineStage pipeline_stage;
         switch (stage) {
           case 0:
@@ -205,10 +223,11 @@ NB_MODULE(_xla, m) {
         }
 
         auto transform = std::make_shared<PyHloXlaTransform>(
-            std::move(name), std::move(callback));
+            std::move(name), std::move(callback), pass_module_config);
         xla::RegisterHloXlaTransform(pipeline_stage, std::move(transform));
       },
-      nb::arg("name"), nb::arg("stage"), nb::arg("callback"));
+      nb::arg("name"), nb::arg("stage"), nb::arg("callback"), nb::kw_only(),
+      nb::arg("pass_module_config") = false);
 
   m.def(
       "clear_xla_transform",
@@ -233,7 +252,8 @@ NB_MODULE(_xla, m) {
   // This is used for plugin backends (e.g. TPU, GPU).
   m.def(
       "register_xla_transform_c_api",
-      [](nb::capsule c_api, std::string name, int stage, nb::object callback) {
+      [](nb::capsule c_api, std::string name, int stage, nb::object callback,
+         bool pass_module_config) {
         if (std::string_view(c_api.name()) != "pjrt_c_api") {
           throw nb::value_error(
               "c_api argument to register_xla_transform_c_api is not a "
@@ -257,6 +277,7 @@ NB_MODULE(_xla, m) {
         // clear_xla_transform is called.
         auto* state = new CApiCallbackState();
         state->py_callback = std::move(callback);
+        state->pass_module_config = pass_module_config;
         state->callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
         state->callbacks.dtor = [](PJRT_XlaTransform_Callbacks* callbacks) {
           auto* state = reinterpret_cast<CApiCallbackState*>(
@@ -280,7 +301,8 @@ NB_MODULE(_xla, m) {
         }
       },
       nb::arg("c_api"), nb::arg("name"), nb::arg("stage"),
-      nb::arg("callback"));
+      nb::arg("callback"), nb::kw_only(),
+      nb::arg("pass_module_config") = false);
 
   m.def(
       "clear_xla_transform_c_api",
