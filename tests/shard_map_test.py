@@ -46,7 +46,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
-from jax._src.lib import jaxlib_extension_version, xla_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -409,8 +408,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   def test_collective_permute_in_loop_and_after_loop(self):
-    if xla_version < 79:
-      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')
@@ -456,8 +453,6 @@ class ShardMapTest(jtu.JaxTestCase):
         self.assertArraysEqual(c, np.roll(b_np, shift=k + 1, axis=0))
 
   def test_psum_in_cond_and_after_cond(self):
-    if xla_version < 79:
-      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')
@@ -2864,13 +2859,8 @@ class ShardMapTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_fma_and_fmuladd_mixed_vma(self, fma_op, varying_c, mesh):
-    if fma_op is lax.fma and (
-        jaxlib_extension_version < 515
-        or not jtu.stablehlo_version_at_least('1.24.0')
-    ):
-      self.skipTest(
-          'fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0'
-      )
+    if fma_op is lax.fma and not jtu.stablehlo_version_at_least('1.24.0'):
+      self.skipTest('fma requires StableHLO >= 1.24.0')
     a = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('x'))
     c = jax.device_put(
         np.linspace(0.5, 1.5, 8 if varying_c else 4, dtype=np.float32),
@@ -2902,13 +2892,8 @@ class ShardMapTest(jtu.JaxTestCase):
   @parameterized.named_parameters(('fma', lax.fma), ('fmuladd', lax.fmuladd))
   @jtu.with_explicit_mesh((2,), 'i')
   def test_fma_and_fmuladd_derivatives_vma(self, fma_op, mesh):
-    if fma_op is lax.fma and (
-        jaxlib_extension_version < 515
-        or not jtu.stablehlo_version_at_least('1.24.0')
-    ):
-      self.skipTest(
-          'fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0'
-      )
+    if fma_op is lax.fma and not jtu.stablehlo_version_at_least('1.24.0'):
+      self.skipTest('fma requires StableHLO >= 1.24.0')
     x = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('i'))
     grad = jax.grad(lambda x: fma_op(x, x, np.float32(1.5)).sum())
     grad2 = jax.grad(lambda x: grad(x).sum())

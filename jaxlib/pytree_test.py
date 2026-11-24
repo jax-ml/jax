@@ -468,8 +468,6 @@ class PyTreeTest(parameterized.TestCase):
       ("dict_key", pytree.DictKey),
   )
   def testUninitializedGcTraverseAndClear(self, cls):
-    if xla_client._version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     obj = cls.__new__(cls)
     cycle = [obj]
     cycle.append(cycle)

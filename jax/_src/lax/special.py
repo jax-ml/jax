@@ -51,7 +51,7 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
-from jax._src.lib import cpu_math, cuda_math, hip_math, xla_version
+from jax._src.lib import cpu_math, cuda_math, hip_math
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
@@ -879,7 +879,7 @@ def _erfc_lowering(ctx, x, *, accuracy=None, use_exp2=True):
   if config.jax_accurate_default_erfc.value:
     if accuracy is AccuracyMode.HIGHEST:
       return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
-    has_exp2 = not ctx.is_forward_compat() and xla_version >= 80
+    has_exp2 = not ctx.is_forward_compat()
     return mlir.lower_fun(
         partial(erfc_default_impl, use_exp2=use_exp2 and has_exp2),
         multiple_results=False,

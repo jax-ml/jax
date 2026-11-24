@@ -21,7 +21,6 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -74,16 +73,10 @@ class RsqrtTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_rsqrt_accuracy(self, dtype):
-    if jaxlib_extension_version >= 506:
-      # x86_64 (AVX + FMA) is within 1.0 ULP; non-AVX CPUs (e.g. ARM) fall back
-      # to float32 1.0 / sqrt(x) and are within 1.5 ULP.
-      cpu_bounds = ("cpu", {f32: (1.0, 1.5), f64: 1.5})
-    else:
-      # The max ULP for float32 is either 1.0 and 2.0 depend on CPU vendor (AMD
-      # vs Intel). The (min, max) tuple allows tightness checks to pass on both.
-      cpu_bounds = ("cpu", {f32: (1.0, 2.0), f64: 1.5})
     bounds = [
-        cpu_bounds,
+        # x86_64 (AVX + FMA) is within 1.0 ULP; non-AVX CPUs (e.g. ARM) fall back
+        # to float32 1.0 / sqrt(x) and are within 1.5 ULP.
+        ("cpu", {f32: (1.0, 1.5), f64: 1.5}),
         ("gpu", {f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 2.5}),
         ("tpu_v6e", {f32: 1.5}),

@@ -17,7 +17,6 @@ from jax import lax
 import jax.numpy as jnp
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import xla_version
 from jax.sharding import NamedSharding, PartitionSpec as P
 import numpy as np
 
@@ -25,8 +24,6 @@ import numpy as np
 class PPermuteTest(jt_multiprocess.MultiProcessTest):
 
   def test_ppermute_in_loop_and_after_loop(self):
-    if xla_version < 79:
-      self.skipTest("Requires xla_version >= 79")
     n = jax.device_count()
     mesh = jtu.create_mesh((n,), ("x",))
     pairs = [(i, (i + 1) % n) for i in range(n)]

@@ -24,7 +24,6 @@ import jax
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import cache
 import jax.dlpack
 import jax.numpy as jnp
@@ -441,103 +440,101 @@ class DLPackTest(jtu.JaxTestCase):
     expected = np.arange(1024, dtype=np.uint32) + 1
     self.assertAllClose(result_np, expected)
 
-    if jaxlib_extension_version >= 510:
-      # Verify sub-32-bit (uint16) and 2D non-tile-aligned shapes
-      # can be imported with an explicit linear Format(..., copy=False) without
-      # changing the default tiled layout when Format is not specified.
-      from jax._src.layout import Format, Layout
+    # Verify sub-32-bit (uint16) and 2D non-tile-aligned shapes
+    # can be imported with an explicit linear Format(..., copy=False) without
+    # changing the default tiled layout when Format is not specified.
+    from jax._src.layout import Format, Layout
 
-      test_cases = [
-          (ctypes.c_uint16, np.uint16, (1024,)),
-          (ctypes.c_uint16, np.uint16, (1024, 129)),
-          (ctypes.c_float, np.float32, (8, 256)),
-          (ctypes.c_uint16, np.uint16, (16, 129)),
-      ]
-      for c_type, np_dtype, shape in test_cases:
-        size = int(np.prod(shape))
-        raw = alloc_and_map(c_type, np_dtype, size)
-        arr_np = raw.reshape(shape)
-        arr_np[...] = np.arange(size, dtype=np_dtype).reshape(shape)
-        linear_fmt = Format(
-            Layout(major_to_minor=tuple(range(len(shape))), tiling=((1,),)),
-            host_sharding,
-        )
-        w_fmt = DLPackWrapper(arr_np, DLDeviceType.kDLTPUHost, dev_id)
-        imported_fmt = jax.dlpack.from_dlpack(
-            w_fmt, device=linear_fmt, copy=False
-        )
-        self.assertEqual(imported_fmt.format, linear_fmt)
-        self.assertArraysEqual(np.asarray(add_one(imported_fmt)), arr_np + 1)
-
-      # Verify default import without Format preserves the default tiled layout.
-      raw_default = alloc_and_map(
-          ctypes.c_float, np.float32, 8 * 256
-      ).reshape(8, 256)
-      imported_default = jax.dlpack.from_dlpack(
-          DLPackWrapper(raw_default, DLDeviceType.kDLTPUHost, dev_id),
-          device=host_sharding,
-          copy=False,
-      )
-      self.assertEqual(imported_default.format.layout.tiling, ((8, 128),))
-
-      # Verify 0-D scalar import works with Format(None, host_sharding).
-      scalar_np = alloc_and_map(ctypes.c_uint32, np.uint32, 1).reshape(())
-      scalar_np[...] = 41
-      scalar_fmt = Format(None, host_sharding)
-      imported_scalar = jax.dlpack.from_dlpack(
-          DLPackWrapper(scalar_np, DLDeviceType.kDLTPUHost, dev_id),
-          device=scalar_fmt,
-          copy=False,
-      )
-      self.assertArraysEqual(
-          np.asarray(add_one(imported_scalar)), scalar_np + 1
-      )
-
-      # Verify mismatched major_to_minor Format raises ValueError with
-      # copy=False and copies/transposes accurately with copy=None.
-      transposed_fmt = Format(
-          Layout(major_to_minor=(1, 0), tiling=((1,),)),
+    test_cases = [
+        (ctypes.c_uint16, np.uint16, (1024,)),
+        (ctypes.c_uint16, np.uint16, (1024, 129)),
+        (ctypes.c_float, np.float32, (8, 256)),
+        (ctypes.c_uint16, np.uint16, (16, 129)),
+    ]
+    for c_type, np_dtype, shape in test_cases:
+      size = int(np.prod(shape))
+      raw = alloc_and_map(c_type, np_dtype, size)
+      arr_np = raw.reshape(shape)
+      arr_np[...] = np.arange(size, dtype=np_dtype).reshape(shape)
+      linear_fmt = Format(
+          Layout(major_to_minor=tuple(range(len(shape))), tiling=((1,),)),
           host_sharding,
       )
-      raw_2d = alloc_and_map(ctypes.c_float, np.float32, 8 * 256).reshape(
-          8, 256
+      w_fmt = DLPackWrapper(arr_np, DLDeviceType.kDLTPUHost, dev_id)
+      imported_fmt = jax.dlpack.from_dlpack(
+          w_fmt, device=linear_fmt, copy=False
       )
-      raw_2d[...] = np.arange(8 * 256, dtype=np.float32).reshape(8, 256)
-      with self.assertRaisesRegex(
-          ValueError, "requires a copy since the source format is"
-      ):
-        jax.dlpack.from_dlpack(
-            DLPackWrapper(raw_2d, DLDeviceType.kDLTPUHost, dev_id),
-            device=transposed_fmt,
-            copy=False,
-        )
-      imported_transposed = jax.dlpack.from_dlpack(
+      self.assertEqual(imported_fmt.format, linear_fmt)
+      self.assertArraysEqual(np.asarray(add_one(imported_fmt)), arr_np + 1)
+
+    # Verify default import without Format preserves the default tiled layout.
+    raw_default = alloc_and_map(
+        ctypes.c_float, np.float32, 8 * 256
+    ).reshape(8, 256)
+    imported_default = jax.dlpack.from_dlpack(
+        DLPackWrapper(raw_default, DLDeviceType.kDLTPUHost, dev_id),
+        device=host_sharding,
+        copy=False,
+    )
+    self.assertEqual(imported_default.format.layout.tiling, ((8, 128),))
+
+    # Verify 0-D scalar import works with Format(None, host_sharding).
+    scalar_np = alloc_and_map(ctypes.c_uint32, np.uint32, 1).reshape(())
+    scalar_np[...] = 41
+    scalar_fmt = Format(None, host_sharding)
+    imported_scalar = jax.dlpack.from_dlpack(
+        DLPackWrapper(scalar_np, DLDeviceType.kDLTPUHost, dev_id),
+        device=scalar_fmt,
+        copy=False,
+    )
+    self.assertArraysEqual(
+        np.asarray(add_one(imported_scalar)), scalar_np + 1
+    )
+
+    # Verify mismatched major_to_minor Format raises ValueError with
+    # copy=False and copies/transposes accurately with copy=None.
+    transposed_fmt = Format(
+        Layout(major_to_minor=(1, 0), tiling=((1,),)),
+        host_sharding,
+    )
+    raw_2d = alloc_and_map(ctypes.c_float, np.float32, 8 * 256).reshape(
+        8, 256
+    )
+    raw_2d[...] = np.arange(8 * 256, dtype=np.float32).reshape(8, 256)
+    with self.assertRaisesRegex(
+        ValueError, "requires a copy since the source format is"
+    ):
+      jax.dlpack.from_dlpack(
           DLPackWrapper(raw_2d, DLDeviceType.kDLTPUHost, dev_id),
           device=transposed_fmt,
-          copy=None,
+          copy=False,
       )
-      self.assertEqual(imported_transposed.format, transposed_fmt)
-      self.assertArraysEqual(np.asarray(imported_transposed), raw_2d)
+    imported_transposed = jax.dlpack.from_dlpack(
+        DLPackWrapper(raw_2d, DLDeviceType.kDLTPUHost, dev_id),
+        device=transposed_fmt,
+        copy=None,
+    )
+    self.assertEqual(imported_transposed.format, transposed_fmt)
+    self.assertArraysEqual(np.asarray(imported_transposed), raw_2d)
 
-      # Verify importing kDLTPUHost into HBM Format requires a copy.
-      hbm_fmt = Format(Layout(major_to_minor=(0,)), device_sharding)
-      with self.assertRaisesRegex(
-          ValueError, "requires a copy since the source format is"
-      ):
-        jax.dlpack.from_dlpack(
-            DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id),
-            device=hbm_fmt,
-            copy=False,
-        )
-      imported_hbm = jax.dlpack.from_dlpack(
+    # Verify importing kDLTPUHost into HBM Format requires a copy.
+    hbm_fmt = Format(Layout(major_to_minor=(0,)), device_sharding)
+    with self.assertRaisesRegex(
+        ValueError, "requires a copy since the source format is"
+    ):
+      jax.dlpack.from_dlpack(
           DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id),
           device=hbm_fmt,
-          copy=None,
+          copy=False,
       )
-      self.assertEqual(imported_hbm.sharding.memory_kind, "device")
-      self.assertArraysEqual(np.asarray(imported_hbm), np_array)
+    imported_hbm = jax.dlpack.from_dlpack(
+        DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id),
+        device=hbm_fmt,
+        copy=None,
+    )
+    self.assertEqual(imported_hbm.sharding.memory_kind, "device")
+    self.assertArraysEqual(np.asarray(imported_hbm), np_array)
 
-  @unittest.skipIf(jaxlib_extension_version < 510, "Requires jaxlib >= 510")
   @jtu.run_on_devices("cpu")
   def testFromDLPackWithFormat(self):
     from jax._src.layout import Format, Layout

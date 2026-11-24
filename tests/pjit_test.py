@@ -67,7 +67,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -13907,10 +13906,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_while_loop_max(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     u_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
 
@@ -13932,10 +13927,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_cond_conflicting_kinds(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)
@@ -13962,10 +13953,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_shard_map_and_remat_max_min(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)
@@ -13996,10 +13983,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_max_all_gather_reshard_max_min(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     in_spec = P('y', None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     out_spec = P(None, None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
@@ -14018,10 +14001,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_manual_computation_conflicting_kinds(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)

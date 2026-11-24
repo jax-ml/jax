@@ -1381,8 +1381,6 @@ class StaticTest(parameterized.TestCase):
       )
 
   def test_unpickle_malformed_treedef(self):
-    if jaxlib_extension_version < 520:
-      self.skipTest("Requires jaxlib_extension_version >= 520")
     registry = jax.tree_util.default_registry
 
     def unpickle_treedef(state):

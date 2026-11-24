@@ -3940,7 +3940,6 @@ def _reduce_index_helper(
     raise NotImplementedError("Only single axis reduction supported")
 
   axis = axes[0]
-  keep_dims = xla_version >= 84
   # Mosaic natively supports 1D inputs to tpu.reduce_index since XLA version
   # 89. Older versions (and the forward compatible serialization format, which
   # drops the reduced dimension) require reshaping the input to 2D first.
@@ -3965,7 +3964,7 @@ def _reduce_index_helper(
 
   out_shape = (
       *in_shape[:axis],
-      *((1,) if keep_dims else ()),
+      1,
       *in_shape[axis + 1 :],
   )
   native_dtype = jnp.int16 if x_aval.dtype == jnp.bfloat16 else jnp.int32
@@ -3986,9 +3985,7 @@ def _reduce_index_helper(
 
   if is_1d:
     return vector.extract(result, [], [0] * len(out_shape))
-  if keep_dims:
-    return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
-  return result
+  return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
 
 @register_lowering_rule(lax.argmax_p, ensure_mlir_values=False)
 def _argmax_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):

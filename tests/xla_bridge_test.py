@@ -39,8 +39,6 @@ class GpuPluginOptionsTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jaxlib_extension_version < 516:
-      self.skipTest("Requires jaxlib_extension_version >= 516")
     self.enterContext(
         jtu.set_env(
             XLA_PYTHON_CLIENT_ALLOCATOR=None,
@@ -431,8 +429,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIsInstance(options, xb.ifrt_proxy.ClientConnectionOptions)
 
   def test_uninitialized_client_gc_clear(self):
-    if jaxlib_extension_version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     client = _jax.Client.__new__(_jax.Client)
     cycle = [client]
     cycle.append(cycle)

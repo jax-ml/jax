@@ -18,7 +18,6 @@ are used internally in GPU translation rules of higher-level primitives.
 """
 
 from functools import partial
-from typing import Any
 
 from jax._src import core
 from jax._src import dispatch
@@ -26,7 +25,6 @@ from jax._src import ffi
 from jax._src.interpreters import mlir
 from jax._src.lib import cpu_sparse
 from jax._src.lib import gpu_sparse
-from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 if hasattr(gpu_sparse, "registrations"):
@@ -41,14 +39,6 @@ for platform, targets in cpu_sparse.registrations().items():
     ffi.register_ffi_target(
         name, value, platform=platform, api_version=api_version
     )
-
-def _get_module(target_name_prefix: str) -> Any:
-  if target_name_prefix == "cu":
-    return gpu_sparse._cusparse
-  elif target_name_prefix == "hip":
-    return gpu_sparse._hipsparse
-  else:
-    raise ValueError(f"Unsupported target_name_prefix: {target_name_prefix}")
 
 SUPPORTED_DATA_DTYPES = [np.float32, np.float64, np.complex64, np.complex128]
 SUPPORTED_INDEX_DTYPES = [np.int32]
@@ -80,19 +70,8 @@ def _coo_spmv_abstract_eval(data, row, col, x, *, transpose, shape):
 
 def _coo_spmv_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matvec_ffi_v2")(
-        ctx, data, row, col, x, transpose=transpose)
-  rows, cols = shape
-  data_aval, row_aval, _, x_aval = ctx.avals_in
-  nnz, = data_aval.shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_coo_matvec_descriptor(
-      data_aval.dtype, x_aval.dtype, data_aval.dtype, row_aval.dtype,
-      rows, cols, nnz, transpose)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matvec_ffi")
-  return rule(sub_ctx, data, row, col, x, opaque=opaque)[:1]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matvec_ffi_v2")(
+      ctx, data, row, col, x, transpose=transpose)
 
 coo_spmv_p.def_abstract_eval(_coo_spmv_abstract_eval)
 dispatch.simple_impl(coo_spmv_p)
@@ -133,39 +112,8 @@ def _coo_spmm_abstract_eval(data, row, col, x, *, transpose, shape):
 
 def _coo_spmm_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matmat_ffi_v2")(
-        ctx, data, row, col, x, transpose=transpose)
-  data_aval, row_aval, _, x_aval = ctx.avals_in
-  nnz, = data_aval.shape
-  _, Ccols = x_aval.shape
-
-  batch_count = 1
-  if len(shape) == 2:
-    rows, cols = shape
-  elif len(shape) == 3:
-    batch_count, rows, cols = shape
-    nnz = nnz // batch_count
-  else:
-    raise NotImplementedError(f"Unsupported shape: {shape}")
-
-  # TODO(tianjianlu): use batch stride to trigger different mode of batch
-  # computation. Currently batch_stride = 0 is not allowed because of the issue
-  # in cusparse https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643
-  # Set batch stride to be the matrix size for now.
-  lhs_batch_stride = nnz
-  B_rows = rows if transpose else cols
-  rhs_batch_stride =  B_rows * Ccols
-
-  buffer_size, opaque = _get_module(target_name_prefix).build_coo_matmat_descriptor(
-      data_aval.dtype, x_aval.dtype, data_aval.dtype, row_aval.dtype,
-      rows, cols, Ccols, nnz, transpose, batch_count, lhs_batch_stride,
-      rhs_batch_stride)
-
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matmat_ffi")
-  return rule(sub_ctx, data, row, col, x, opaque=opaque)[:1]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matmat_ffi_v2")(
+      ctx, data, row, col, x, transpose=transpose)
 
 
 coo_spmm_p.def_abstract_eval(_coo_spmm_abstract_eval)
@@ -206,19 +154,8 @@ def _csr_spmv_abstract_eval(data, indices, indptr, x, *, transpose, shape):
 
 def _csr_spmv_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matvec_ffi_v2")(
-        ctx, data, indices, indptr, x, transpose=transpose)
-  rows, cols = shape
-  data_aval, indices_aval, _, x_aval = ctx.avals_in
-  nnz, = data_aval.shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_csr_matvec_descriptor(
-      data_aval.dtype, x_aval.dtype, data_aval.dtype, indices_aval.dtype,
-      rows, cols, nnz, transpose)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matvec_ffi")
-  return rule(sub_ctx, data, indices, indptr, x, opaque=opaque)[:1]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matvec_ffi_v2")(
+      ctx, data, indices, indptr, x, transpose=transpose)
 
 csr_spmv_p.def_abstract_eval(_csr_spmv_abstract_eval)
 dispatch.simple_impl(csr_spmv_p)
@@ -258,20 +195,8 @@ def _csr_spmm_abstract_eval(data, indices, indptr, x, *, transpose, shape):
 
 def _csr_spmm_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matmat_ffi_v2")(
-        ctx, data, indices, indptr, x, transpose=transpose)
-  rows, cols = shape
-  data_aval, indices_aval, _, x_aval = ctx.avals_in
-  nnz, = data_aval.shape
-  _, Ccols = x_aval.shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_csr_matmat_descriptor(
-      data_aval.dtype, x_aval.dtype, data_aval.dtype, indices_aval.dtype,
-      rows, cols, Ccols, nnz, transpose)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matmat_ffi")
-  return rule(sub_ctx, data, indices, indptr, x, opaque=opaque)[:1]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matmat_ffi_v2")(
+      ctx, data, indices, indptr, x, transpose=transpose)
 
 csr_spmm_p.def_abstract_eval(_csr_spmm_abstract_eval)
 dispatch.simple_impl(csr_spmm_p)
@@ -304,55 +229,17 @@ mlir.register_lowering(
 )
 
 def coo_todense_gpu_lowering(ctx, data, row, col, *, shape, target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_todense_ffi_v2")(
-        ctx, data, row, col)[0]
-  data_aval, row_aval, _ = ctx.avals_in
-  nnz, = data_aval.shape
-  rows, cols = shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_coo_todense_descriptor(
-      data_aval.dtype, row_aval.dtype, rows, cols, nnz)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_todense_ffi")
-  return rule(sub_ctx, data, row, col, opaque=opaque)[0]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_todense_ffi_v2")(
+      ctx, data, row, col)[0]
 
 def coo_fromdense_gpu_lowering(ctx, mat, *, nnz, index_dtype, target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_fromdense_ffi_v2")(
-        ctx, mat)
-  mat_aval, = ctx.avals_in
-  rows, cols = mat_aval.shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_coo_fromdense_descriptor(
-      mat_aval.dtype, np.dtype(index_dtype), rows, cols, nnz)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[*ctx.avals_out, buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_fromdense_ffi")
-  return rule(sub_ctx, mat, opaque=opaque)[:3]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_fromdense_ffi_v2")(
+      ctx, mat)
 
 def csr_todense_gpu_lowering(ctx, data, indices, indptr, *, shape, target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_todense_ffi_v2")(
-        ctx, data, indices, indptr)[0]
-  data_aval, indices_aval, _, = ctx.avals_in
-  nnz, = data_aval.shape
-  rows, cols = shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_csr_todense_descriptor(
-      data_aval.dtype, indices_aval.dtype, rows, cols, nnz)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[ctx.avals_out[0], buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_todense_ffi")
-  return rule(sub_ctx, data, indices, indptr, opaque=opaque)[0]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_todense_ffi_v2")(
+      ctx, data, indices, indptr)[0]
 
 def csr_fromdense_gpu_lowering(ctx, mat, *, nnz, index_dtype, target_name_prefix):
-  if jaxlib_extension_version >= 513:
-    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_fromdense_ffi_v2")(
-        ctx, mat)
-  mat_aval, = ctx.avals_in
-  rows, cols = mat_aval.shape
-  buffer_size, opaque = _get_module(target_name_prefix).build_csr_fromdense_descriptor(
-      mat_aval.dtype, np.dtype(index_dtype), rows, cols, nnz)
-  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
-  sub_ctx = ctx.replace(avals_out=[*ctx.avals_out, buffer_aval])
-  rule = ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_fromdense_ffi")
-  return rule(sub_ctx, mat, opaque=opaque)[:3]
+  return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_fromdense_ffi_v2")(
+      ctx, mat)
