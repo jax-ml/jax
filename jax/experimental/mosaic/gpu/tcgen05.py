@@ -125,11 +125,6 @@ def _mxf4_sparsity_version() -> int:
   return int(arch == utils.RUBIN)
 
 
-def _supports_k96_mma() -> bool:
-  """Whether dense 4-bit block-scaled MMA can issue K=96 steps."""
-  return utils.get_arch() in (utils.Arch(10, 3), utils.RUBIN)
-
-
 def sparse_group_elems(element_type: ir.Type) -> int:
   """The number of A elements described by one pair of metadata entries."""
   assert utils.bitwidth(element_type) != 32, "tf32 support not implemented"
@@ -141,6 +136,7 @@ def sparse_group_elems(element_type: ir.Type) -> int:
 def _create_scaled_instr_descriptor(
     m: int,
     n: int,
+    k: int,
     a_type: ir.Type,
     b_type: ir.Type,
     a_scale_idx: int,
@@ -150,7 +146,6 @@ def _create_scaled_instr_descriptor(
     scale_type: ir.Type,
     sparse: bool = False,
     a_scale_128_lane: bool = False,
-    is_k96: bool = False,
 ) -> ir.Value:
   arch = utils.get_arch()
   is_sm107f = arch.major == 10 and arch.minor >= 7
@@ -217,11 +212,7 @@ def _create_scaled_instr_descriptor(
   # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
   # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
   # .kind::mxf4nvf4 on sm_103a and sm_107a.
-  if is_k96 and (not is_fp4 or sparse or not _supports_k96_mma()):
-    raise ValueError(
-        "K=96 is only supported for dense 4-bit MMA on sm_103a or sm_107a"
-    )
-  desc |= is_k96 << 31
+  desc |= (k == 96) << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -636,14 +627,19 @@ def mma(
   else:
     a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
+  # By default, every instruction consumes 32B of A and B along K (twice as
+  # many K elements if sparse).
+  # TODO(allanrenucci): Support larger K values on newer hardware
+  supported_instr_ks = {
+      (1 + is_sparse) * 8 * 32 // utils.bitwidth(mma_a_element_type)
+  }
   # On SM103 and SM107, dense 4-bit block-scaled MMA can issue K=96 (48B) steps
   # in addition to K=64 (32B) steps.
-  # TODO(allanrenucci): Support sparse K=192 steps.
-  use_k96 = (
+  if (
       a_scale is not None and b_scale is not None
       and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
       and not is_sparse
-      and _supports_k96_mma()
+      and utils.get_arch() in (utils.Arch(10, 3), utils.RUBIN)
       # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
       and not isinstance(a, TMEMRef)
       # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
@@ -653,7 +649,8 @@ def mma(
       # works if B scales are padded along N to exactly 128 rows (for an
       # instruction N of at most 128) or 256 rows (otherwise).
       and b_scale.shape[0] == (256 if n_collective_group_elems > 128 else 128)
-  )
+  ):
+    supported_instr_ks.add(96)
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -689,7 +686,7 @@ def mma(
         scale_element_type=scale_element_type,
         scale_block=scale_block,
         a_scale_128_lane=a_scale_128_lane,
-        use_k96=use_k96,
+        supported_instr_ks=supported_instr_ks,
     )
 
 
@@ -713,15 +710,15 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    supported_instr_ks: set[int],
     a_scale_128_lane: bool = False,
-    use_k96: bool = False,
 ) -> None:
   """Issues the MMA instructions covering the full K extent of the operands.
 
   Every instruction has shape `instr_m x instr_n x instr_k`, where `instr_k` is
-  derived from the element type (with `use_k96`, K=96 steps followed by up to
-  two trailing K=64 steps), and the instructions step through all `k` elements
-  of the K dimension. `n_start` is the N offset of this instruction group in B.
+  one of `supported_instr_ks`, and the instructions step through all `k`
+  elements of the K dimension. `n_start` is the N offset of this instruction
+  group in B.
 
   `accumulate` only applies to the first instruction. All subsequent
   instructions always accumulate into D.
@@ -734,7 +731,7 @@ def _do_mma(
   num_cta = 2 if collective else 1
   if isinstance(a_desc_or_addr, ir.Value):
     assert a_desc_or_addr.type == i32
-    assert not use_k96
+    assert 96 not in supported_instr_ks
     a_in_tmem = True
     a_transpose = False
     a_addr_base = a_desc_or_addr
@@ -745,8 +742,6 @@ def _do_mma(
   b_transpose = b_desc.fastest_dim != mma_utils.Dim.K
   b_addr_base = b_desc.addr_base
   elem_bitwidth = utils.bitwidth(a_element_type)
-  # TODO: support larger K values on newer hardware
-  base_instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
   if is_scaled:
@@ -799,12 +794,12 @@ def _do_mma(
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
 
+  base_instr_k = min(supported_instr_ks)
   assert k % base_instr_k == 0
   k_chunks = k // base_instr_k
-  if use_k96:
+  if supported_instr_ks == {64, 96}:
     # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
     # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
-    assert base_instr_k == 64
     q, b = divmod(k_chunks, 3)
     instr_ks = [96] * (2 * q) + [base_instr_k] * b
   else:
@@ -837,6 +832,7 @@ def _do_mma(
       i_desc = _create_scaled_instr_descriptor(
           instr_m * num_cta,
           instr_n * num_cta,
+          instr_k,
           a_element_type,
           b_element_type,
           scale_id,
@@ -846,7 +842,6 @@ def _do_mma(
           scale_element_type,
           sparse=is_sparse,
           a_scale_128_lane=a_scale_128_lane,
-          is_k96=(instr_k == 96),
       )
       assert (instr_m == 64 and collective) or instr_m == 128
       assert instr_n % (8 * num_cta) == 0
