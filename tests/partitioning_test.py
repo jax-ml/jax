@@ -262,6 +262,38 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         f_bad.lower(x_z)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_unreduced_reshard_squeezes_without_reduce(self, mesh):
+    np_inp = np.arange(8, dtype=np.float32).reshape(2, 4)
+    u = jax.reshard(
+        jax.device_put(np_inp, P(None, None)), P(None, None, unreduced={'x'})
+    )
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, P('x', None))
+
+    hlo = f.lower(u).as_text()
+    self.assertIn('stablehlo.reshape', hlo)
+    self.assertIn('stablehlo.reduce_scatter', hlo)
+    self.assertNotIn('stablehlo.reduce(', hlo)
+    self.assertArraysEqual(f(u), np_inp)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_squeezes_size_one_shard(self, mesh):
+    np_inp = np.arange(8, dtype=np.float32).reshape(2, 4)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    def f(a):
+      return lax.reduce_sum(a, axes=(0,))
+
+    hlo = f.lower(arr).as_text()
+    self.assertIn('stablehlo.reshape', hlo)
+    self.assertIn('stablehlo.all_reduce', hlo)
+    self.assertNotIn('stablehlo.reduce(', hlo)
+    self.assertArraysEqual(f(arr), np.sum(np_inp, axis=0))
+
   @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
   def test_manual_collectives_under_partial_shard_map(self, mesh):
     np_x = np.arange(16, dtype=np.float32).reshape(2, 8)

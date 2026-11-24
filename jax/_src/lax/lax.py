@@ -10794,7 +10794,10 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
     s = reducer is hlo.AddOp
     return _lower_ordered(ctx, reduction_order, partial(_linear_reduce, add if s else max, unit_factory, axes=axes),
                           dict(axes=axes, op='sum' if s else 'max'), x)
-  aval_out, = ctx.avals_out
+  (aval_in,), (aval_out,) = ctx.avals_in, ctx.avals_out
+  if all(core.definitely_equal(aval_in.shape[a], 1) for a in axes):
+    out = mlir.reshape(ctx, x, aval_out) if axes else x
+    return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
   dtype = aval_out.dtype
   out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   op = hlo.ReduceOp([out_type], [x],

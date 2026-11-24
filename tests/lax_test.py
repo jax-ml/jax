@@ -2563,6 +2563,25 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
     self._CheckAgainstNumpy(reference_fun, lax_fun, args_maker)
 
+  def testUnaryReduceSqueezesSizeOneAxes(self):
+    x = np.arange(4, dtype=np.float32).reshape(1, 4)
+
+    def reduce_empty(a):
+      return lax.reduce_sum(a, ())
+
+    def reduce_unit(a):
+      return lax.reduce_sum(a, (0,))
+
+    hlo_empty = jax.jit(reduce_empty).lower(x).as_text("stablehlo")
+    self.assertNotIn("stablehlo.reduce(", hlo_empty)
+    self.assertNotIn("stablehlo.reshape", hlo_empty)
+    self.assertArraysEqual(jax.jit(reduce_empty)(x), x)
+
+    hlo_unit = jax.jit(reduce_unit).lower(x).as_text("stablehlo")
+    self.assertNotIn("stablehlo.reduce(", hlo_unit)
+    self.assertIn("stablehlo.reshape", hlo_unit)
+    self.assertArraysEqual(jax.jit(reduce_unit)(x), np.sum(x, axis=0))
+
   @jtu.sample_product(
     op=["add", "mul"],
     op_namespace=[lax, operator],
