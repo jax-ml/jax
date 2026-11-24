@@ -15,8 +15,10 @@
 """Test TPU-specific extensions to pallas_call."""
 
 import base64
+import collections
 from collections.abc import Callable
 import contextlib
+import dataclasses
 import functools
 import gc
 import itertools
@@ -36,6 +38,7 @@ from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
+from jax._src import pjit
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -8063,6 +8066,571 @@ class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
       # Verify that the serialized MLIR bytecode for debug_locations is much
       # smaller than the printed location strings due to DAG sharing.
       self.assertLess(len(debug_bytes), len(locs_str))
+
+
+def _split_printed_locs(printed: str) -> list[str]:
+  """Splits a printed `ArrayAttr` of locations into per-location strings."""
+  assert printed.startswith('[') and printed.endswith(']'), printed
+  locs = []
+  depth = 0
+  in_string = False
+  escaped = False
+  start = 1
+  for i, char in enumerate(printed[1:-1], start=1):
+    if in_string:
+      if escaped:
+        escaped = False
+      elif char == '\\':
+        escaped = True
+      elif char == '"':
+        in_string = False
+    elif char == '"':
+      in_string = True
+    elif char == '(':
+      depth += 1
+    elif char == ')':
+      depth -= 1
+    elif char == ',' and depth == 0:
+      locs.append(printed[start:i].strip())
+      start = i + 1
+  locs.append(printed[start:-1].strip())
+  return [loc for loc in locs if loc]
+
+
+_LOC_RE = re.compile(r'^loc\("(?:(?P<prim>[^"]*):"\()?"(?P<path>[^"]*)"')
+
+
+@dataclasses.dataclass(frozen=True)
+class _LoweredOp:
+  """A Mosaic op with its debug location, as seen in the serialized kernel."""
+
+  name: str
+  loc: str
+  message: str | None
+  blocks: tuple[tuple['_LoweredOp', ...], ...]
+
+  @property
+  def prim_and_path(self) -> tuple[str | None, str | None]:
+    match = _LOC_RE.match(self.loc)
+    if match is None:
+      return None, None
+    return match.group('prim'), match.group('path')
+
+  def walk(self):
+    yield self
+    for block in self.blocks:
+      for op in block:
+        yield from op.walk()
+
+
+def _lowered_kernel_ops(lowered) -> list[_LoweredOp]:
+  """Returns the ops of every Mosaic kernel in `lowered` with their locations."""
+  configs = []
+
+  def find_custom_call_configs(op: ir.Operation) -> ir.WalkResult:
+    if (
+        'call_target_name' in op.attributes
+        and ir.StringAttr(op.attributes['call_target_name']).value
+        == 'tpu_custom_call'
+    ):
+      configs.append(
+          json.loads(ir.StringAttr(op.attributes['backend_config']).value)[
+              'custom_call_config'
+          ]
+      )
+    return ir.WalkResult.ADVANCE
+
+  lowered.compiler_ir().operation.walk(find_custom_call_configs)
+  kernels = []
+  for config_ in configs:
+    with ir.Context() as ctx:
+      tpu.register_dialect(ctx)
+      ctx.allow_unregistered_dialects = True
+      debug_module = ir.Module.parse(
+          base64.b64decode(config_['debug_locations']), context=ctx
+      )
+      locs = _split_printed_locs(
+          str(debug_module.operation.attributes['tpu.locs'])
+      )
+      kernel_module = ir.Module.parse(
+          base64.b64decode(config_['body']), context=ctx
+      )
+      locs_iter = iter(locs)
+
+      # Mirrors the pre-order walk of `tpu.private_unzip_debug_locations`.
+      def convert(op: ir.Operation) -> _LoweredOp:
+        loc = next(locs_iter)
+        for region in op.regions:
+          for block in region:
+            for _ in block.arguments:
+              next(locs_iter)
+        message = None
+        if 'message' in op.attributes:
+          message = ir.StringAttr(op.attributes['message']).value
+        blocks = tuple(
+            tuple(convert(child.operation) for child in block)
+            for region in op.regions
+            for block in region
+        )
+        # Serialized Mosaic ops use the `stable_mosaic.` dialect prefix.
+        name = op.name.removeprefix('stable_mosaic.')
+        return _LoweredOp(name, loc, message, blocks)
+
+      kernels.append(convert(kernel_module.operation))
+      assert next(locs_iter, None) is None
+  return kernels
+
+
+class PallasRegionScopeLoweringTest(jtu.JaxTestCase):
+  """Deviceless tests for named scopes across Pallas TPU region boundaries."""
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(['tpu', 'cpu']):
+      self.skipTest('Test only works on TPU or CPU.')
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        )
+    )
+
+  def _lower(self, f, *args) -> list[_LoweredOp]:
+    lowered = jax.jit(f).trace(*args).lower(lowering_platforms=('tpu',))
+    kernels = _lowered_kernel_ops(lowered)
+    self.assertNotEmpty(kernels)
+    return kernels
+
+  def _lower_pallas_call(self, kernel, **kwargs) -> _LoweredOp:
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    kwargs.setdefault('grid', (2,))
+    (lowered_kernel,) = self._lower(
+        pl.pallas_call(kernel, out_shape=x, **kwargs), x
+    )
+    return lowered_kernel
+
+  def _prims_and_paths(self, kernel: _LoweredOp) -> set[tuple[str, str]]:
+    return {
+        op.prim_and_path
+        for op in kernel.walk()
+        if op.prim_and_path[0] is not None
+    }
+
+  def _trace_messages(self, kernel: _LoweredOp) -> list[str]:
+    return [op.message for op in kernel.walk() if op.name == 'tpu.trace_start']
+
+  def _assert_traces_balanced(self, kernel: _LoweredOp):
+    for op in kernel.walk():
+      for block in op.blocks:
+        depth = 0
+        for child in block:
+          if child.name == 'tpu.trace_start':
+            depth += 1
+          elif child.name == 'tpu.trace_stop':
+            depth -= 1
+          self.assertGreaterEqual(depth, 0, msg=f'Unbalanced block in {op}')
+        self.assertEqual(depth, 0, msg=f'Unbalanced block in {op.name}')
+
+  def _region_body(self, x_ref, o_ref):
+    v = x_ref[...] + 1.0
+    with jax.named_scope('inner_c'):
+      o_ref[...] = v * 2.0
+
+  @parameterized.named_parameters(
+      ('pl_run_scoped', 'pl_run_scoped'),
+      ('lax_cond', 'lax_cond'),
+      ('lax_cond_constant', 'lax_cond_constant'),
+      ('lax_fori_loop_static', 'lax_fori_loop_static'),
+      ('lax_while_loop', 'lax_while_loop'),
+      ('lax_scan', 'lax_scan'),
+      ('lax_switch', 'lax_switch'),
+      ('custom_jvp', 'custom_jvp'),
+      ('custom_vjp', 'custom_vjp'),
+  )
+  def test_region_ops_keep_enclosing_scopes(self, construct):
+    body = self._region_body
+
+    def value_fn(v):
+      v = v + 1.0
+      with jax.named_scope('inner_c'):
+        return v * 2.0
+
+    def run_region(x_ref, o_ref):
+      pid = pl.program_id(0)
+      match construct:
+        case 'pl_run_scoped':
+          pl.run_scoped(lambda: body(x_ref, o_ref))
+        case 'lax_cond':
+          lax.cond(pid == 0, lambda: body(x_ref, o_ref), lambda: None)
+        case 'lax_cond_constant':
+          lax.cond(True, lambda: body(x_ref, o_ref), lambda: None)
+        case 'lax_fori_loop_static':
+          lax.fori_loop(0, 2, lambda _, c: (body(x_ref, o_ref), c)[1], 0)
+        case 'lax_while_loop':
+          lax.while_loop(
+              lambda i: i < 2, lambda i: (body(x_ref, o_ref), i + 1)[1], 0
+          )
+        case 'lax_scan':
+          lax.scan(
+              lambda c, _: (body(x_ref, o_ref), (c, None))[1],
+              0,
+              None,
+              length=2,
+          )
+        case 'lax_switch':
+          lax.switch(pid, [lambda: body(x_ref, o_ref)] * 4)
+        case 'custom_jvp':
+          f = jax.custom_jvp(value_fn)
+          f.defjvp(lambda primals, tangents: (f(*primals), tangents[0]))
+          o_ref[...] = f(x_ref[...])
+        case 'custom_vjp':
+          f = jax.custom_vjp(value_fn)
+          f.defvjp(lambda x: (f(x), None), lambda _, g: (g,))
+          o_ref[...] = f(x_ref[...])
+        case _:
+          raise ValueError(construct)
+
+    def kernel(x_ref, o_ref):
+      with jax.named_scope('outer_a'), jax.named_scope('outer_b'):
+        run_region(x_ref, o_ref)
+
+    lowered = self._lower_pallas_call(kernel)
+
+    prims_and_paths = self._prims_and_paths(lowered)
+    self.assertIn(('add', 'outer_a/outer_b/add'), prims_and_paths)
+    self.assertIn(('mul', 'outer_a/outer_b/inner_c/mul'), prims_and_paths)
+    # Each `lax.switch` branch is a separate block that enters `inner_c`.
+    num_bodies = 4 if construct == 'lax_switch' else 1
+    self.assertCountEqual(
+        self._trace_messages(lowered),
+        ['outer_a', 'outer_b'] + ['inner_c'] * num_bodies,
+    )
+    self._assert_traces_balanced(lowered)
+
+  def _deep_hierarchy_kernel(self, x_ref, y_ref, o_ref):
+    with jax.named_scope('p0_moe'):
+
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        with jax.named_scope('p4_experts'):
+
+          @pl.loop(0, 2)
+          def _(_):
+            with jax.named_scope('e_iteration'):
+
+              @pl.run_scoped
+              def _():
+                with jax.named_scope('e_pass_pair'):
+
+                  def step(_, carry):
+                    with jax.named_scope('e_dot_pair'):
+                      o_ref[...] = jnp.dot(x_ref[...], y_ref[...])
+                    return carry
+
+                  lax.fori_loop(0, 2, step, 0)
+
+  def test_deep_hierarchy_keeps_full_scope_path(self):
+    x = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    (lowered,) = self._lower(
+        pl.pallas_call(self._deep_hierarchy_kernel, out_shape=x, grid=(2,)),
+        x,
+        x,
+    )
+
+    matmul_locs = [
+        op.prim_and_path for op in lowered.walk() if op.name == 'tpu.matmul'
+    ]
+    self.assertEqual(
+        matmul_locs,
+        [(
+            'dot_general',
+            'p0_moe/p4_experts/e_iteration/e_pass_pair/e_dot_pair/dot_general',
+        )],
+    )
+
+  @parameterized.named_parameters(
+      ('full_static_unroll', 3, 3, False),
+      ('late_unroll', 5, 2, False),
+      ('legacy_unrolled_loop_body', 5, 2, True),
+  )
+  @jtu.thread_unsafe_test()  # Patches `LoweringRuleContext`.
+  def test_loop_unrolling_keeps_scopes_and_traceback(
+      self, length, unroll, forward_compatible
+  ):
+    def body(_, carry):
+      x, _ = carry
+      with jax.named_scope('inner'):
+        x = x + 1.0
+      return x, 0
+
+    def kernel(x_ref, o_ref):
+      with jax.named_scope('outer'):
+        o_ref[...], _ = lax.fori_loop(
+            0, length, body, (x_ref[...], 0), unroll=unroll
+        )
+
+    # Only patch the Pallas rule context: forward-compatible lowering of the
+    # whole module would drop the debug locations that we inspect.
+    with mock.patch.object(
+        mosaic_lowering.LoweringRuleContext,
+        'forward_compatible',
+        new_callable=mock.PropertyMock,
+        return_value=forward_compatible,
+    ):
+      lowered = self._lower_pallas_call(kernel)
+
+    add_ops = [
+        op
+        for op in lowered.walk()
+        if op.name == 'arith.addf' and op.prim_and_path[0] is not None
+    ]
+    detached_body = unroll > 1 and (length == unroll or forward_compatible)
+    # A detached loop body is inlined under the location of the loop
+    # equation, which sets the op type of the inlined ops to `scan`.
+    expected = (
+        ('scan', 'outer/scan/inner/add')
+        if detached_body
+        else ('add', 'outer/inner/add')
+    )
+    self.assertNotEmpty(add_ops)
+    for op in add_ops:
+      self.assertEqual(op.prim_and_path, expected)
+      self.assertNotIn('outer/scan/outer', op.loc)
+    self.assertCountEqual(
+        set(self._trace_messages(lowered)), {'outer', 'inner'}
+    )
+    self._assert_traces_balanced(lowered)
+    if detached_body:
+      for op in add_ops:
+        self.assertIn('callsite(', op.loc)
+      stop_locs = {
+          op.prim_and_path
+          for op in lowered.walk()
+          if op.name == 'tpu.trace_stop'
+      }
+      self.assertIn(('scan', 'outer/scan'), stop_locs)
+      constant_locs = {
+          op.prim_and_path
+          for op in lowered.walk()
+          if op.name == 'arith.constant'
+      }
+      self.assertIn(('scan', 'outer/scan'), constant_locs)
+
+  @jtu.thread_unsafe_test()  # Patches `_emit_pallas_lowering_rule_as_fun`.
+  def test_lowering_cache_is_isolated_across_scopes(self):
+    @jax.jit
+    def h(v):
+      with jax.named_scope('inner'):
+        return v + 1.0
+
+    def scope_a_ops(x):
+      return (
+          jnp.exp(x),
+          lax.clamp(jnp.float32(0), x, jnp.float32(1)),
+          lax.nextafter(x, x),
+          h(x),
+      )
+
+    def scope_b_ops(x):
+      return (
+          jnp.exp(x),
+          lax.clamp(jnp.float32(0), x, jnp.float32(1)),
+          lax.nextafter(x, x),
+          h(x),
+      )
+
+    def kernel(x_ref, o_ref):
+      x = x_ref[...]
+      with jax.named_scope('scope_a'):
+        a = sum(scope_a_ops(x))
+      with jax.named_scope('scope_b'):
+        b = sum(scope_b_ops(x))
+      o_ref[...] = a + b
+
+    emit = mosaic_lowering._emit_pallas_lowering_rule_as_fun
+    with mock.patch.object(
+        mosaic_lowering, '_emit_pallas_lowering_rule_as_fun', wraps=emit
+    ) as emit_mock:
+      lowered = self._lower_pallas_call(kernel)
+
+    emitted = collections.Counter(
+        call.kwargs['name'] if call.args[1] is pjit.jit_p else call.args[1]
+        for call in emit_mock.call_args_list
+    )
+    for key in (lax.exp_p, lax.clamp_p, lax.nextafter_p, 'h'):
+      self.assertEqual(emitted[key], 1, msg=key)
+    scope_b_ops_locs = [
+        op.loc
+        for op in lowered.walk()
+        if (op.prim_and_path[1] or '').startswith('scope_b/')
+    ]
+    self.assertNotEmpty(scope_b_ops_locs)
+    for loc in scope_b_ops_locs:
+      self.assertNotIn('scope_a', loc)
+      self.assertNotIn('scope_a_ops', loc)
+    prims_and_paths = self._prims_and_paths(lowered)
+    for scope in ('scope_a', 'scope_b'):
+      self.assertIn(('exp', f'{scope}/exp'), prims_and_paths)
+      self.assertIn(('clamp', f'{scope}/clamp'), prims_and_paths)
+      # Composite `lower_fun` rules append their inner primitives, e.g.
+      # "scope_a/nextafter/add"; the LLO source-map serializer strips them
+      # (see source_map_serializer.cc in perftools/accelerators/xprof).
+      self.assertTrue(
+          any(
+              prim == 'nextafter' and path.startswith(f'{scope}/nextafter/')
+              for prim, path in prims_and_paths
+          ),
+          msg=f'No nextafter op under {scope}',
+      )
+      # The cached `jit` is inlined under the location of the `jit` equation,
+      # which sets the op type of the inlined ops to `jit`.
+      self.assertIn(('jit', f'{scope}/jit/inner/add'), prims_and_paths)
+    jit_add_locs = [
+        op.loc
+        for op in lowered.walk()
+        if op.prim_and_path == ('jit', 'scope_b/jit/inner/add')
+    ]
+    self.assertNotEmpty(jit_add_locs)
+    for loc in jit_add_locs:
+      self.assertIn('callsite(', loc)
+    self._assert_traces_balanced(lowered)
+
+  @jtu.thread_unsafe_test()  # Patches `LoweringContext.alloc_accumulator`.
+  def test_accumulators_do_not_alias_across_scopes(self):
+    info = tpu_info.get_tpu_info()
+    x = jax.ShapeDtypeStruct(
+        (info.num_sublanes, info.mxu_column_size), jnp.float32
+    )
+
+    def kernel(x_ref, o_ref):
+      with jax.named_scope('scope_a'):
+        acc0 = jax.empty_ref(jax.typeof(x_ref[...]), memory_space=pltpu.ACC(0))
+        pltpu.matmul_acc_lhs(acc0, x_ref[...])
+      with jax.named_scope('scope_b'):
+
+        @pl.run_scoped
+        def _():
+          with jax.named_scope('scope_c'):
+            acc1 = jax.empty_ref(
+                jax.typeof(x_ref[...]), memory_space=pltpu.ACC(0)
+            )
+            pltpu.matmul_acc_lhs(acc1, x_ref[...])
+            o_ref[...] = pltpu.matmul_pop(acc1)
+
+      acc2 = jax.empty_ref(jax.typeof(x_ref[...]), memory_space=pltpu.ACC(0))
+      pltpu.matmul_acc_lhs(acc2, x_ref[...])
+      o_ref[...] += pltpu.matmul_pop(acc0) + pltpu.matmul_pop(acc2)
+
+    alloc = mosaic_lowering.LoweringContext.alloc_accumulator
+    acc_refs = []
+
+    def recording_alloc(lowering_ctx, aval):
+      acc_ref = alloc(lowering_ctx, aval)
+      acc_refs.append(acc_ref)
+      return acc_ref
+
+    with mock.patch.object(
+        mosaic_lowering.LoweringContext, 'alloc_accumulator', recording_alloc
+    ):
+      self._lower(pl.pallas_call(kernel, out_shape=x), x)
+
+    self.assertLen(acc_refs, 3)
+    acc0, acc1, acc2 = acc_refs
+    # `acc1` is allocated while `acc0` is live, and `acc2` after the
+    # `run_scoped` that owns `acc1` has ended.
+    self.assertNotEqual(acc0.base_address, acc1.base_address)
+    self.assertNotEqual(acc0.base_address, acc2.base_address)
+    self.assertEqual(acc1.base_address, acc2.base_address)
+
+  def test_cached_jit_in_nested_region_keeps_enclosing_scopes(self):
+    @jax.jit
+    def h(v):
+      with jax.named_scope('inner'):
+        return v + 1.0
+
+    def kernel(x_ref, o_ref):
+      with jax.named_scope('outer'):
+
+        @pl.when(pl.program_id(0) == 0)
+        def _():
+          with jax.named_scope('region'):
+            o_ref[...] = h(h(x_ref[...]))
+
+    lowered = self._lower_pallas_call(kernel)
+
+    add_locs = [
+        op.loc
+        for op in lowered.walk()
+        if op.name == 'arith.addf' and op.prim_and_path[0] is not None
+    ]
+    self.assertLen(add_locs, 2)
+    for loc in add_locs:
+      self.assertStartsWith(loc, 'loc("jit:"("outer/region/jit/inner/add"')
+    self.assertCountEqual(
+        self._trace_messages(lowered), ['outer', 'region', 'inner', 'inner']
+    )
+    self._assert_traces_balanced(lowered)
+
+  @parameterized.named_parameters(
+      ('default', False),
+      ('compiler_pipeline_emitter', True),
+  )
+  def test_emit_pipeline_keeps_enclosing_scope(
+      self, use_compiler_pipeline_emitter
+  ):
+    def body(_, x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      with jax.named_scope('pipe_outer'):
+        pltpu.emit_pipeline(
+            body,
+            grid=(4,),
+            in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+            out_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+            _explicit_indices=True,
+        )(x_hbm_ref, o_hbm_ref)
+
+    x = jax.ShapeDtypeStruct((32, 128), jnp.float32)
+    with config.use_emit_pipeline_primitive(True):
+      if use_compiler_pipeline_emitter:
+        f = pl.kernel(
+            kernel,
+            out_type=x,
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            compiler_params=pltpu.CompilerParams(
+                use_compiler_pipeline_emitter=True
+            ),
+        )
+      else:
+        f = pl.pallas_call(
+            kernel,
+            out_shape=x,
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        )
+      (lowered,) = self._lower(f, x)
+
+    add_paths = [
+        path
+        for prim, path in self._prims_and_paths(lowered)
+        if prim == 'add' and path.endswith('/add')
+    ]
+    self.assertNotEmpty(add_paths)
+    for path in add_paths:
+      self.assertStartsWith(path, 'pipe_outer/')
+    self.assertLessEqual(self._trace_messages(lowered).count('pipe_outer'), 1)
+    for op in lowered.walk():
+      if op.name in ('scf.for', 'scf.while'):
+        nested_messages = [
+            child.message
+            for child in op.walk()
+            if child.name == 'tpu.trace_start'
+        ]
+        self.assertNotIn('pipe_outer', nested_messages)
+    self._assert_traces_balanced(lowered)
 
 
 if __name__ == '__main__':

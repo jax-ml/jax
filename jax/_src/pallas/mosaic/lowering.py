@@ -235,6 +235,16 @@ class LoweringContext:
     return len(self.grid_sizes)
 
   @contextlib.contextmanager
+  def name_stack_context(self, name_stack: source_info_util.NameStack):
+    """Temporarily sets `name_stack` on this context (in place)."""
+    saved_name_stack = self.name_stack
+    self.name_stack = name_stack
+    try:
+      yield
+    finally:
+      self.name_stack = saved_name_stack
+
+  @contextlib.contextmanager
   def grid_name_context(self):
     # TODO(b/355036977): generalize this across other platforms
     if not self.grid_names:
@@ -321,6 +331,7 @@ class PipelinedLoweringContext(LoweringContext):
       fuse_transposed_lhs_in_matmul: bool,
       lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
       dynamic_shape_env: LoweringDynamicShapeEnv | None = None,
+      name_stack: source_info_util.NameStack = source_info_util.NameStack(),
   ):
     arg_block_shapes = [
         *mgm.scalar_prefetch_block_shapes,
@@ -343,7 +354,7 @@ class PipelinedLoweringContext(LoweringContext):
         vmapped_dims=mgm.vmapped_dims,
         user_grid_indices=jaxpr_indices,
         block_shapes=arg_block_shapes,
-        name_stack=source_info_util.NameStack(),
+        name_stack=name_stack,
         jax_mesh_context=mgm.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
@@ -482,23 +493,31 @@ def _emit_pallas_lowering_rule_as_fun(
   func_name = f"_pallas_{primitive.name}"
 
   def body_builder(block_args: list[ir.Value]) -> list[ir.Value]:
+    # The cached function must not depend on the callsite, so we reset the
+    # name stack and traceback; each callsite supplies its own location when
+    # the function is inlined.
     if user_grid_indices is not None:
       grid_arity = len(user_grid_indices)
       rule_args = block_args[grid_arity:]
       sub_ctx = rule_context.replace(
           lowering_context=ctx.replace(
               user_grid_indices=block_args[:grid_arity],
-          )
+              name_stack=source_info_util.NameStack(),
+          ),
       )
     else:
       sub_ctx = rule_context.replace(
           lowering_context=ctx.replace(
               user_grid_indices=None,
-          )
+              name_stack=source_info_util.NameStack(),
+          ),
       )
       rule_args = block_args
 
-    outs = rule(sub_ctx, *rule_args, **params)
+    # Ops get an unknown location and inherit the callsite location when the
+    # function is inlined.
+    with source_info_util.reset_source_info(), ir.Location.unknown():
+      outs = rule(sub_ctx, *rule_args, **params)
 
     flat_outs = list(outs) if primitive.multiple_results else [outs]
     flat_outs = [_ensure_valid_argument(x, aval)
@@ -1123,6 +1142,7 @@ def lower_jaxpr_into_pipelined_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     fuse_transposed_lhs_in_matmul: bool = False,
+    name_stack: source_info_util.NameStack = source_info_util.NameStack(),
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
@@ -1192,6 +1212,7 @@ def lower_jaxpr_into_pipelined_module(
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=cache,
         dynamic_shape_env=_mosaic_lowering_dynamic_shape_env,
+        name_stack=name_stack,
     )
 
   with ir.InsertionPoint(module.body):
@@ -1665,6 +1686,9 @@ def lower_emit_pipeline_into_pipelined_module(
       mesh=jax_mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
+      # Re-tracing `body_jaxpr` drops the scopes enclosing `emit_pipeline`, so
+      # we pass them as the initial name stack of the kernel.
+      name_stack=jaxpr.eqns[0].source_info.name_stack,
   )
 
 
@@ -2020,8 +2044,10 @@ def jaxpr_subcomp(
     loc = mlir.source_info_to_location(
         ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
     )
+    # The lowering rule sees the full name stack of the equation, so that
+    # nested jaxprs (e.g. region bodies) keep the enclosing named scopes.
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
-          eqn.ctx.manager):
+          eqn.ctx.manager, ctx.name_stack_context(eqn_name_stack)):
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
         if (eqn.primitive, ctx.kernel_type) not in skip_mlir_conversions:
           invals = [
@@ -4857,17 +4883,22 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
         block_grid_indices = None
         block_rest = block_args
 
+      # The body is lowered without the enclosing name stack and with an
+      # unknown location: each inlined step gets the location of the loop
+      # equation, which already carries the enclosing scopes.
       lowering_context = ctx.lowering_context.replace(
           block_shapes=ctx.block_shapes,
           user_grid_indices=block_grid_indices,
+          name_stack=source_info_util.NameStack(),
       )
       block_consts, block_rest = split_list(block_rest, [len(consts_ft)])
-      return jaxpr_subcomp(
-          lowering_context,
-          jaxpr,
-          *consts_ft.update(block_consts).unflatten(),
-          *block_rest,
-      )
+      with ir.Location.unknown():
+        return jaxpr_subcomp(
+            lowering_context,
+            jaxpr,
+            *consts_ft.update(block_consts).unflatten(),
+            *block_rest,
+        )
 
     func_op = _emit_detached_func(
         "_unrolled_loop_body",
