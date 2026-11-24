@@ -14,10 +14,7 @@
 
 """Triton-specific Pallas APIs."""
 
-from jax._src.gpu_info import GpuInfo as GpuInfo
-from jax._src.gpu_info import GpuVersion as GpuVersion
 from jax._src.gpu_info import get_gpu_info as get_gpu_info
-from jax._src.gpu_info import get_gpu_info_from_version as get_gpu_info_from_version
 from jax._src.gpu_info import is_gpu_device as is_gpu_device
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams

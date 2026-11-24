@@ -884,6 +884,7 @@ pytype_strict_library(
         ":api",
         ":mesh",
         ":util",
+        "//jax/_src/lib",
     ],
 )
 
