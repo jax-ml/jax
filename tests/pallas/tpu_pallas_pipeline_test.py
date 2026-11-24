@@ -1271,8 +1271,8 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 class EmitPipelineImplicitIndicesDeprecationTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Only works with TPU v5')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works with TPU v4+')
     super().setUp()
 
   def test_warn_once_at_caller(self):
@@ -1327,8 +1327,8 @@ class EmitPipelineImplicitIndicesDeprecationTest(jtu.JaxTestCase):
 class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Only works with TPU v5')
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU')
     super().setUp()
 
   @parameterized.product(
@@ -1374,10 +1374,8 @@ class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if jax.device_count() > 1:
-      self.skipTest('Only 1 device is supported.')
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Only works with TPU v5+')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works with TPU v4+')
     super().setUp()
 
   @parameterized.product(
@@ -2358,8 +2356,6 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
   )
   @hp.settings(max_examples=10, deadline=None)
   def test_padded_matmul(self, dtype, m_bm, k_bk, n_bn, seed):
-    if dtype == 'int8' and jtu.is_device_tpu_at_least(6):
-      self.skipTest('Not implemented for TPU v6.')
     if dtype == 'int8' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only TPU v5+ allowed for int8.')
 
@@ -2478,8 +2474,6 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
   def test_block_spec_bounded_slice_static(self):
     if not jtu.is_device_tpu():
       self.skipTest('Only works on TPU.')
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('Only works on TPU v4+')
     shape = (16, 8, 128)
 
     def kernel(step, x_ref, o_ref):
@@ -2999,9 +2993,6 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
 
   @parameterized.product(dynamic_grid=[True, False])
   def test_transformed_refs_as_inputs_nested_bitcast(self, dynamic_grid):
-    if not config.use_emit_pipeline_primitive.value:
-      self.skipTest('Requires jax_use_emit_pipeline_primitive')
-
     from jax._src.state import utils as state_utils
 
     @jax.jit
@@ -3045,8 +3036,6 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
   @parameterized.product(dynamic_grid=[True, False])
   def test_transformed_refs_as_inputs_nested_3level(
       self, dynamic_grid):
-    if not config.use_emit_pipeline_primitive.value:
-      self.skipTest('Requires jax_use_emit_pipeline_primitive')
     @jax.jit
     def fn(x):
       out_type = jax.ShapeDtypeStruct(x.shape[1:], x.dtype)
@@ -4005,8 +3994,8 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
 
   @parameterized.product(num_leaves=[0, 2], aliased=[False, True])
   def test_multi_leaf_pytree_window_view_raises(self, num_leaves, aliased):
-    if aliased and not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Only works with TPU v5+')
+    if aliased and not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU')
     @jax.tree_util.register_dataclass
     @dataclasses.dataclass(frozen=True)
     class MultiLeafBufferedRef(pltpu.BufferedRef):
@@ -4783,11 +4772,6 @@ class EmitPipelinePrefetchTest(jtu.JaxTestCase):
     np.testing.assert_allclose(run(x), x + 1)
 
   def test_p1e_manual_allocations_lookahead_repeated_index(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.'
-      )
-
     def prefetch_start(x_hbm_ref, x_vmem_ref, sem):
       pltpu.async_copy(x_hbm_ref.at[0:128], x_vmem_ref.at[0], sem.at[0])
       pltpu.async_copy(x_hbm_ref.at[128:256], x_vmem_ref.at[1], sem.at[1])

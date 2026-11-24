@@ -377,8 +377,6 @@ class TPUKernelMemorySpaceTest(jtu.JaxTestCase):
 
   def test_smem_copy(self):
     mesh = pltpu.TensorCoreMesh(axis_name='core')
-    if mesh.num_cores > 1:
-      self.skipTest('Only one core is supported for this test.')
 
     run_kernel = _make_run_kernel(mesh=mesh)
 
@@ -402,8 +400,6 @@ class TPUKernelMemorySpaceTest(jtu.JaxTestCase):
 
   def test_smem_async_copy(self):
     mesh = pltpu.TensorCoreMesh(axis_name='core')
-    if mesh.num_cores > 1:
-      self.skipTest('Only one core is supported for this test.')
 
     run_kernel = _make_run_kernel(mesh=mesh)
 
@@ -485,8 +481,6 @@ class TPUKernelMemorySpaceTest(jtu.JaxTestCase):
   def test_host_ref_memory_space_preserved_across_shard_map_and_cond(
       self, mesh_kind
   ):
-    if jax.device_count() > 1:
-      self.skipTest('Test only works with a single device.')
     if mesh_kind == 'sc' and pltpu.get_tpu_info().sparse_core is None:
       self.skipTest('SparseCore not supported on this device.')
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
@@ -594,8 +588,8 @@ class TPUPallasAnnotateTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Needs a newer TPU')
+    if not jtu.is_device_tpu():
+      self.skipTest('Only supported on TPU')
 
   @jtu.thread_unsafe_test()
   def test_annotate_emits_mosaic_ops(self):

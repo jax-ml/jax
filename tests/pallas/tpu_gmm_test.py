@@ -250,7 +250,6 @@ class GroupedMatmulTest(jtu.JaxTestCase):
       n: int,
       data: hps.SearchStrategy[hps.DataObject],
   ):
-    self.skipTest("interpret mode with dynamic grids is unsupported")
     self.gmm_test(
         m,
         k,

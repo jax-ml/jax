@@ -1367,10 +1367,6 @@ class MpmdTest(PallasSCTest):
   def test_async_copy_scs_vmem_shared_to_smem_stream(
       self, use_dst_sem, wait_method
   ):
-    self.skipTest(
-        "TODO(rdyro): Enable once the SparseCore compiler supports lowering"
-        " VMEM_SHARED to SMEM streams on the scalar subcore (b/565149365)."
-    )
     s_mesh = plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1)
     shape = (32,)
     x = jnp.arange(32, dtype=jnp.int32)
