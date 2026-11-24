@@ -762,7 +762,8 @@ def _do_mma(
           scale_element_type,
           (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
-      if use_k96:
+      # .blockN is an alias for .scale_vec::NX available on sm_103 or later.
+      if utils.get_arch() >= utils.Arch(10, 3):
         scale_vec = f"block{base_scale_block}"
       else:
         scale_vec = (
