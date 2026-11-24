@@ -106,12 +106,12 @@ class XlaTransformTest(jtu.JaxTestCase):
       self.skipTest("Requires jaxlib with module_config support")
     seen = []
 
-    def record(serialized_hlo: bytes, *, module_config: bytes) -> None:
+    def record(serialized_hlo: bytes, module_config: bytes) -> None:
       del serialized_hlo
       seen.append(module_config)
 
     name = f"record_module_config_{stage.name}_test"
-    jex_xla.register_hlo_module_transformation(
+    jex_xla.register_hlo_module_transformation2(
         record, name=name, stage=stage)
     self._registered_transforms.append((name, stage))
 
@@ -128,19 +128,12 @@ class XlaTransformTest(jtu.JaxTestCase):
     # HloModuleConfigProto.fdo_profile is a bytes field, so it appears verbatim.
     self.assertTrue(any(profile in c for c in seen), seen)
 
-  def test_callback_without_keyword_module_config_is_rejected(self):
-    def other_name(serialized_hlo: bytes, config: bytes) -> None:
-      del serialized_hlo, config
-
-    def positional_only(serialized_hlo: bytes, module_config: bytes, /) -> None:
-      del serialized_hlo, module_config
-
-    for callback in (other_name, positional_only):
-      with self.subTest(callback.__name__):
-        with self.assertRaisesRegex(TypeError, "module_config"):
-          jex_xla.register_hlo_module_transformation(
-              callback,  # pyrefly: ignore[bad-argument-type]
-              name=f"rejected_{callback.__name__}_test")
+  def test_register2_requires_new_jaxlib(self):
+    if jaxlib_extension_version >= 530:
+      self.skipTest("Only applies to jaxlib without module_config support")
+    with self.assertRaises(NotImplementedError):
+      jex_xla.register_hlo_module_transformation2(
+          lambda hlo_module, module_config: None, name="unsupported_test")
 
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
