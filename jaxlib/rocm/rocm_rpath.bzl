@@ -34,79 +34,40 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 
 _ROCM_LINK_ONLY = "@local_config_rocm//rocm:link_only"
 
-# TheRock per-GPU-family pip package suffixes (per-GPU-family index at
-# https://rocm.nightlies.amd.com/v2/<family>/). End users install per-arch, so
-# the resulting `_rocm_sdk_libraries_<family>` package dirs must be searchable.
-# The multi-arch index instead ships a single `_rocm_sdk_libraries` package.
-_THEROCK_TARGET_FAMILIES = [
-    "gfx950-dcgpu",
-    "gfx94X-dcgpu",
-    "gfx90a",
-    "gfx90X-dcgpu",
-    "gfx908",
-    "gfx906",
-    "gfx900",
-    "gfx120X-all",
-    "gfx1153",
-    "gfx1152",
-    "gfx1151",
-    "gfx1150",
-    "gfx110X-all",
-    "gfx103X-all",
-    "gfx101X-dgpu",
-]
+# $ORIGIN-to-site-packages path of each wheel's .so files: the kernel modules
+# sit in jax_rocm<v>_plugin/, the PJRT plugin in jax_plugins/xla_rocm<v>/.
+_KERNEL_ORIGIN_TO_SITE = "$$ORIGIN/.."
+_PJRT_ORIGIN_TO_SITE = "$$ORIGIN/../.."
 
-def _rocm_wheel_rpaths():
+def _rocm_wheel_rpaths(origin_to_site):
     """Builds the wheel-relative ROCm RUNPATH entries baked into the .so files.
 
-    Covers the TheRock tarball/`/opt/rocm-<ver>` layout (`rocm/lib`), the
-    TheRock pip layouts (multi-arch and per-GPU-family `_rocm_sdk_*`), and
-    cross-Python / absolute installs where TheRock lives under a different
-    interpreter than the JAX wheel (e.g. the Bazel py_import runfiles layout
-    where TheRock is in the container's system Python). The legacy `/opt/rocm`
+    Covers the TheRock multi-arch pip layout (the `_rocm_sdk_*` packages in
+    the same site-packages as the JAX wheel) and absolute installs where
+    TheRock is in the system Python but the .so is not under a site-packages
+    root (e.g. the Bazel py_import runfiles layout). The legacy `/opt/rocm`
     fallback is appended by the caller so it stays last.
+
+    Args:
+        origin_to_site: Path from the .so's $ORIGIN to its site-packages root.
     """
 
     # `_rocm_sdk_core/lib` holds the non-arch runtime libs; `_rocm_sdk_libraries
-    # [...]/lib` holds the math libs + per-arch kernel data. site_libs covers the
-    # multi-arch + per-family packages; core_libs is the cross-Python/absolute
-    # fallback (package roots only). `_rocm_sdk_core/lib/rocm_sysdeps/lib` holds
-    # TheRock's bundled system libs (librocm_sysdeps_{drm,drm_amdgpu,numa}),
-    # which the .so files can depend on directly (e.g. via libhsakmt.a).
+    # /lib` holds the math libs + per-arch kernel data. TheRock's multi-arch
+    # packages ship both. The legacy per-family `_rocm_sdk_libraries_<family>`
+    # packages are deprecated with no ROCm 10 release, so they are not searched.
+    # `_rocm_sdk_core/lib/rocm_sysdeps/lib` holds TheRock's bundled system libs
+    # (librocm_sysdeps_{drm,drm_amdgpu,numa}), which the .so files can depend on
+    # directly (e.g. via libhsakmt.a).
     core_libs = [
         "_rocm_sdk_core/lib",
         "_rocm_sdk_core/lib/rocm_sysdeps/lib",
         "_rocm_sdk_libraries/lib",
     ]
-    site_libs = core_libs + [
-        "_rocm_sdk_libraries_%s/lib" % f.replace("-", "_")
-        for f in _THEROCK_TARGET_FAMILIES
-    ]
 
-    # $ORIGIN-to-site-packages depth differs per wheel (kernel .so is 1-deep in
-    # jax_rocm<v>_plugin/, pjrt .so is 2-deep in jax_plugins/xla_rocm<v>/).
-    # linkopts apply to every target uniformly, so emit both; the loader skips
-    # RUNPATH entries whose directories don't exist.
-    origin_to_site = ["$$ORIGIN/..", "$$ORIGIN/../.."]
     py_minors = range(9, 16)
 
-    rpaths = [
-        # TheRock tarball / extracted /opt/rocm-<ver> layout.
-        "-Wl,-rpath,$$ORIGIN/../rocm/lib",
-        "-Wl,-rpath,$$ORIGIN/../../rocm/lib",
-    ]
-
-    # Pip layouts at each possible $ORIGIN-to-site depth: same-Python (TheRock
-    # packages under the site-packages root next to the JAX wheel) and
-    # cross-Python (TheRock under a different python3.<m>/dist-packages under
-    # the same root).
-    for ots in origin_to_site:
-        rpaths += ["-Wl,-rpath,%s/%s" % (ots, lib) for lib in site_libs]
-        rpaths += [
-            "-Wl,-rpath,%s/../../python3.%d/dist-packages/%s" % (ots, m, lib)
-            for m in py_minors
-            for lib in core_libs
-        ]
+    rpaths = ["-Wl,-rpath,%s/%s" % (origin_to_site, lib) for lib in core_libs]
 
     # Absolute system-Python fallback (Bazel py_import runfiles / dev-image
     # installs, where the .so isn't under a site-packages root reachable from
@@ -122,7 +83,7 @@ def _rocm_wheel_rpaths():
 # TheRock-based /opt/rocm containing lib/rocm_sysdeps/lib; classic ROCm
 # installations cannot satisfy the plugin's librocm_sysdeps_* dependencies.
 # Keep it last so wheel-provided ROCm libraries are preferred.
-_WHEEL_RPATHS = _rocm_wheel_rpaths() + [
+_OPT_ROCM_RPATHS = [
     "-Wl,-rpath,/opt/rocm/lib",
     "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
 ]
@@ -133,9 +94,9 @@ def _wheel_features():
         "//conditions:default": [],
     })
 
-def _wheel_linkopts():
+def _wheel_linkopts(origin_to_site):
     return select({
-        _ROCM_LINK_ONLY: _WHEEL_RPATHS,
+        _ROCM_LINK_ONLY: _rocm_wheel_rpaths(origin_to_site) + _OPT_ROCM_RPATHS,
         "//conditions:default": [],
     })
 
@@ -155,7 +116,7 @@ def rocm_nanobind_extension(name, features = [], linkopts = [], **kwargs):
     nanobind_extension(
         name = name,
         features = features + if_oss(_wheel_features()),
-        linkopts = linkopts + if_oss(_wheel_linkopts()),
+        linkopts = linkopts + if_oss(_wheel_linkopts(_KERNEL_ORIGIN_TO_SITE)),
         **kwargs
     )
 
@@ -171,6 +132,6 @@ def rocm_cc_binary(name, features = [], linkopts = [], **kwargs):
     cc_binary(
         name = name,
         features = features + if_oss(_wheel_features()),
-        linkopts = linkopts + if_oss(_wheel_linkopts()),
+        linkopts = linkopts + if_oss(_wheel_linkopts(_PJRT_ORIGIN_TO_SITE)),
         **kwargs
     )
