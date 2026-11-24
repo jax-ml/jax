@@ -32,6 +32,8 @@ VERSION_PATTERN = re.compile(r"""
       (?:rc(?P<rc>[0-9]+))?             # optional rc version; like 'rc1'
       |                                 # or
       (?:\.dev(?P<dev>[0-9]+))?         # optional dev version; like '.dev20230908'
+      |                                 # or
+      (?:\.post(?P<post>[0-9]+))?       # optional post version; like '.post1'
   )?
   (?:\+(?P<local>[a-zA-Z0-9_.]+))?     # optional local version; like '+g6643af3c3'
   $                                    # end of string
