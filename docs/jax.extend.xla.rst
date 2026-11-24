@@ -9,3 +9,4 @@
   PipelineStage
   clear_hlo_module_transformation
   register_hlo_module_transformation
+  register_hlo_module_transformation2
