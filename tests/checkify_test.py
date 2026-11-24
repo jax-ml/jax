@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import concurrent.futures
+import contextlib
 from functools import partial
 import unittest
 
@@ -604,6 +605,136 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertEqual(u_err.get(), expected_err)
     self.assertIsNotNone(b_err.get())
     self.assertEqual(b_err.get(), expected_err)
+
+  @jtu.sample_product(
+      use_context_mesh=[True, False],
+      manual_axes=[("b",), ("a", "b")],
+      jit=[True, False],
+      check_vma=[True, False],
+  )
+  def test_shard_map_context_mesh_and_partial_manual(
+      self, use_context_mesh, manual_axes, jit, check_vma
+  ):
+    mesh = jtu.create_mesh((2, 2), ("a", "b"))
+    spec = P(manual_axes)
+
+    def f(x, fail_inner=False):
+      checkify.check(jnp.all(x > -1.0), "x must be above -1")
+      mapped = partial(
+          jax.shard_map,
+          axis_names=set(manual_axes),
+          in_specs=spec,
+          out_specs=spec,
+          check_vma=check_vma,
+      )
+      if not use_context_mesh:
+        mapped = partial(mapped, mesh=mesh)
+
+      def body(y):
+        checkify.check(
+            jnp.logical_not(fail_inner) | (lax.axis_index("b") == 0),
+            "inner b check",
+        )
+        return y * 2.0
+
+      return mapped(body)(x)
+
+    checked_f = checkify.checkify(f)
+    if jit:
+      checked_f = jax.jit(checked_f)
+
+    x = jnp.ones((8,), jnp.float32)
+    ctx = jax.set_mesh(mesh) if use_context_mesh else contextlib.nullcontext()
+    with ctx:
+      err, out = checked_f(x, False)
+      self.assertIsNone(err.get())
+      self.assertArraysEqual(out, x * 2.0)
+
+      err_pre, _ = checked_f(-x, False)
+      self.assertIsNotNone(err_pre.get())
+      self.assertIn("x must be above -1", err_pre.get())
+
+      err_in, _ = checked_f(x, True)
+    self.assertIsNotNone(err_in.get())
+    if manual_axes == ("b",):
+      self.assertEqual(
+          err_in.get(), "at mapped index 1: inner b check (`check` failed)"
+      )
+    else:
+      self.assertEqual(
+          err_in.get(),
+          "at mapped index 1: inner b check (`check` failed)\n"
+          "at mapped index 3: inner b check (`check` failed)",
+      )
+
+  def test_shard_map_nested_partial_manual(self):
+    mesh = jtu.create_mesh((2, 2), ("a", "b"))
+
+    def f(x):
+      checkify.check(x[0, 0] > 0, "outer pre-check")
+
+      @partial(
+          jax.shard_map,
+          axis_names={"a"},
+          in_specs=P("a", None),
+          out_specs=P("a", None),
+      )
+      def outer(y):
+        checkify.check(y[0, 0] > -10, "outer body check")
+
+        @partial(
+            jax.shard_map,
+            axis_names={"b"},
+            in_specs=P(None, "b"),
+            out_specs=P(None, "b"),
+        )
+        def inner(z):
+          checkify.check(jnp.all(z > 0), "inner body check")
+          return z * 2.0
+
+        return inner(y)
+
+      return outer(x)
+
+    checked_f = jax.jit(checkify.checkify(f))
+    x = jnp.ones((4, 4), jnp.float32)
+    with jax.set_mesh(mesh):
+      err, out = checked_f(x)
+      self.assertIsNone(err.get())
+      self.assertArraysEqual(out, x * 2.0)
+
+      err_inner, _ = checked_f(x.at[3, 3].set(-1.0))
+      self.assertEqual(
+          err_inner.get(),
+          "at mapped index 1, 1: inner body check (`check` failed)",
+      )
+
+      err_pre, _ = checked_f(x.at[0, 0].set(-1.0))
+      self.assertIsNotNone(err_pre.get())
+      self.assertIn("outer pre-check", err_pre.get())
+
+  @jtu.with_explicit_mesh((2, 2), ("a", "b"))
+  def test_shard_map_explicit_mesh_partial_manual(self, mesh):
+    def f(x):
+      checkify.check(jnp.all(x > 0), "positive")
+      return jax.shard_map(
+          lambda y: y * 2.0,
+          out_specs=P("a", None),
+          axis_names=frozenset({"a"}),
+      )(x)
+
+    v = jax.device_put(
+        jnp.ones((4, 4), jnp.float32), NamedSharding(mesh, P("a", "b"))
+    )
+    checked_f = jax.jit(checkify.checkify(f))
+    err, out = checked_f(v)
+    self.assertIsNone(jax.device_get(err).get())
+    self.assertArraysEqual(out, v * 2.0)
+
+    err_neg, _ = checked_f(-v)
+    err_neg = jax.device_get(err_neg)
+    self.assertIsNotNone(err_neg.get())
+    self.assertIn("positive", err_neg.get())
 
   def test_empty_enabled_errors(self):
     def multi_errors(x):
