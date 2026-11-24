@@ -71,7 +71,7 @@ For example, the following kernel generates a set of uniform numbers from 0 to 1
 
 .. code-block:: python
 
-  from jax.experimental.pallas import tpu as pltpu
+  from jax.pallas import tpu as pltpu
 
   def kernel_body(o_ref):
     pltpu.prng_seed(0)

@@ -1,7 +1,7 @@
-``jax.experimental.pallas.tpu`` module
-======================================
+``jax.pallas.tpu`` module
+=========================
 
-.. automodule:: jax.experimental.pallas.tpu
+.. automodule:: jax.pallas.tpu
 
 Classes
 -------
@@ -77,7 +77,6 @@ Pipelining
    :toctree: _autosummary
 
    BufferedRef
-   BufferedRefBase
    BufferType
    PipelineStep
    emit_pipeline
@@ -123,6 +122,7 @@ Miscellaneous
    get_tpu_info_for_chip
    has_memory_space
    is_tpu_device
+   request_p_state
    run_on_first_core
    touch
    trace_value

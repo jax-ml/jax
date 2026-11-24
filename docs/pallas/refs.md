@@ -41,7 +41,7 @@ Unlike standard JAX `Ref`s, every Pallas `Ref` resides in a hardware **memory
 space** (`ref.memory_space`), which determines both its capacity/bandwidth and
 which operations are legal on it:
 
-* **TPU (`jax.experimental.pallas.tpu` as `pltpu`):**
+* **TPU (`jax.pallas.tpu` as `pltpu`):**
   * `pltpu.HBM`: High-bandwidth device memory. Kernel inputs and outputs live
     here by default; TensorCore compute cannot read or write `HBM` directly, so
     data is moved via `pltpu.sync_copy` / `pltpu.async_copy` or
@@ -50,7 +50,7 @@ which operations are legal on it:
     computations take place.
   * `pltpu.SMEM`: Fast on-chip scalar SRAM for scalar metadata, dynamic loop
     bounds, and indirect indices.
-* **Mosaic GPU (`jax.experimental.pallas.mosaic_gpu` as `plgpu`):**
+* **Mosaic GPU (`jax.pallas.mosaic_gpu` as `plgpu`):**
   * `plgpu.GMEM`: Global GPU memory (HBM) for kernel inputs and outputs.
   * `plgpu.SMEM`: Per-SM shared memory used for staging tiles across threads in
     a block and feeding Hopper `wgmma` Tensor Core operations.
@@ -68,7 +68,7 @@ ways:
 
 1. **Kernel-level `scratch_types`:** Pass a dictionary (for keyword arguments)
    or sequence (for positional arguments after outputs) of memory-space types to
-   {func}`@pl.kernel <jax.experimental.pallas.kernel>` or `@plgpu.kernel`:
+   {func}`@pl.kernel <jax.pallas.kernel>` or `@plgpu.kernel`:
 
 `````{tab-set}
 ````{tab-item} TPU
@@ -77,8 +77,8 @@ ways:
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
 
 @pl.kernel(
     out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -97,8 +97,8 @@ def scale_kernel(x_ref, o_ref, buf_vmem):
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax import pallas as pl
+from jax.pallas import mosaic_gpu as plgpu
 
 @plgpu.kernel(
     out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
@@ -190,7 +190,7 @@ Note that `x_ref.at[slice][...]` is equivalent to `x_ref[slice]`.
 
 When slicing a tile at a runtime grid, core, or loop index (where Python
 `start : start + tile` fails under tracing), use
-{func}`pl.ds(start, size) <jax.experimental.pallas.ds>` (`pl.dslice`, a
+{func}`pl.ds(start, size) <jax.pallas.ds>` (`pl.dslice`, a
 re-export of {func}`jax.ds` covered in {ref}`jax-101-refs`). Because `pltpu.HBM`
 and `plgpu.GMEM` `Ref`s cannot be dereferenced directly with `[...]`, passing
 `.at[pl.ds(...)]` views to DMA copy primitives is the standard way to stage
@@ -243,7 +243,7 @@ def scale_tiles_kernel(x_gmem, o_gmem, buf_smem, bar):
 Dynamic `start` offsets and `size` lengths must satisfy backend tile and DMA
 alignment rules (for example, `(8, 128)` register/DMA alignment on TPU and
 tile/swizzle boundaries on Mosaic GPU; wrap dynamic offsets in
-{func}`pl.multiple_of(start, tile) <jax.experimental.pallas.multiple_of>` when
+{func}`pl.multiple_of(start, tile) <jax.pallas.multiple_of>` when
 the compiler cannot statically prove divisibility), and `.at` views only support
 unit-stride (`stride=1`) slices.
 

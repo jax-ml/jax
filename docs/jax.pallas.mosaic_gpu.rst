@@ -1,7 +1,7 @@
-``jax.experimental.pallas.mosaic_gpu`` module
-=============================================
+``jax.pallas.mosaic_gpu`` module
+================================
 
-.. automodule:: jax.experimental.pallas.mosaic_gpu
+.. automodule:: jax.pallas.mosaic_gpu
 
 Classes
 -------
@@ -15,6 +15,7 @@ Classes
    CompilerParams
    CopyPartition
    MemorySpace
+   Mesh
    Layout
    LoweringSemantics
    OOBFillMode

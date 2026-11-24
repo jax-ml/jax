@@ -1,7 +1,7 @@
-``jax.experimental.pallas.fuser`` module
-========================================
+``jax.pallas.fuser`` module
+===========================
 
-.. automodule:: jax.experimental.pallas.fuser
+.. automodule:: jax.pallas.fuser
 
 Classes
 -------

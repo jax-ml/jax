@@ -23,8 +23,8 @@ generations.
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax import pallas as pl
+from jax.pallas import mosaic_gpu as plgpu
 ```
 
 ## The programming model

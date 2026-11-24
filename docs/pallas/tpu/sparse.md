@@ -39,8 +39,8 @@ import jax
 from jax import numpy as jnp
 from jax import lax
 from jax.experimental import checkify
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
 
 assert "TPU" in jax.devices()[0].device_kind, "Please run this notebook with TPU devices."
 print("Running on", jax.devices()[0].device_kind)

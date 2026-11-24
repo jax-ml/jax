@@ -8,6 +8,8 @@
 
 ``jax.experimental.ann`` has been moved into ``jax.lax``.
 
+``jax.experimental.pallas`` has been moved into ``jax.pallas``.
+
 Experimental Modules
 --------------------
 
@@ -21,7 +23,6 @@ Experimental Modules
     jax.experimental.key_reuse
     jax.experimental.mesh_utils
     jax.experimental.multihost_utils
-    jax.experimental.pallas
     jax.experimental.random
     jax.experimental.serialize_executable
     jax.experimental.sparse

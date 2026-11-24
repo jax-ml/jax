@@ -40,8 +40,8 @@ import functools
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
 
 P = jax.sharding.PartitionSpec
 
@@ -459,7 +459,7 @@ If a Pallas kernel is executed within the context of a larger XLA program, we ne
 By default, if you do not specify a barrier semaphore, Pallas will automatically insert a barrier semaphore at the beginning of your program. However, it can be more efficient to write your own. Barrier semaphores are similar to regular semaphores in that they are counters that can be incremented via `semaphore_signal` and can be decremented via `semaphore_wait`. They are created by calling `get_barrier_semaphore()` within a kernel. Typically, we use barriers once at the beginning of a kernel to synchronize with all devices we are communicating with.
 
 ```python
-from jax.experimental.pallas import tpu as pltpu
+from jax.pallas import tpu as pltpu
 
 def example_kernel(...):
   # Use barrier semaphores at the beginning of a kernel.

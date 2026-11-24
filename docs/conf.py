@@ -423,6 +423,11 @@ rediraffe_redirects = {
   "notebooks/external_callbacks.md": "external-callbacks.md",
   "notebooks/How_JAX_primitives_work.md": "601/jax-primitives.md",
   "jax.extend.ffi.rst": "jax.ffi.rst",
+  "jax.experimental.pallas.rst": "jax.pallas.rst",
+  "jax.experimental.pallas.fuser.rst": "jax.pallas.fuser.rst",
+  "jax.experimental.pallas.mosaic_gpu.rst": "jax.pallas.mosaic_gpu.rst",
+  "jax.experimental.pallas.tpu.rst": "jax.pallas.tpu.rst",
+  "jax.experimental.pallas.tpu_sc.rst": "jax.pallas.tpu_sc.rst",
   "Custom_Operation_for_GPUs.md": "ffi.md",
   "notebooks/quickstart.md": "quickstart.md",
   "quickstart.md": "notebooks/thinking_in_jax.md",
@@ -564,5 +569,61 @@ def _superseded_banner(app, pagename, templatename, context, doctree):
         context['superseded_target'] = '../' * depth + target + '.html'
 
 
+from sphinx import addnodes
+from sphinx.transforms.post_transforms import SphinxPostTransform
+
+
+def _lookup_py_obj(fullname):
+    parts = fullname.split('.')
+    for i in range(len(parts), 0, -1):
+        if (obj := sys.modules.get('.'.join(parts[:i]))) is not None:
+            for attr in parts[i:]:
+                if (obj := getattr(obj, attr, None)) is None:
+                    return None
+            return obj
+    return None
+
+
+class _DisambiguatePyXrefs(SphinxPostTransform):
+    # `_do_not_evaluate_in_jax` leaves annotations unqualified, so re-exported
+    # APIs (e.g. `jax.make_mesh` under `.. currentmodule:: jax`) hit Sphinx's
+    # global suffix search on collisions like `Mesh`. Resolve ambiguous `py`
+    # xrefs in the object's defining module before `ReferencesResolver` (10).
+    default_priority = 5
+
+    def run(self, **kwargs):
+        py_domain = self.env.domains['py']
+        for node in self.document.findall(addnodes.pending_xref):
+            if node.get('refdomain') != 'py' or not node.hasattr('refspecific'):
+                continue
+            target = node.get('reftarget', '').removesuffix('()')
+            matches = py_domain.find_obj(
+                self.env, node.get('py:module'), node.get('py:class'),
+                target, node.get('reftype'), 1,
+            )
+            canonicals = [n for n, e in matches if not e.aliased]
+            if len(canonicals) <= 1:
+                continue
+            desc = node.parent
+            while desc is not None and not isinstance(desc, addnodes.desc):
+                desc = desc.parent
+            mod_names = []
+            if desc and isinstance(desc[0], addnodes.desc_signature):
+                sig = desc[0]
+                obj = _lookup_py_obj(f"{sig.get('module')}.{sig.get('fullname')}")
+                obj = getattr(obj, 'fget', getattr(obj, '__func__', obj))
+                if obj is not None and (mod := inspect.getmodule(inspect.unwrap(obj))):
+                    mod_names.append(mod.__name__)
+            if py_mod := node.get('py:module'):
+                mod_names.append(py_mod)
+            for mod_name in mod_names:
+                if (resolved := _lookup_py_obj(f'{mod_name}.{target}')) is None:
+                    continue
+                if exact := [n for n in canonicals if _lookup_py_obj(n) is resolved]:
+                    node['reftarget'] = min(exact, key=lambda n: (n.count('.'), n))
+                    break
+
+
 def setup(app):
+    app.add_post_transform(_DisambiguatePyXrefs)
     app.connect('html-page-context', _superseded_banner)

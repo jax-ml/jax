@@ -62,7 +62,7 @@ but provide distinct, hardware-specific APIs.
    :hidden:
    :maxdepth: 2
 
-   API reference <../jax.experimental.pallas>
+   API reference <../jax.pallas>
 
 .. toctree::
    :caption: Design Notes

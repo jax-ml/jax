@@ -35,7 +35,7 @@ Good entry points:
 * {doc}`The TPU backend guide </pallas/tpu/index>` and
   {doc}`the Mosaic GPU backend guide </pallas/gpu/index>` — per-platform
   details, lowering paths, and platform-specific features.
-* The {mod}`jax.experimental.pallas` module API reference.
+* The {mod}`jax.pallas` module API reference.
 
 Pallas is experimental and changes frequently; see the
 {ref}`Pallas changelog <pallas-changelog>` for recent developments.

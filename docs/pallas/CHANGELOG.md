@@ -4,7 +4,7 @@
 
 <!--* freshness: { reviewed: '2026-06-23' } *-->
 
-This is the list of changes specific to {class}`jax.experimental.pallas`.
+This is the list of changes specific to {mod}`jax.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
 
 <!--

@@ -1196,6 +1196,11 @@ jax_py_test(
         "//jax/_src:internal_test_util",
         "//jax/_src:test_util",
         # "//jax/docs",
+        "//jax/pallas",
+        "//jax/pallas:fuser",
+        "//jax/pallas:mosaic_gpu",
+        "//jax/pallas:tpu",
+        "//jax/pallas:tpu_sc",
     ] + py_deps("absl/testing"),
 )
 
