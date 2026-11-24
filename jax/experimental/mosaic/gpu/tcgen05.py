@@ -172,8 +172,7 @@ def _create_scaled_instr_descriptor(
   desc = 0
   # Bits 0, 1 are reserved and must be 0
   desc |= sparse << 2  # Sparsity, bit 2
-  # Bit 3 is the upper bit of the encoded K dimension .kind::mxf4 and
-  # .kind::mxf4nvf4
+  # Bit 3 is the upper bit of the encoded K dimension (set below with bit 31).
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
@@ -207,12 +206,17 @@ def _create_scaled_instr_descriptor(
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
   assert 0 <= a_scale_idx < 4
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
-  # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
-  # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
-  # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
-  # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
-  # .kind::mxf4nvf4 on sm_103a and sm_107a.
-  desc |= (k == 96) << 31
+  # The K dimension is encoded as a 2-bit value, with bit 3 as the upper bit
+  # and bit 31 as the lower bit. Zero is the default K: dense K=64 / sparse
+  # K=128 for .kind::mxf4 and .kind::mxf4nvf4, and dense K=32 / sparse K=64 for
+  # .kind::mxf8f6f4. For dense .kind::mxf4 and .kind::mxf4nvf4, one means K=96
+  # (sm_103a and sm_107a) and two means K=128 (sm_107f).
+  if is_fp4 and not sparse:
+    k_encoding = {64: 0, 96: 1, 128: 2}[k]
+    upper_k_bit = k_encoding >> 1
+    lower_k_bit = k_encoding & 1
+    desc |= upper_k_bit << 3
+    desc |= lower_k_bit << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -633,24 +637,26 @@ def mma(
   supported_instr_ks = {
       (1 + is_sparse) * 8 * 32 // utils.bitwidth(mma_a_element_type)
   }
-  # On SM103 and SM107, dense 4-bit block-scaled MMA can issue K=96 (48B) steps
-  # in addition to K=64 (32B) steps.
+  # Dense 4-bit block-scaled MMA can issue larger steps than K=64 (32B).
   if (
       a_scale is not None and b_scale is not None
       and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
       and not is_sparse
-      and utils.get_arch() in (utils.Arch(10, 3), utils.RUBIN)
       # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
       and not isinstance(a, TMEMRef)
       # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
       and a_swizzle == b_swizzle == 128
       and b_scale.layout == scales_layout()
-      # Because of how `scales_layout()` lays out scales in TMEM, K=96 only
-      # works if B scales are padded along N to exactly 128 rows (for an
+      # Because of how `scales_layout()` lays out scales in TMEM, larger steps
+      # only work if B scales are padded along N to exactly 128 rows (for an
       # instruction N of at most 128) or 256 rows (otherwise).
       and b_scale.shape[0] == (256 if n_collective_group_elems > 128 else 128)
   ):
-    supported_instr_ks.add(96)
+    arch = utils.get_arch()
+    if arch in (utils.Arch(10, 3), utils.RUBIN):
+      supported_instr_ks.add(96)
+    if arch.is_sm107f and collective and m == 128:
+      supported_instr_ks.add(128)
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -731,7 +737,7 @@ def _do_mma(
   num_cta = 2 if collective else 1
   if isinstance(a_desc_or_addr, ir.Value):
     assert a_desc_or_addr.type == i32
-    assert 96 not in supported_instr_ks
+    assert len(supported_instr_ks) == 1
     a_in_tmem = True
     a_transpose = False
     a_addr_base = a_desc_or_addr
@@ -797,7 +803,11 @@ def _do_mma(
   base_instr_k = min(supported_instr_ks)
   assert k % base_instr_k == 0
   k_chunks = k // base_instr_k
-  if supported_instr_ks == {64, 96}:
+  if 128 in supported_instr_ks:
+    # K=128 steps (64B) evenly divide 128B swizzle atoms.
+    assert k % 128 == 0
+    instr_ks = [128] * (k // 128)
+  elif {64, 96}.issubset(supported_instr_ks):
     # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
     # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
     q, b = divmod(k_chunks, 3)

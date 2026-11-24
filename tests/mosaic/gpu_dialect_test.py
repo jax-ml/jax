@@ -3346,7 +3346,7 @@ class DialectLoweringTest(MosaicGpuTest):
           (32, ir.Float8E8M0FNUType.get),
       ),
   )
-  def test_tcgen05_mma_k96_decomposition(
+  def test_tcgen05_mma_instr_k_decomposition(
       self,
       arch_minor,
       a_scale_128_lane,
@@ -3409,15 +3409,21 @@ class DialectLoweringTest(MosaicGpuTest):
       )
     self.assertTrue(self.module.operation.verify())
 
-    # Bit 31 of the instruction descriptor selects K=96 (instead of K=64).
+    # Bits 3 (upper) and 31 (lower) of the instruction descriptor encode K.
     instr_ks = []
     for op in self.find_ops(llvm.InlineAsmOp):
       if "tcgen05.mma" in op.asm_string.value:
         idesc = op.operands[3].owner.literal_value & 0xFFFFFFFF
-        instr_ks.append(96 if (idesc >> 31) & 1 else 64)
-    # Every 3 K=64 steps are fused into 2 K=96 steps, and any remaining K=64
-    # steps are issued last.
-    self.assertEqual(instr_ks, [96] * num_k96 + [64] * num_k64)
+        k_encoding = ((idesc >> 3) & 1) << 1 | (idesc >> 31) & 1
+        instr_ks.append({0: 64, 1: 96, 2: 128}[k_encoding])
+    if collective and arch_minor == 7:
+      # On sm_107f, 2 CTA MMAs with M=256 (`m` is the M of each CTA) only issue
+      # K=128 steps.
+      self.assertEqual(instr_ks, [128] * (k // 128))
+    else:
+      # Every 3 K=64 steps are fused into 2 K=96 steps, and any remaining K=64
+      # steps are issued last.
+      self.assertEqual(instr_ks, [96] * num_k96 + [64] * num_k64)
 
 
 if hp is not None:

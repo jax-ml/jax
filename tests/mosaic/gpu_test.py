@@ -3002,8 +3002,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_collective_fp4_k_steps(
       self, n, scale_jax_dtype, block_size, k_steps
   ):
-    # On sm_103 and sm_107, these MMAs mix K=96 and K=64 instructions, and each
-    # K (256, 512, 768) exercises a different decomposition (see `_do_mma`).
+    # On sm_103, these MMAs mix K=96 and K=64 instructions, and each K (256,
+    # 512, 768) exercises a different decomposition. On sm_107f, they only use
+    # K=128 instructions (see `_do_mma`).
     if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
       self.skip_unless_sm107f()
     self._run_mma_block_scaled_collective(
@@ -3025,8 +3026,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       self, scale_jax_dtype, block_size, lhs_in_tmem
   ):
     self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
-    # With k_steps=2, K=512, which mixes K=96 and K=64 instructions when A is in
-    # SMEM (see `_do_mma`).
+    # With k_steps=2, K=512, which uses K=128 instructions when A is in SMEM
+    # (see `_do_mma`).
     self._run_mma_block_scaled_collective(
         m=256,
         n=128,
