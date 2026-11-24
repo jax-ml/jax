@@ -21,6 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -158,8 +159,12 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
+    if xla_version >= 93:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0})
     bounds = [
-        ("cpu", {f16: 1.0}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
         (TPU_EUPV1, {f16: 1.0, f32: 61.0}),
         ("tpu_v5p", {f16: 1.0, f32: 65.5}),
@@ -198,8 +203,12 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_highest_accuracy(self, dtype):
+    if xla_version >= 93:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0})
     bounds = [
-        ("cpu", {f16: 1.0}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
         ("tpu", {f16: 1.0, f32: 1.5}),
     ]
