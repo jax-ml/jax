@@ -11417,6 +11417,59 @@ class HelpersTest(PallasTest):
                   )()
     self.assertEqual(result[0], blocks_to_steal + 1)
 
+  @parameterized.parameters(2, 3, 4)
+  def test_dynamic_work_scheduling_per_warpgroup(self, num_wgs):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+
+    num_sms = jax.devices()[0].core_count
+    grid = (num_sms * 2,)  # grid > SM count, so blocks get stolen.
+
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index("x")
+      wg_idx = lax.axis_index("wg")
+      loop = functools.partial(
+          plgpu.dynamic_scheduling_loop, ("x",), thread_axis="wg"
+      )
+
+      @functools.partial(
+          pl.run_scoped,
+          allocs=loop().get_allocations(),
+          collective_axes="wg",
+      )
+      def _(allocs):
+        for i in range(num_wgs):
+
+          @pl.when(wg_idx == i)
+          def _per_wg_loop():
+            @loop(allocations=allocs)
+            def loop_body(loop_info: plgpu.NDLoopInfo):
+              out_gmem[*loop_info.index, i] = sm_idx
+
+    max_shared_memory = jax.local_devices()[0].shared_memory_per_block_optin
+    # Mosaic GPU uses some shared memory implicitly, so we can't
+    # explicitly request the full amount.
+    large_amount_of_shared_memory = int(0.9 * max_shared_memory)
+    with mgpu.core.artificial_shared_memory_limit(None):
+      result = self.kernel(
+          body,
+          out_type=jax.ShapeDtypeStruct((*grid, num_wgs), jnp.int32),
+          grid=grid,
+          grid_names=("x",),
+          num_threads=num_wgs,
+          thread_name="wg",
+          # Allocate a large amount of SMEM to prevent multiple blocks
+          # being scheduled on the same SM.
+          scratch_types=[
+              plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)
+          ],
+      )()
+
+    # Every warpgroup must have processed each work item on the same SM.
+    for i in range(1, num_wgs):
+      np.testing.assert_array_equal(result[:, i], result[:, 0])
+    self.assertEqual(np.max(result), num_sms - 1)
+
 
 class HelpersWGTest(
     HelpersTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup

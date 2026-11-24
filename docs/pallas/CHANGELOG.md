@@ -56,6 +56,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
+  * {func}`jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop` now
+    accepts an `allocations` argument, and the returned decorator has a
+    `get_allocations` method. Allocating the scheduling state once with
+    `pl.run_scoped` lets each thread (e.g. each warpgroup, under `pl.when` on
+    the `thread_axis` index) run its own loop over the same dynamic schedule.
+    Each thread must run exactly one such loop; the allocations cannot be
+    reused by sequential loops.
   * {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive` now accepts
     a keyword-only `commit_a_read_only` boolean flag (defaulting to `False`) to
     track completion of SMEM reads of the `a` operand of preceding
