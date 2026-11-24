@@ -1241,6 +1241,7 @@ jax_multiplatform_test(
         "notsan",
     ],
     deps = [
+        "//jax/_src:source_info_util",
         "//jax/_src/pallas/fuser",
         "//jax/experimental:checkify",
         "//jax/experimental:pallas",
