@@ -664,21 +664,24 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
     )
 
-  def test_scatter_1d_array(self):
+  @parameterized.parameters(0, -3, 3)
+  def test_scatter_1d_array(self, delta):
+    if delta and not jtu.is_libtpu_at_least("0.0.54"):
+      self.skipTest("Requires libtpu >= 0.0.54")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("HBM4B is not supported on TPU v8i.")
-    x = jnp.arange(self.num_lanes)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
+    nl = self.num_lanes
+    n = nl + delta
+    x = jnp.arange(2 * nl if delta else nl, dtype=jnp.int32)
+    indices = jax.random.permutation(jax.random.key(42), x)
 
     @self.vector_subcore_kernel(
         out_shape=x, out_specs=pl.BlockSpec(memory_space=pltpu.HBM)
     )
     def kernel(x_ref, indices_ref, o_hbm_ref):
-      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref[...]])
+      pltpu.sync_copy(x_ref.at[:n], o_hbm_ref.at[indices_ref[:n]])
 
-    np.testing.assert_array_equal(
-        kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
-    )
+    np.testing.assert_array_equal(kernel(x, indices)[indices[:n]], x[:n])
 
   def test_addupdate_scatter_core_memory_space(self):
 
@@ -720,11 +723,17 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x[0]).at[indices].set(x[0])
     )
 
-  @parameterized.product(kind=["ref", "array"])
-  def test_gather_1d(self, kind):
+  @parameterized.parameters(
+      ("ref", 0), ("array", 0), ("array", -3), ("array", 3)
+  )
+  def test_gather_1d(self, kind, delta):
+    if delta and not jtu.is_libtpu_at_least("0.0.54"):
+      self.skipTest("Requires libtpu >= 0.0.54")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("HBM4B is not supported on TPU v8i.")
-    x = jnp.arange(self.num_lanes)
+    nl = self.num_lanes
+    n = nl + delta
+    x = jnp.arange(2 * nl if delta else nl, dtype=jnp.int32)
     indices = jax.random.permutation(jax.random.key(42), x)
 
     @self.vector_subcore_kernel(
@@ -735,10 +744,10 @@ class VectorSubcoreTest(PallasSCTest):
         ),
     )
     def kernel(x_hbm_ref, indices_ref, o_ref):
-      indices = indices_ref if kind == "ref" else indices_ref[...]
-      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref)
+      indices = indices_ref if kind == "ref" else indices_ref[:n]
+      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref.at[:n])
 
-    np.testing.assert_array_equal(kernel(x, indices), x[indices])
+    np.testing.assert_array_equal(kernel(x, indices)[:n], x[indices[:n]])
 
   def test_gather_1d_with_filter(self):
     if jtu.is_device_tpu(8, "i"):
