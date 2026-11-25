@@ -237,8 +237,10 @@ class UserContextManager:
 
   def __enter__(self):
     self.prev = _source_info_context.context
-    _source_info_context.context = _source_info_context.context.replace(
-        traceback=self.traceback, name_stack=self.name_stack)
+    _source_info_context.context = SourceInfo(
+        self.traceback,
+        self.prev.name_stack if self.name_stack is None else self.name_stack,
+    )
 
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
