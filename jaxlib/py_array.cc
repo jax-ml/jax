@@ -19,6 +19,7 @@ limitations under the License.
 #include <structmember.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -39,7 +40,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -1109,7 +1109,7 @@ nb::dict PyArray::CudaArrayInterface() {
   const void* root_ptr =
       external_reference_hold->OpaqueDeviceMemoryDataPointer();
   nb::tuple data =
-      nb::make_tuple(nb::int_(absl::bit_cast<std::uintptr_t>(root_ptr)),
+      nb::make_tuple(nb::int_(std::bit_cast<std::uintptr_t>(root_ptr)),
                      nb::bool_(true) /* read-only */
       );
   result["data"] = std::move(data);

@@ -17,8 +17,9 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <array>
+#include <bit>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -296,9 +297,9 @@ Args:
           JAX_InspectSharding_Callback cb;
           cb.call = &CallInspectSharding;
           cb.data = handler.ptr();
-          char bytes[sizeof(JAX_InspectSharding_Callback)];
-          std::memcpy(&bytes, &cb, sizeof(JAX_InspectSharding_Callback));
-          return nb::bytes(bytes, sizeof(JAX_InspectSharding_Callback));
+          auto bytes =
+              std::bit_cast<std::array<char, sizeof(cb)>>(cb);
+          return nb::bytes(bytes.data(), bytes.size());
         });
 
   nb::module_ hlo_sharding_util_m = m.def_submodule(

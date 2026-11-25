@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <bit>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -28,7 +29,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
@@ -520,7 +520,7 @@ NB_MODULE(_jax, m) {
         if (library_path.has_value()) {
           const PJRT_Api* api = xla::ValueOrThrow(
               pjrt::LoadPjrtPlugin(platform_name, *library_path));
-          return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
+          return nb::capsule(std::bit_cast<void*>(api), "pjrt_c_api");
         }
         if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw nb::value_error(
@@ -537,7 +537,7 @@ NB_MODULE(_jax, m) {
       "get_pjrt_plugin",
       [](std::string platform_name) -> nb::capsule {
         const PJRT_Api* api = xla::ValueOrThrow(pjrt::PjrtApi(platform_name));
-        return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
+        return nb::capsule(std::bit_cast<void*>(api), "pjrt_c_api");
       },
       nb::arg("platform_name"));
   m.def("pjrt_plugin_initialized", [](std::string platform_name) -> bool {

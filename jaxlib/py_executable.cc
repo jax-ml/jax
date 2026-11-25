@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,7 +29,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/casts.h"
 #include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/absl_check.h"
@@ -598,7 +598,7 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
       uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
       it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
     }
-    launch_id = absl::bit_cast<int32_t>(it->second++);
+    launch_id = std::bit_cast<int32_t>(it->second++);
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
           << " with launch ID: " << launch_id << " key: " << launch_id_key_;

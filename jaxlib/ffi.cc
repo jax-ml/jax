@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,7 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -276,7 +276,7 @@ absl::StatusOr<uintptr_t> PyFfiContext::stream() const {
   if (XLA_FFI_Error* error = api_->XLA_FFI_Stream_Get(&args)) {
     return ffi::TakeStatus(error);
   }
-  return absl::bit_cast<uintptr_t>(args.stream);
+  return std::bit_cast<uintptr_t>(args.stream);
 }
 
 absl::StatusOr<int32_t> PyFfiContext::device_ordinal() const {
@@ -353,7 +353,7 @@ absl::StatusOr<nb::dict> PyFfiAnyBuffer::CudaArrayInterface() const {
   ABSL_ASSIGN_OR_RETURN(result["typestr"],
                         TypeDescriptorForPrimitiveType(element_type_));
   result["data"] = nb::make_tuple(
-      nb::int_(absl::bit_cast<std::uintptr_t>(data_)), !writeable_);
+      nb::int_(std::bit_cast<std::uintptr_t>(data_)), !writeable_);
   result["version"] = nb::int_(2);
   return result;
 }

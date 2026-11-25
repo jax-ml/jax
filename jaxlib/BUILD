@@ -269,7 +269,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/base",
         "@nanobind",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/tsl/python/lib/core:numpy",
@@ -432,7 +431,6 @@ nanobind_pywrap_extension(
         ":traceback",
         ":util",
         ":xla_compiler",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
@@ -752,7 +750,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -978,7 +975,6 @@ cc_library(
     name = "hash_util",
     hdrs = ["hash_util.h"],
     deps = [
-        "@com_google_absl//absl/base",
         "@xla//third_party/python_runtime:headers",
     ],
 )
@@ -1130,7 +1126,6 @@ cc_library(
         ":util",
         ":weak_key_weak_value_cache",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/cleanup",

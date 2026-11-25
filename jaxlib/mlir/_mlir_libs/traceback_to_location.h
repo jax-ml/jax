@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef JAXLIB_MLIR_MLIR_LIBS_TRACEBACK_TO_LOCATION_H_
 #define JAXLIB_MLIR_MLIR_LIBS_TRACEBACK_TO_LOCATION_H_
 
+#include <bit>
 #include <cstddef>
 #include <optional>
 #include <string>
 
-#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
@@ -58,7 +58,7 @@ class TracebackToLocationCache {
   struct TracebackHash {
     size_t operator()(const Traceback& traceback) const noexcept {
       // We know the hash of a traceback will not throw.
-      return absl::bit_cast<size_t>(nanobind::hash(traceback));
+      return std::bit_cast<size_t>(nanobind::hash(traceback));
     }
   };
   struct TracebackEqual {
