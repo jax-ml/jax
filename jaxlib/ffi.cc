@@ -269,11 +269,10 @@ PyFfiContext::Stage PyFfiContext::stage() const {
 }
 
 absl::StatusOr<uintptr_t> PyFfiContext::stream() const {
-  XLA_FFI_Stream_Get_Args args;
-  args.struct_size = XLA_FFI_Stream_Get_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.ctx = ctx_;
-  args.stream = nullptr;
+  XLA_FFI_Stream_Get_Args args{
+      .struct_size = XLA_FFI_Stream_Get_Args_STRUCT_SIZE,
+      .ctx = ctx_,
+  };
   if (XLA_FFI_Error* error = api_->XLA_FFI_Stream_Get(&args)) {
     return ffi::TakeStatus(error);
   }
@@ -281,11 +280,10 @@ absl::StatusOr<uintptr_t> PyFfiContext::stream() const {
 }
 
 absl::StatusOr<int32_t> PyFfiContext::device_ordinal() const {
-  XLA_FFI_DeviceOrdinal_Get_Args args;
-  args.struct_size = XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.ctx = ctx_;
-  args.device_ordinal = 0;
+  XLA_FFI_DeviceOrdinal_Get_Args args{
+      .struct_size = XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE,
+      .ctx = ctx_,
+  };
   if (XLA_FFI_Error* error = api_->XLA_FFI_DeviceOrdinal_Get(&args)) {
     return ffi::TakeStatus(error);
   }

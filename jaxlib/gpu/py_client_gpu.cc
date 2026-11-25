@@ -286,13 +286,13 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_ffi_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
-                         {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
-                          kXlaFfiPythonGpuCallback});
+                         {.instantiate = kGpuTransposePlanCacheInstantiate,
+                          .execute = kXlaFfiPythonGpuCallback});
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_ffi_partitioned_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
-                         {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
-                          kXlaFfiPythonGpuCallback});
+                         {.instantiate = kGpuTransposePlanCacheInstantiate,
+                          .execute = kXlaFfiPythonGpuCallback});
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallback,

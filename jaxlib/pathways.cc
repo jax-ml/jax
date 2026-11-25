@@ -178,13 +178,14 @@ absl::StatusOr<ReshardTarget> MakeReshardTarget(int index, const PyArray& array,
   }
 
   return ReshardTarget{
-      /*spec=*/ArraySpec{
-          /*dtype=*/std::move(ifrt_dtype),
-          /*shape=*/std::move(ifrt_shape),
-          /*sharding=*/std::move(ifrt_sharding),
-          /*layout=*/std::move(ifrt_layout),
-      },
-      /*py_sharding=*/std::move(out_sharding),
+      .spec =
+          ArraySpec{
+              .dtype = std::move(ifrt_dtype),
+              .shape = std::move(ifrt_shape),
+              .sharding = std::move(ifrt_sharding),
+              .layout = std::move(ifrt_layout),
+          },
+      .py_sharding = std::move(out_sharding),
   };
 }
 

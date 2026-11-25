@@ -619,16 +619,16 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
   launch_attrs[1].value.clusterSchedulingPolicyPreference =
       CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
   CUlaunchConfig launch_config = {
-      /*gridDimX=*/grid[0] * num_ctas_,
-      /*gridDimY=*/grid[1],
-      /*gridDimZ=*/grid[2],
-      /*blockDimX=*/block_dim_x_,
-      /*blockDimY=*/1,
-      /*blockDimZ=*/1,
-      /*sharedMemBytes=*/shared_mem_bytes_,
-      /*hStream=*/stream,
-      /**attrs=*/launch_attrs,
-      /*numAttrs=*/2,
+      .gridDimX = grid[0] * num_ctas_,
+      .gridDimY = grid[1],
+      .gridDimZ = grid[2],
+      .blockDimX = block_dim_x_,
+      .blockDimY = 1,
+      .blockDimZ = 1,
+      .sharedMemBytes = shared_mem_bytes_,
+      .hStream = stream,
+      .attrs = launch_attrs,
+      .numAttrs = 2,
   };
   return JAX_AS_STATUS(
       cuLaunchKernelEx(&launch_config, kernel, params, /*extra=*/nullptr));
@@ -1079,13 +1079,13 @@ absl::Status KernelCall::Record(gpuStream_t stream, void** buffers,
       JAX_ASSIGN_OR_RETURN(gpuFunction_t fn, kernel_.GetFunction(stream));
       uint32_t num_ctas = kernel_.num_ctas();
       XLA_FFI_LaunchDims dims{
-          /*grid=*/{static_cast<int32_t>(grid_[0] * num_ctas),
-                    static_cast<int32_t>(grid_[1]),
-                    static_cast<int32_t>(grid_[2])},
-          /*block=*/{static_cast<int32_t>(kernel_.block_dim_x()), 1, 1},
-          /*cluster=*/num_ctas > 1
-              ? XLA_FFI_Dim3{static_cast<int32_t>(num_ctas), 1, 1}
-              : XLA_FFI_Dim3{0, 0, 0},
+          .grid = {static_cast<int32_t>(grid_[0] * num_ctas),
+                   static_cast<int32_t>(grid_[1]),
+                   static_cast<int32_t>(grid_[2])},
+          .block = {static_cast<int32_t>(kernel_.block_dim_x()), 1, 1},
+          .cluster = num_ctas > 1
+                         ? XLA_FFI_Dim3{static_cast<int32_t>(num_ctas), 1, 1}
+                         : XLA_FFI_Dim3{0, 0, 0},
       };
       return record_ctx
           .CreateLaunch(

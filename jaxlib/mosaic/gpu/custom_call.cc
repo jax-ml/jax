@@ -1830,16 +1830,15 @@ BuildKernelArgsAndDims(const mosaic::gpu::MosaicKernelSpec& cfg) {
           std::get<mosaic::gpu::MosaicKernelSpec::DeviceArg>(arg).ptr});
     }
   }
-  XLA_FFI_LaunchDims dims{
-      /*grid=*/{static_cast<int32_t>(cfg.grid.x),
-                static_cast<int32_t>(cfg.grid.y),
-                static_cast<int32_t>(cfg.grid.z)},
-      /*block=*/
-      {static_cast<int32_t>(cfg.block.x), static_cast<int32_t>(cfg.block.y),
-       static_cast<int32_t>(cfg.block.z)},
-      /*cluster=*/
-      {static_cast<int32_t>(cfg.cluster.x), static_cast<int32_t>(cfg.cluster.y),
-       static_cast<int32_t>(cfg.cluster.z)}};
+  XLA_FFI_LaunchDims dims{.grid = {static_cast<int32_t>(cfg.grid.x),
+                                   static_cast<int32_t>(cfg.grid.y),
+                                   static_cast<int32_t>(cfg.grid.z)},
+                          .block = {static_cast<int32_t>(cfg.block.x),
+                                    static_cast<int32_t>(cfg.block.y),
+                                    static_cast<int32_t>(cfg.block.z)},
+                          .cluster = {static_cast<int32_t>(cfg.cluster.x),
+                                      static_cast<int32_t>(cfg.cluster.y),
+                                      static_cast<int32_t>(cfg.cluster.z)}};
   return {std::move(kernel_args), dims};
 }
 
@@ -2101,11 +2100,11 @@ XLA_FFI_DEFINE_HANDLER(
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
-                             /*instantiate=*/kMosaicGPUInstantiate,
-                             /*prepare=*/kMosaicGpuPrepare,
-                             /*initialize=*/kMosaicGpuInitialize,
-                             /*execute=*/kMosaicGpuExecute,
-                             /*record=*/kMosaicGpuRecord,
+                             .instantiate = kMosaicGPUInstantiate,
+                             .prepare = kMosaicGpuPrepare,
+                             .initialize = kMosaicGpuInitialize,
+                             .execute = kMosaicGpuExecute,
+                             .record = kMosaicGpuRecord,
                          });
 
 }  // namespace

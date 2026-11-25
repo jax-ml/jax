@@ -61,11 +61,11 @@ class TritonKernelAotTest : public ::testing::Test {
 
   static void SetUpTestSuite() {
     XLA_FFI_Handler_Bundle bundle = {
-        /*instantiate=*/kTritonKernelCallFfiInstantiate,
-        /*prepare=*/kTritonKernelCallFfiPrepare,
-        /*initialize=*/kTritonKernelCallFfiInitialize,
-        /*execute=*/CountingExecute,
-        /*record=*/CountingRecord,
+        .instantiate = kTritonKernelCallFfiInstantiate,
+        .prepare = kTritonKernelCallFfiPrepare,
+        .initialize = kTritonKernelCallFfiInitialize,
+        .execute = CountingExecute,
+        .record = CountingRecord,
     };
     if (auto* error = xla::ffi::Ffi::RegisterStaticHandler(
             xla::ffi::GetXlaFfiApi(), "triton_kernel_call_ffi", "CUDA",

@@ -247,15 +247,15 @@ absl::StatusOr<xla::ifrt::ArrayRef> RemapArrayWithHloSharding(
       client->RemapArrays(
           xla::ifrt::RemapPlan(
               /*input_specs=*/{xla::ifrt::ArraySpec{
-                  /*dtype=*/ifrt_array->dtype(),
-                  /*shape=*/ifrt_array->shape(),
-                  /*sharding=*/ifrt_array->shared_ptr_sharding(),
-                  /*layout=*/pjrt_layout}},
+                  .dtype = ifrt_array->dtype(),
+                  .shape = ifrt_array->shape(),
+                  .sharding = ifrt_array->shared_ptr_sharding(),
+                  .layout = pjrt_layout}},
               /*output_specs=*/
-              {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array->dtype(),
-                                    /*shape=*/ifrt_array->shape(),
-                                    /*sharding=*/std::move(hlo_sharding),
-                                    /*layout=*/std::move(pjrt_layout)}},
+              {xla::ifrt::ArraySpec{.dtype = ifrt_array->dtype(),
+                                    .shape = ifrt_array->shape(),
+                                    .sharding = std::move(hlo_sharding),
+                                    .layout = std::move(pjrt_layout)}},
               /*input_devices_for_output_map=*/
               {{0,
                 {xla::ifrt::RemapPlan::InputDeviceRange{
@@ -2521,10 +2521,10 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
         }
       }
       buffers.push_back(xla::ifrt::Client::MutableHostBuffer{
-          /*data=*/data_ptr,
-          /*dtype=*/ifrt_array->dtype(),
-          /*shape=*/slice.index_domain.shape(),
-          /*byte_strides=*/copy_data.shard_byte_strides});
+          .data = data_ptr,
+          .dtype = ifrt_array->dtype(),
+          .shape = slice.index_domain.shape(),
+          .byte_strides = copy_data.shard_byte_strides});
     }
     specs.push_back(xla::ifrt::Client::CopyArraysToHostBufferShardsSpec{
         .array = ifrt_array,
