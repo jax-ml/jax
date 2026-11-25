@@ -867,27 +867,41 @@ class RooflineTest(jtu.JaxTestCase):
         result.unfused_flops, 2 * 120 * 8 * 18 * 3 * 3
     )
 
-  def test_reduce_sum_no_axis(self):
-    _, result = roofline.roofline(lambda x: jnp.sum(x))(jnp.zeros((11, 4)))
-    self.assertEqual(result.unfused_flops, 11 * 4 - 1)
-    self.assertEqual(
-        result.unfused_hbm_bytes, self._bytes_per_word * (11 * 4 + 1)
-    )
+  # Pair each primitive with supported dtypes, and test each pair across
+  # partial, full, and empty reductions.
+  @jtu.parameterized.product(
+      reduction_case=[
+          (lax.reduce_sum, jnp.float32),
+          (lax.reduce_prod, jnp.float32),
+          (lax.reduce_max, jnp.float32),
+          (lax.reduce_min, jnp.float32),
+          (lax.reduce_or, jnp.bool_),
+          (lax.reduce_and, jnp.bool_),
+          (lax.reduce_xor, jnp.bool_),
+      ],
+      axes=[(0,), (1,), (0, 1), ()],
+  )
+  def test_axis_reductions(self, reduction_case, axes):
+    reduce_fn, dtype = reduction_case
+    x = jnp.arange(11 * 4, dtype=jnp.int32).astype(dtype).reshape((11, 4))
+    # Each output combines domain_size input elements; result_size is the
+    # number of independent outputs left after reducing axes.
+    domain_size, result_size = {
+        (0,): (11, 4),
+        (1,): (4, 11),
+        (0, 1): (11 * 4, 1),
+        (): (1, 11 * 4),
+    }[axes]
 
-  def test_reduce_sum_with_axis(self):
-    for axis, expected_flops, expected_memory in [
-        (0, (11 - 1) * 4, 11 * 4 + 4),
-        (1, (4 - 1) * 11, 11 * 4 + 11),
-        ([0, 1], 11 * 4 - 1, 11 * 4 + 1),
-        ([], 0, 11 * 4 + 11 * 4),
-    ]:
-      _, result = roofline.roofline(lambda x: jnp.sum(x, axis=axis))(
-          jnp.zeros((11, 4))
-      )
-      self.assertEqual(result.unfused_flops, expected_flops)
-      self.assertEqual(
-          result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
-      )
+    _, result = roofline.roofline(lambda x: reduce_fn(x, axes))(x)
+
+    # A reduction of n values takes n - 1 combines per output element.
+    self.assertEqual(result.unfused_flops, (domain_size - 1) * result_size)
+
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        x.dtype.itemsize * (x.size + result_size),
+    )
 
   def test_custom_jvp_call_p_roofline(self):
     dummy_input = jnp.ones((3, 8))
