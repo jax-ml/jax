@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -111,7 +112,8 @@ CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
       abort();
     }
     // Check that it's a power of 2.
-    assert((elem_bitwidth & (elem_bitwidth - 1)) == 0);
+    assert(elem_bitwidth > 0 &&
+           std::has_single_bit(static_cast<uint64_t>(elem_bitwidth)));
     int packing = 8 / elem_bitwidth;
     assert(sizes[rank - 1] % packing == 0);
     assert(strides[rank - 1] == 1);

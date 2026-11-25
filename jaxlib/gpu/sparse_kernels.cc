@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/gpu/sparse_kernels.h"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -65,6 +66,7 @@ SparseConst ConstZero(gpuDataType type) {
 }
 
 absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
+  static_assert(std::endian::native == std::endian::little);
   SparseConst c;
   std::memset(&c, 0, sizeof(c));
   switch (type) {

@@ -47,6 +47,7 @@ limitations under the License.
 #ifndef JAXLIB_REENTRANT_HASH_SET_H_
 #define JAXLIB_REENTRANT_HASH_SET_H_
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -89,7 +90,7 @@ class BitMask {
   class Iterator {
    public:
     explicit Iterator(uint32_t mask) : mask_(mask) {}
-    int operator*() const { return __builtin_ctz(mask_); }
+    int operator*() const { return std::countr_zero(mask_); }
     Iterator& operator++() {
       // mask_ - 1 flips all bits up to and including the lowest set bit.
       // E.g. 0b101100 - 1 = 0b101011
@@ -114,7 +115,7 @@ class BitMask {
   Iterator end() const { return Iterator(0); }
   bool operator!() const { return mask_ == 0; }
   explicit operator bool() const { return mask_ != 0; }
-  int LowestBitSet() const { return __builtin_ctz(mask_); }
+  int LowestBitSet() const { return std::countr_zero(mask_); }
 
  private:
   uint32_t mask_;

@@ -29,6 +29,7 @@ limitations under the License.
 #endif
 
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -46,7 +47,6 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
@@ -201,15 +201,15 @@ std::string FormatSassCtrl(const std::string& sass) {
           uint64_t wait_barrier = (ctrl >> 52) & 0x3f;
           if (wait_barrier == 0) {
             result += "   -";
-          } else if (absl::has_single_bit(wait_barrier)) {
+          } else if (std::has_single_bit(wait_barrier)) {
             absl::StrAppendFormat(&result, "   %d",
-                                  absl::countr_zero(wait_barrier));
+                                  std::countr_zero(wait_barrier));
           } else {
-            int first_set = absl::countr_zero(wait_barrier);
+            int first_set = std::countr_zero(wait_barrier);
             uint64_t without_first_set = wait_barrier ^ (1 << first_set);
-            if (absl::has_single_bit(without_first_set)) {
+            if (std::has_single_bit(without_first_set)) {
               absl::StrAppendFormat(&result, " %d&%d",
-                                    absl::countr_zero(without_first_set),
+                                    std::countr_zero(without_first_set),
                                     first_set);
             } else {
               absl::StrAppendFormat(&result, "0x%02x", wait_barrier);
