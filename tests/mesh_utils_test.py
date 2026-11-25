@@ -779,6 +779,68 @@ class MeshUtilsTest(jtu.JaxTestCase):
     self.assertEqual(assignment[3, 1], 2,
                      f"For v7, FSDP should use core axis: {assignment}")
 
+  @parameterized.named_parameters(
+      ('v7x', mesh_utils._TPU_7X),
+      ('v7', mesh_utils._TPU_7),
+  )
+  def test_v7_mesh_needs_backtracking(self, device_kind):
+    """Regression test for https://github.com/jax-ml/jax/issues/42879.
+
+    Physical mesh (4, 4, 8, 2) = (x, y, z, core), logical mesh (2, 8, 16).
+    The core-axis priority (introduced in #39340) prefers assigning the
+    highest-intensity logical axis of size 16 to (z, core), which strands the
+    logical axes of size 8 and 2 on physical axes x and y (size 4 each). A
+    first-fit assignment fails even though a whole-axis mapping exists
+    (2 -> core, 8 -> z, 16 -> x * y), so the assignment search must
+    backtrack to find it.
+    """
+    devices = mock_tpu_devices(4, 4, 8, device_kind,
+                               one_device_per_chip=False)
+    physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
+    self.assertEqual(physical_mesh.shape, (4, 4, 8, 2))
+
+    # The default allow_split_physical_axes=False used to raise
+    # NotImplementedError here.
+    mesh = mesh_utils.create_device_mesh((2, 8, 16), devices=devices)
+    self.assertEqual(mesh.shape, (2, 8, 16))
+
+    device_mesh, assignment = mesh_utils._create_device_mesh_for_nd_torus(
+        physical_mesh, (2, 8, 16)
+    )
+    self.assertEqual(device_mesh.shape, (2, 8, 16))
+    # 2 -> core (axis 3), 8 -> z (axis 2), 16 -> x * y (axes 0, 1).
+    self.assertArraysEqual(
+        assignment, np.array([[1, 1, 4],
+                              [1, 1, 4],
+                              [1, 8, 1],
+                              [2, 1, 1]], dtype=np.int64))
+
+  def test_nd_torus_mesh_needs_backtracking(self):
+    """Backtracking is not v7-specific: the "more axes first" heuristic can
+    also strand a later logical axis on non-v7 topologies.
+
+    Physical mesh (2, 2, 4), logical mesh (2, 2, 4). The first-fit heuristic
+    assigns the highest-intensity logical axis of size 4 to (x, y), leaving
+    no physical axis of size 2 for the remaining logical axes. The whole-axis
+    mapping 2 -> x, 2 -> y, 4 -> z must be found by backtracking.
+    """
+    devices = mock_2x2x4_devices(one_device_per_chip=True)
+    physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
+    self.assertEqual(physical_mesh.shape, (2, 2, 4))
+
+    mesh = mesh_utils.create_device_mesh((2, 2, 4), devices=devices)
+    self.assertEqual(mesh.shape, (2, 2, 4))
+
+    device_mesh, assignment = mesh_utils._create_device_mesh_for_nd_torus(
+        physical_mesh, (2, 2, 4)
+    )
+    self.assertEqual(device_mesh.shape, (2, 2, 4))
+    # 2 -> x (axis 0) or y (axis 1), 4 -> z (axis 2).
+    self.assertArraysEqual(
+        assignment, np.array([[1, 2, 1],
+                              [2, 1, 1],
+                              [1, 1, 4]], dtype=np.int64))
+
 
 def int64_array(x) -> np.ndarray:
   return np.array(x, dtype=np.int64)
