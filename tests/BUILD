@@ -1347,6 +1347,9 @@ jax_multiplatform_test(
             "noasan",  # Times out under asan.
         ],
     },
+    env = {
+        "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+    },
     shard_count = {
         "cpu": 10,
         "tpu": 10,
