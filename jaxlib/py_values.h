@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <string>
-#include <tuple>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -108,20 +107,14 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
 struct PyArgSignature {
   PyArgSignature(xla::PrimitiveType dtype, absl::Span<const int64_t> shape,
                  bool weak_type)
-      : dtype(dtype), shape(shape.begin(), shape.end()), weak_type(weak_type) {}
+      : dtype(dtype), weak_type(weak_type), shape(shape.begin(), shape.end()) {}
   // This is the XLA dtype of the object.
   const xla::PrimitiveType dtype;
-  const absl::InlinedVector<int64_t, 4> shape;
   // JAX arguments can be of weak type, if and only if they are Python scalars
   // or `DeviceArray` values such that `aval.weak_type` is true.
   const bool weak_type;
-  bool operator==(const PyArgSignature& other) const {
-    return std::tie(dtype, weak_type, shape) ==
-           std::tie(other.dtype, other.weak_type, other.shape);
-  }
-  bool operator!=(const PyArgSignature& other) const {
-    return !(*this == other);
-  }
+  const absl::InlinedVector<int64_t, 4> shape;
+  bool operator==(const PyArgSignature&) const = default;
   std::string DebugString() const;
 };
 

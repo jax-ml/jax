@@ -99,12 +99,7 @@ class BitMask {
       mask_ &= (mask_ - 1);
       return *this;
     }
-    bool operator!=(const Iterator& other) const {
-      return mask_ != other.mask_;
-    }
-    bool operator==(const Iterator& other) const {
-      return mask_ == other.mask_;
-    }
+    bool operator==(const Iterator&) const = default;
 
    private:
     uint32_t mask_;
@@ -288,12 +283,7 @@ class ReentrantHashSet {
       return tmp;
     }
 
-    friend bool operator==(const iterator& a, const iterator& b) {
-      return a.idx_ == b.idx_ && a.set_ == b.set_;
-    }
-    friend bool operator!=(const iterator& a, const iterator& b) {
-      return !(a == b);
-    }
+    friend bool operator==(const iterator&, const iterator&) = default;
 
    private:
     friend class ReentrantHashSet;
@@ -338,12 +328,8 @@ class ReentrantHashSet {
       return tmp;
     }
 
-    friend bool operator==(const const_iterator& a, const const_iterator& b) {
-      return a.idx_ == b.idx_ && a.set_ == b.set_;
-    }
-    friend bool operator!=(const const_iterator& a, const const_iterator& b) {
-      return !(a == b);
-    }
+    friend bool operator==(const const_iterator&,
+                           const const_iterator&) = default;
 
    private:
     friend class ReentrantHashSet;

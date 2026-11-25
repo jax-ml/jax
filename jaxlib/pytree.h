@@ -302,7 +302,6 @@ class PyTreeDef {
   size_t Hash() const;
 
   bool operator==(const PyTreeDef& other) const;
-  bool operator!=(const PyTreeDef& other) const { return !(*this == other); }
 
   std::string ToString() const;
 

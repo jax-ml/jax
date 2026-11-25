@@ -572,11 +572,7 @@ struct ColorState {
   Color background;
   Intensity intensity;
 
-  bool operator==(const ColorState& other) const {
-    return foreground == other.foreground && background == other.background &&
-           intensity == other.intensity;
-  }
-  bool operator!=(const ColorState& other) const { return !operator==(other); }
+  bool operator==(const ColorState&) const = default;
 };
 
 constexpr ColorState kDefaultColors =

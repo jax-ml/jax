@@ -417,10 +417,7 @@ struct ShapedArrayCacheKey {
   friend H AbslHashValue(H h, const ShapedArrayCacheKey& value) {
     return H::combine(std::move(h), value.dims, value.dtype, value.weak_type);
   }
-  bool operator==(const ShapedArrayCacheKey& other) const {
-    return dims == other.dims && dtype == other.dtype &&
-           weak_type == other.weak_type;
-  }
+  bool operator==(const ShapedArrayCacheKey&) const = default;
 };
 
 // Constructing ShapedArrays has gotten slow. Cache it.
@@ -2689,9 +2686,7 @@ absl::Status PyArray::BatchedCopyToHostAsync(nanobind::sequence py_arrays) {
     xla::ifrt::Client* client;
     xla::ifrt::DeviceListRef devices;
 
-    bool operator==(const GroupKey& other) const {
-      return client == other.client && devices == other.devices;
-    }
+    bool operator==(const GroupKey&) const = default;
 
     struct Hash {
       size_t operator()(const GroupKey& key) const {
