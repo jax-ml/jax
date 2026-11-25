@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/gpu/vendor.h"
@@ -29,19 +28,20 @@ limitations under the License.
 #define JAX_THROW_IF_ERROR(expr)                             \
   {                                                          \
     auto s___ = (expr);                                      \
-    if (ABSL_PREDICT_FALSE(!s___.ok()))                      \
+    if (!s___.ok()) [[unlikely]]                             \
       throw std::runtime_error(std::string(s___.message())); \
   }
 
-#define JAX_RETURN_IF_ERROR(expr)                    \
-  {                                                  \
-    auto s___ = (expr);                              \
-    if (ABSL_PREDICT_FALSE(!s___.ok())) return s___; \
+#define JAX_RETURN_IF_ERROR(expr) \
+  {                               \
+    auto s___ = (expr);           \
+    if (!s___.ok()) [[unlikely]]  \
+      return s___;                \
   }
 
 #define JAX_ASSIGN_OR_RETURN_IMPL(var, lhs, expr) \
   auto var = (expr);                              \
-  if (ABSL_PREDICT_FALSE(!var.ok())) {            \
+  if (!var.ok()) [[unlikely]] {                   \
     return var.status();                          \
   }                                               \
   lhs = (*std::move(var))
@@ -76,7 +76,7 @@ std::string ErrorString(miopenStatus_t status);
 template <typename T>
 absl::Status AsStatus(T error, const char* file, std::int64_t line,
                       const char* expr) {
-  if (ABSL_PREDICT_FALSE(error != GpuErrorTraits<T>::kSuccess)) {
+  if (error != GpuErrorTraits<T>::kSuccess) [[unlikely]] {
     return absl::InternalError(absl::StrFormat("%s:%d: operation %s failed: %s",
                                                file, line, expr,
                                                ErrorString(error)));
@@ -86,7 +86,7 @@ absl::Status AsStatus(T error, const char* file, std::int64_t line,
 
 inline absl::Status AsStatus(const absl::Status& status, const char* file,
                              std::int64_t line, const char* expr) {
-  if (ABSL_PREDICT_FALSE(!status.ok())) {
+  if (!status.ok()) [[unlikely]] {
     return absl::Status(status.code(),
                         absl::StrFormat("%s:%d: operation %s failed: %s", file,
                                         line, expr, status.message()));

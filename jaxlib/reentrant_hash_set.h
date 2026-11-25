@@ -56,7 +56,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "absl/base/optimization.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 
@@ -366,7 +365,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -386,7 +385,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -411,7 +410,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -453,7 +452,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -524,11 +523,11 @@ class ReentrantHashSet {
         const Key& slot = slots_[idx];
         bool is_match = eq_(slot, key);
 
-        if (ABSL_PREDICT_FALSE(version_ != current_version)) {
+        if (version_ != current_version) [[unlikely]] {
           return {true, false, ~size_t{0}};
         }
 
-        if (ABSL_PREDICT_TRUE(is_match)) {
+        if (is_match) [[likely]] {
           return {false, true, idx};
         }
       }
