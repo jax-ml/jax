@@ -820,20 +820,21 @@ def _do_mma(
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
 
-  base_instr_k = min(supported_instr_ks)
-  assert k % base_instr_k == 0
-  k_chunks = k // base_instr_k
   if 128 in supported_instr_ks:
     # K=128 steps (64B) evenly divide 128B swizzle atoms.
     assert k % 128 == 0
     instr_ks = [128] * (k // 128)
   elif {64, 96}.issubset(supported_instr_ks):
-    # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
-    # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
-    q, b = divmod(k_chunks, 3)
-    instr_ks = [96] * (2 * q) + [base_instr_k] * b
+    assert k % 64 == 0
+    # Every 192 elems are covered by 2 K=96 steps instead of 3 K=64 steps; any
+    # remaining 1 or 2 K=64 steps go at the end so they stay within the last
+    # 128B swizzle atom.
+    q, r = divmod(k, 192)
+    instr_ks = [96] * (2 * q) + [64] * (r // 64)
   else:
-    instr_ks = [base_instr_k] * k_chunks
+    instr_k = min(supported_instr_ks)
+    assert k % instr_k == 0
+    instr_ks = [instr_k] * (k // instr_k)
 
   k_elem_offset = 0
   for instr_k in instr_ks:
