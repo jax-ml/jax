@@ -25,7 +25,6 @@ limitations under the License.
 #include <thread>  // NOLINT
 #include <utility>
 
-#include "absl/base/attributes.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -49,7 +48,7 @@ namespace {
 ft_mutex global_state_mu;
 GuardState global_state ABSL_GUARDED_BY(global_state_mu);
 
-ABSL_CONST_INIT thread_local GuardState thread_local_state;
+constinit thread_local GuardState thread_local_state;
 
 // The default transfer guard level.
 constexpr TransferGuardLevel kDefaultGuardLevel = TransferGuardLevel::kAllow;

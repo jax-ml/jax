@@ -25,7 +25,7 @@ namespace JAX_GPU_NAMESPACE {
 namespace {
 
 constexpr int32_t kMaxCachedDevices = 64;
-std::atomic<int> g_perf_ratio_cache[kMaxCachedDevices];
+constinit std::atomic<int> g_perf_ratio_cache[kMaxCachedDevices] = {};
 
 int QuerySingleToDoublePrecisionPerfRatio(int32_t device_ordinal) {
 #if defined(JAX_GPU_CUDA)

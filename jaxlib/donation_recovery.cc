@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -44,7 +43,7 @@ namespace nb = nanobind;
 
 namespace {
 
-ABSL_CONST_INIT thread_local DonationRecoveryScope* current_scope = nullptr;
+constinit thread_local DonationRecoveryScope* current_scope = nullptr;
 
 }  // namespace
 
