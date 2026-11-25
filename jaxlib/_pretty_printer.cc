@@ -51,24 +51,25 @@ enum class Color {
 };
 
 std::string ColorToString(Color color) {
+  using enum Color;
   switch (color) {
-    case Color::kBlack:
+    case kBlack:
       return "black";
-    case Color::kRed:
+    case kRed:
       return "red";
-    case Color::kGreen:
+    case kGreen:
       return "green";
-    case Color::kYellow:
+    case kYellow:
       return "yellow";
-    case Color::kBlue:
+    case kBlue:
       return "blue";
-    case Color::kMagenta:
+    case kMagenta:
       return "magenta";
-    case Color::kCyan:
+    case kCyan:
       return "cyan";
-    case Color::kWhite:
+    case kWhite:
       return "white";
-    case Color::kReset:
+    case kReset:
       return "reset";
   }
 }

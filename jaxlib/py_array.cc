@@ -1061,21 +1061,22 @@ nb::dict PyArray::CudaArrayInterface() {
         "__cuda_array_interface__ is only defined for array buffers.");
   }
 
+  using enum xla::PrimitiveType;
   switch (pjrt_buffer->element_type()) {
-    case xla::PrimitiveType::PRED:
-    case xla::PrimitiveType::S8:
-    case xla::PrimitiveType::S16:
-    case xla::PrimitiveType::S32:
-    case xla::PrimitiveType::S64:
-    case xla::PrimitiveType::U8:
-    case xla::PrimitiveType::U16:
-    case xla::PrimitiveType::U32:
-    case xla::PrimitiveType::U64:
-    case xla::PrimitiveType::F16:
-    case xla::PrimitiveType::F32:
-    case xla::PrimitiveType::F64:
-    case xla::PrimitiveType::C64:
-    case xla::PrimitiveType::C128:
+    case PRED:
+    case S8:
+    case S16:
+    case S32:
+    case S64:
+    case U8:
+    case U16:
+    case U32:
+    case U64:
+    case F16:
+    case F32:
+    case F64:
+    case C64:
+    case C128:
       break;
 
     default:

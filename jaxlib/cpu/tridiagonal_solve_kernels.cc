@@ -47,8 +47,9 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
   auto* b_data = b.untyped_data();
   auto* x_out_data = x_out->untyped_data();
 
+  using enum ffi::DataType;
   switch (dtype) {
-    case ffi::DataType::F32: {
+    case F32: {
       std::vector<float> workspace(b_rows * 3);
       std::vector<float> rhs_row_workspace(b_cols);
       auto* dl_ptr = reinterpret_cast<const float*>(dl_data);
@@ -68,7 +69,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       }
       break;
     }
-    case ffi::DataType::F64: {
+    case F64: {
       std::vector<double> workspace(b_rows * 3);
       std::vector<double> rhs_row_workspace(b_cols);
       auto* dl_ptr = reinterpret_cast<const double*>(dl_data);
@@ -88,7 +89,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       }
       break;
     }
-    case ffi::DataType::C64: {
+    case C64: {
       std::vector<std::complex<float>> workspace(b_rows * 3);
       std::vector<std::complex<float>> rhs_row_workspace(b_cols);
       auto* dl_ptr = reinterpret_cast<const std::complex<float>*>(dl_data);
@@ -109,7 +110,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       }
       break;
     }
-    case ffi::DataType::C128: {
+    case C128: {
       std::vector<std::complex<double>> workspace(b_rows * 3);
       std::vector<std::complex<double>> rhs_row_workspace(b_cols);
       auto* dl_ptr = reinterpret_cast<const std::complex<double>*>(dl_data);

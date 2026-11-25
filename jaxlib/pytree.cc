@@ -349,10 +349,11 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
                                                bool with_keys) const {
   PyTreeRegistry::Registration const* custom;
   PyTreeKind kind = KindOfObject(x, &custom);
+  using enum PyTreeKind;
   switch (kind) {
-    case PyTreeKind::kNone:
+    case kNone:
       return nb::make_tuple(nb::make_tuple(), nb::none());
-    case PyTreeKind::kTuple: {
+    case kTuple: {
       if (with_keys) {
         auto size = PyTuple_GET_SIZE(x.ptr());
         nb::tuple_builder key_leaves(size);
@@ -366,7 +367,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       }
       return nb::make_tuple(nb::borrow(x), nb::none());
     }
-    case PyTreeKind::kList: {
+    case kList: {
       if (with_keys) {
         auto size = PyList_GET_SIZE(x.ptr());
         nb::tuple_builder key_leaves(size);
@@ -380,8 +381,8 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       }
       return nb::make_tuple(nb::borrow(x), nb::none());
     }
-    case PyTreeKind::kDict:
-    case PyTreeKind::kFrozenDict: {
+    case kDict:
+    case kFrozenDict: {
       nb::dict dict = nb::borrow<nb::dict>(x);
       std::vector<nb::object> sorted_keys = GetSortedPyDictKeys(dict.ptr());
       nb::tuple_builder keys(sorted_keys.size());
@@ -396,7 +397,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       }
       return nb::make_tuple(values.commit(), keys.commit());
     }
-    case PyTreeKind::kNamedTuple: {
+    case kNamedTuple: {
       nb::tuple in = nb::borrow<nb::tuple>(x);
       nb::list out;
       if (with_keys) {
@@ -421,7 +422,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       }
       return nb::make_tuple(std::move(out), x.type());
     }
-    case PyTreeKind::kCustom: {
+    case kCustom: {
       if (with_keys) {
         auto [leaves, aux_data] = custom->ToIterableWithKeys(x);
         return nb::make_tuple(std::move(leaves), std::move(aux_data));
@@ -429,7 +430,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       auto [leaves, aux_data] = custom->ToIterable(x);
       return nb::make_tuple(std::move(leaves), std::move(aux_data));
     }
-    case PyTreeKind::kDataclass: {
+    case kDataclass: {
       auto data_size = custom->data_fields.size();
       nb::list_builder leaves(data_size);
       for (int leaf = 0; leaf < data_size; ++leaf) {
@@ -449,7 +450,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
       return nb::make_tuple(leaves.commit(), aux_data.commit());
     }
     default:
-      DCHECK(kind == PyTreeKind::kLeaf);
+      DCHECK(kind == kLeaf);
       return nb::none();
   }
 }
@@ -650,11 +651,12 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       FlattenImpl(child, leaves, keypath, leaf_predicate);
       Py_LeaveRecursiveCall();
     };
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kNone:
+      case kNone:
         // Nothing to do.
         break;
-      case PyTreeKind::kTuple: {
+      case kTuple: {
         node.arity = PyTuple_GET_SIZE(handle.ptr());
         for (int i = 0; i < node.arity; ++i) {
           if (keypath.has_value()) {
@@ -667,7 +669,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
-      case PyTreeKind::kList: {
+      case kList: {
         node.arity = PyList_GET_SIZE(handle.ptr());
         for (int i = 0; i < node.arity; ++i) {
           if (keypath.has_value()) {
@@ -680,8 +682,8 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
-      case PyTreeKind::kDict:
-      case PyTreeKind::kFrozenDict: {
+      case kDict:
+      case kFrozenDict: {
         nb::dict dict = nb::borrow<nb::dict>(handle);
 
         std::vector<nb::object> keys = GetSortedPyDictKeys(dict.ptr());
@@ -698,7 +700,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         node.sorted_dict_keys = std::move(keys);
         break;
       }
-      case PyTreeKind::kCustom: {
+      case kCustom: {
         if (keypath.has_value()) {
           auto [leaves, aux_data] = node.custom->ToIterableWithKeys(handle);
           node.node_data = std::move(aux_data);
@@ -720,7 +722,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
-      case PyTreeKind::kDataclass: {
+      case kDataclass: {
         auto meta_size = node.custom->meta_fields.size();
         nb::tuple_builder aux_data(meta_size);
         for (int meta_leaf = 0; meta_leaf < meta_size; ++meta_leaf) {
@@ -742,7 +744,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         }
         break;
       }
-      case PyTreeKind::kNamedTuple: {
+      case kNamedTuple: {
         nb::tuple tuple = nb::borrow<nb::tuple>(handle);
         node.arity = tuple.size();
         node.node_data = nb::borrow<nb::object>(tuple.type());
@@ -770,7 +772,7 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
         break;
       }
       default:
-        DCHECK(node.kind == PyTreeKind::kLeaf);
+        DCHECK(node.kind == kLeaf);
         if (PyObject_TypeCheck(handle.ptr(), &PyDictValues_Type) ||
             (PyIter_Check(handle.ptr()) &&
              (PyGen_Check(handle.ptr()) ||
@@ -866,8 +868,9 @@ nb::object PyTreeDef::UnflattenImpl(T leaves) const {
     if (agenda.size() < node.arity) {
       throw std::logic_error("Too few elements for TreeDef node.");
     }
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kLeaf:
+      case kLeaf:
         if (it == leaves.end()) {
           throw std::invalid_argument(absl::StrFormat(
               "Too few leaves for PyTreeDef; expected %d, got %d", num_leaves(),
@@ -878,14 +881,14 @@ nb::object PyTreeDef::UnflattenImpl(T leaves) const {
         ++leaf_count;
         break;
 
-      case PyTreeKind::kNone:
-      case PyTreeKind::kTuple:
-      case PyTreeKind::kNamedTuple:
-      case PyTreeKind::kList:
-      case PyTreeKind::kDict:
-      case PyTreeKind::kFrozenDict:
-      case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case kNone:
+      case kTuple:
+      case kNamedTuple:
+      case kList:
+      case kDict:
+      case kFrozenDict:
+      case kCustom:
+      case kDataclass: {
         const int size = agenda.size();
         absl::Span<nb::object> span;
         if (node.arity > 0) {
@@ -921,28 +924,29 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
   if (children.size() != node.arity) {
     throw std::logic_error("Node arity mismatch.");
   }
+  using enum PyTreeKind;
   switch (node.kind) {
-    case PyTreeKind::kLeaf:
+    case kLeaf:
       throw std::logic_error("MakeNode not implemented for leaves.");
 
-    case PyTreeKind::kNone:
+    case kNone:
       return nb::none();
 
-    case PyTreeKind::kTuple:
-    case PyTreeKind::kNamedTuple: {
+    case kTuple:
+    case kNamedTuple: {
       nb::tuple_builder tuple_builder(node.arity);
       for (int i = 0; i < node.arity; ++i) {
         tuple_builder.put(std::move(children[i]));
       }
       nb::tuple tuple = tuple_builder.commit();
-      if (node.kind == PyTreeKind::kNamedTuple) {
+      if (node.kind == kNamedTuple) {
         return node.node_data(*tuple);
       } else {
         return tuple;
       }
     }
 
-    case PyTreeKind::kList: {
+    case kList: {
       nb::list_builder list(node.arity);
       for (int i = 0; i < node.arity; ++i) {
         list.put(std::move(children[i]));
@@ -950,7 +954,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       return list.commit();
     }
 
-    case PyTreeKind::kDict: {
+    case kDict: {
       nb::dict dict;
       for (int i = 0; i < node.arity; ++i) {
         dict[node.sorted_dict_keys[i]] = std::move(children[i]);
@@ -958,7 +962,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       return std::move(dict);
       break;
     }
-    case PyTreeKind::kFrozenDict: {
+    case kFrozenDict: {
 #if PY_VERSION_HEX >= 0x030F0000
       nb::dict dict;
       for (int i = 0; i < node.arity; ++i) {
@@ -973,7 +977,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       throw std::logic_error("frozendict is not supported on Python < 3.15");
 #endif
     }
-    case PyTreeKind::kCustom: {
+    case kCustom: {
       nb::tuple_builder tuple(node.arity);
       for (int i = 0; i < node.arity; ++i) {
         tuple.put(std::move(children[i]));
@@ -981,7 +985,7 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
       return node.custom->from_iterable(node.node_data, tuple.commit());
     }
 
-    case PyTreeKind::kDataclass: {
+    case kDataclass: {
       auto data_size = node.custom->data_fields.size();
       if (node.arity < 0 || data_size != static_cast<size_t>(node.arity)) {
         throw std::invalid_argument("Dataclass data_fields arity mismatch.");
@@ -1024,8 +1028,9 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
     agenda.pop_back();
     ++it;
 
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kLeaf:
+      case kLeaf:
         if (leaf < 0) {
           throw std::logic_error("Leaf count mismatch.");
         }
@@ -1033,7 +1038,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         --leaf;
         break;
 
-      case PyTreeKind::kNone:
+      case kNone:
         if (!object.is_none()) {
           throw std::invalid_argument(absl::StrFormat(
               "Expected None, got %s.\n\n"
@@ -1046,7 +1051,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         }
         break;
 
-      case PyTreeKind::kTuple: {
+      case kTuple: {
         if (!PyTuple_CheckExact(object.ptr())) {
           throw std::invalid_argument(
               absl::StrFormat("Expected tuple, got %s.",
@@ -1064,7 +1069,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kList: {
+      case kList: {
         if (!PyList_CheckExact(object.ptr())) {
           throw std::invalid_argument(
               absl::StrFormat("Expected list, got %s.",
@@ -1082,7 +1087,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kDict: {
+      case kDict: {
         if (!PyDict_CheckExact(object.ptr())) {
           throw std::invalid_argument(
               absl::StrFormat("Expected dict, got %s.",
@@ -1105,7 +1110,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kFrozenDict: {
+      case kFrozenDict: {
 #if PY_VERSION_HEX >= 0x030F0000
         if (!PyFrozenDict_CheckExact(object.ptr())) {
           throw std::invalid_argument(
@@ -1132,7 +1137,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kNamedTuple: {
+      case kNamedTuple: {
         if (!nb::isinstance<nb::tuple>(object) ||
             !nb::hasattr(object, "_fields")) {
           throw std::invalid_argument(
@@ -1157,7 +1162,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kCustom: {
+      case kCustom: {
         auto* registration = registry_->Lookup(object.type());
         if (registration != node.custom) {
           throw std::invalid_argument(absl::StrFormat(
@@ -1186,7 +1191,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
       }
 
-      case PyTreeKind::kDataclass: {
+      case kDataclass: {
         auto* registration = registry_->Lookup(object.type());
         if (registration != node.custom) {
           throw std::invalid_argument(absl::StrFormat(
@@ -1236,8 +1241,9 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
   std::vector<nb::object> agenda;
   auto it = leaves.begin();
   for (const Node& node : traversal_) {
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kLeaf: {
+      case kLeaf: {
         if (it == leaves.end()) {
           throw std::invalid_argument("Too few leaves for PyTreeDef");
         }
@@ -1249,14 +1255,14 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
         break;
       }
 
-      case PyTreeKind::kNone:
-      case PyTreeKind::kTuple:
-      case PyTreeKind::kNamedTuple:
-      case PyTreeKind::kList:
-      case PyTreeKind::kDict:
-      case PyTreeKind::kFrozenDict:
-      case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case kNone:
+      case kTuple:
+      case kNamedTuple:
+      case kList:
+      case kDict:
+      case kFrozenDict:
+      case kCustom:
+      case kDataclass: {
         if (agenda.size() < node.arity) {
           throw std::logic_error("Too few elements for custom type.");
         }
@@ -1266,8 +1272,7 @@ nb::object PyTreeDef::Walk(const nb::callable& f_node, nb::handle f_leaf,
         }
         agenda.resize(agenda.size() - node.arity);
         nb::object node_data = node.node_data;
-        if (node.kind == PyTreeKind::kDict ||
-            node.kind == PyTreeKind::kFrozenDict) {
+        if (node.kind == kDict || node.kind == kFrozenDict) {
           // Convert to a nb::list for f_node invocation.
           node_data = nb::cast(node.sorted_dict_keys);
         }
@@ -1398,27 +1403,28 @@ std::string PyTreeDef::ToString() const {
     std::string children =
         absl::StrJoin(agenda.end() - node.arity, agenda.end(), ", ");
     std::string representation;
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kLeaf:
+      case kLeaf:
         agenda.push_back("*");
         continue;
-      case PyTreeKind::kNone:
+      case kNone:
         representation = "None";
         break;
-      case PyTreeKind::kTuple:
+      case kTuple:
         // Tuples with only one element must have a trailing comma.
         if (node.arity == 1) children += ",";
         representation = absl::StrCat("(", children, ")");
         break;
-      case PyTreeKind::kList:
+      case kList:
         representation = absl::StrCat("[", children, "]");
         break;
-      case PyTreeKind::kDict:
-      case PyTreeKind::kFrozenDict: {
+      case kDict:
+      case kFrozenDict: {
         if (node.sorted_dict_keys.size() != node.arity) {
           throw std::logic_error("Number of keys and entries does not match.");
         }
-        representation = node.kind == PyTreeKind::kDict ? "{" : "frozendict({";
+        representation = node.kind == kDict ? "{" : "frozendict({";
         std::string separator;
         auto child_iter = agenda.end() - node.arity;
         for (const nb::handle& key : node.sorted_dict_keys) {
@@ -1428,16 +1434,16 @@ std::string PyTreeDef::ToString() const {
           child_iter++;
           separator = ", ";
         }
-        representation += node.kind == PyTreeKind::kDict ? "}" : "})";
+        representation += node.kind == kDict ? "}" : "})";
         break;
       }
 
-      case PyTreeKind::kNamedTuple:
-      case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass: {
+      case kNamedTuple:
+      case kCustom:
+      case kDataclass: {
         std::string kind;
         std::string data;
-        if (node.kind == PyTreeKind::kNamedTuple) {
+        if (node.kind == kNamedTuple) {
           kind = "namedtuple";
           if (node.node_data) {
             // Node data for named tuples is the type.
@@ -1498,12 +1504,13 @@ void PyTreeDef::FromPickle(nb::object pickle) {
     Node& node = traversal_.emplace_back();
     node.kind = static_cast<PyTreeKind>(nb::cast<int>(t[0]));
     node.arity = nb::cast<int>(t[1]);
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kNamedTuple:
+      case kNamedTuple:
         node.node_data = t[2];
         break;
-      case PyTreeKind::kDict:
-      case PyTreeKind::kFrozenDict:
+      case kDict:
+      case kFrozenDict:
         node.sorted_dict_keys = nb::cast<std::vector<nb::object>>(t[2]);
         if (node.arity < 0 ||
             node.sorted_dict_keys.size() != static_cast<size_t>(node.arity)) {
@@ -1513,14 +1520,14 @@ void PyTreeDef::FromPickle(nb::object pickle) {
               node.arity, node.sorted_dict_keys.size()));
         }
         break;
-      case PyTreeKind::kCustom:
-      case PyTreeKind::kDataclass:
+      case kCustom:
+      case kDataclass:
         node.node_data = t[2];
         break;
-      case PyTreeKind::kLeaf:
-      case PyTreeKind::kNone:
-      case PyTreeKind::kTuple:
-      case PyTreeKind::kList:
+      case kLeaf:
+      case kNone:
+      case kTuple:
+      case kList:
         if (!t[2].is_none()) {
           throw xla::XlaRuntimeError("Malformed pickled PyTreeDef");
         }
@@ -1528,8 +1535,7 @@ void PyTreeDef::FromPickle(nb::object pickle) {
       default:
         throw std::invalid_argument("Malformed PyTreeDef: invalid kind.");
     }
-    if (node.kind == PyTreeKind::kCustom ||
-        node.kind == PyTreeKind::kDataclass) {
+    if (node.kind == kCustom || node.kind == kDataclass) {
       node.custom = t[3].is_none() ? nullptr : registry()->Lookup(t[3]);
       if (node.custom == nullptr) {
         throw xla::XlaRuntimeError(
@@ -1540,7 +1546,7 @@ void PyTreeDef::FromPickle(nb::object pickle) {
         throw std::invalid_argument(
             "Malformed PyTreeDef: custom registration kind mismatch.");
       }
-      if (node.kind == PyTreeKind::kDataclass) {
+      if (node.kind == kDataclass) {
         if (node.arity < 0 || node.custom->data_fields.size() !=
                                   static_cast<size_t>(node.arity)) {
           throw std::invalid_argument(
@@ -1622,20 +1628,21 @@ void PyTreeDef::SerializeTo(PyTreeDefProto& result) const {
   for (const auto& node : traversal_) {
     auto* node_data = result.add_nodes();
     node_data->set_arity(node.arity);
+    using enum PyTreeKind;
     switch (node.kind) {
-      case PyTreeKind::kLeaf:
+      case kLeaf:
         node_data->set_type(PyTreeNodeType::PY_TREE_KIND_LEAF);
         break;
-      case PyTreeKind::kList:
+      case kList:
         node_data->set_type(PyTreeNodeType::PY_TREE_KIND_LIST);
         break;
-      case PyTreeKind::kNone:
+      case kNone:
         node_data->set_type(PyTreeNodeType::PY_TREE_KIND_NONE);
         break;
-      case PyTreeKind::kTuple:
+      case kTuple:
         node_data->set_type(PyTreeNodeType::PY_TREE_KIND_TUPLE);
         break;
-      case PyTreeKind::kDict:
+      case kDict:
         node_data->set_type(PyTreeNodeType::PY_TREE_KIND_DICT);
         for (auto& key : node.sorted_dict_keys) {
           if (!nb::isinstance<nb::str>(key)) {
@@ -1722,29 +1729,30 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
     return nb::borrow<nb::object>(reinterpret_cast<PyObject*>(type_obj));
   };
   const auto& node = traversal_.back();
+  using enum PyTreeKind;
   switch (node.kind) {
-    case PyTreeKind::kLeaf:
+    case kLeaf:
       return std::nullopt;
-    case PyTreeKind::kNone:
+    case kNone:
       return std::make_pair(builtin_type(Py_TYPE(Py_None)), nb::none());
-    case PyTreeKind::kTuple:
+    case kTuple:
       return std::make_pair(builtin_type(&PyTuple_Type), nb::none());
-    case PyTreeKind::kList:
+    case kList:
       return std::make_pair(builtin_type(&PyList_Type), nb::none());
-    case PyTreeKind::kDict:
+    case kDict:
       return std::make_pair(builtin_type(&PyDict_Type),
                             nb::cast(node.sorted_dict_keys));
-    case PyTreeKind::kFrozenDict:
+    case kFrozenDict:
 #if PY_VERSION_HEX >= 0x030F0000
       return std::make_pair(builtin_type(&PyFrozenDict_Type),
                             nb::cast(node.sorted_dict_keys));
 #else
       throw std::logic_error("frozendict is not supported on Python < 3.15");
 #endif
-    case PyTreeKind::kNamedTuple:
+    case kNamedTuple:
       return std::make_pair(node.node_data, nb::none());
-    case PyTreeKind::kCustom:
-    case PyTreeKind::kDataclass:
+    case kCustom:
+    case kDataclass:
       return std::make_pair(node.custom->type, node.node_data);
   }
 }

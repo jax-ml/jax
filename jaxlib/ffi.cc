@@ -74,71 +74,72 @@ void DLPackTensorDeleter(ManagedTensor* t) {
 }
 
 xla::PrimitiveType PrimitiveTypeForFfiDataType(ffi::DataType dtype) {
+  using enum xla::PrimitiveType;
   switch (dtype) {
     case ffi::DataType::INVALID:
-      return xla::PrimitiveType::PRIMITIVE_TYPE_INVALID;
+      return PRIMITIVE_TYPE_INVALID;
     case ffi::PRED:
-      return xla::PrimitiveType::PRED;
+      return PRED;
     case ffi::S1:
-      return xla::PrimitiveType::S1;
+      return S1;
     case ffi::S2:
-      return xla::PrimitiveType::S2;
+      return S2;
     case ffi::S4:
-      return xla::PrimitiveType::S4;
+      return S4;
     case ffi::S8:
-      return xla::PrimitiveType::S8;
+      return S8;
     case ffi::S16:
-      return xla::PrimitiveType::S16;
+      return S16;
     case ffi::S32:
-      return xla::PrimitiveType::S32;
+      return S32;
     case ffi::S64:
-      return xla::PrimitiveType::S64;
+      return S64;
     case ffi::U1:
-      return xla::PrimitiveType::U1;
+      return U1;
     case ffi::U2:
-      return xla::PrimitiveType::U2;
+      return U2;
     case ffi::U4:
-      return xla::PrimitiveType::U4;
+      return U4;
     case ffi::U8:
-      return xla::PrimitiveType::U8;
+      return U8;
     case ffi::U16:
-      return xla::PrimitiveType::U16;
+      return U16;
     case ffi::U32:
-      return xla::PrimitiveType::U32;
+      return U32;
     case ffi::U64:
-      return xla::PrimitiveType::U64;
+      return U64;
     case ffi::F16:
-      return xla::PrimitiveType::F16;
+      return F16;
     case ffi::F32:
-      return xla::PrimitiveType::F32;
+      return F32;
     case ffi::F64:
-      return xla::PrimitiveType::F64;
+      return F64;
     case ffi::BF16:
-      return xla::PrimitiveType::BF16;
+      return BF16;
     case ffi::C64:
-      return xla::PrimitiveType::C64;
+      return C64;
     case ffi::C128:
-      return xla::PrimitiveType::C128;
+      return C128;
     case ffi::TOKEN:
-      return xla::PrimitiveType::TOKEN;
+      return TOKEN;
     case ffi::F8E5M2:
-      return xla::PrimitiveType::F8E5M2;
+      return F8E5M2;
     case ffi::F8E4M3:
-      return xla::PrimitiveType::F8E4M3;
+      return F8E4M3;
     case ffi::F8E4M3FN:
-      return xla::PrimitiveType::F8E4M3FN;
+      return F8E4M3FN;
     case ffi::F8E4M3B11FNUZ:
-      return xla::PrimitiveType::F8E4M3B11FNUZ;
+      return F8E4M3B11FNUZ;
     case ffi::F8E5M2FNUZ:
-      return xla::PrimitiveType::F8E5M2FNUZ;
+      return F8E5M2FNUZ;
     case ffi::F8E4M3FNUZ:
-      return xla::PrimitiveType::F8E4M3FNUZ;
+      return F8E4M3FNUZ;
     case ffi::F8E3M4:
-      return xla::PrimitiveType::F8E3M4;
+      return F8E3M4;
     case ffi::F4E2M1FN:
-      return xla::PrimitiveType::F4E2M1FN;
+      return F4E2M1FN;
     case ffi::F8E8M0FNU:
-      return xla::PrimitiveType::F8E8M0FNU;
+      return F8E8M0FNU;
   }
 }
 // Registers a 'fn' as a custom call target.

@@ -60,24 +60,25 @@ constexpr GarbageCollectionGuardLevel kDefaultGarbageCollectionGuardLevel =
 // Returns the transfer guard action for a transfer.
 TransferGuardAction GetTransferGuardAction(TransferGuardLevel guard_level,
                                            bool explicit_transfer) {
+  using enum TransferGuardLevel;
   switch (guard_level) {
-    case TransferGuardLevel::kAllow:
+    case kAllow:
       return TransferGuardAction::kAllow;
-    case TransferGuardLevel::kLog:
+    case kLog:
       if (explicit_transfer) {
         return TransferGuardAction::kAllow;
       } else {
         return TransferGuardAction::kLog;
       }
-    case TransferGuardLevel::kDisallow:
+    case kDisallow:
       if (explicit_transfer) {
         return TransferGuardAction::kAllow;
       } else {
         return TransferGuardAction::kDisallow;
       }
-    case TransferGuardLevel::kLogExplicit:
+    case kLogExplicit:
       return TransferGuardAction::kLog;
-    case TransferGuardLevel::kDisallowExplicit:
+    case kDisallowExplicit:
       return TransferGuardAction::kDisallow;
     default:
       // Unreachable; gracefully handle the unexpected guard level and prevent a
