@@ -1866,7 +1866,7 @@ BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
   // Adding a CPU version of the collective metadata for TMA initialization.
   if (uses_collective_metadata) {
     TF_RET_CHECK(collective_params != nullptr)
-        << "InternalError: collective_params is null";
+        << "collective_params is null";
     ASSIGN_OR_RETURN(
         xla::gpu::GpuCliqueKey clique_key,
         GetCliqueKey(*collective_params, resources.xla_replica_ids));
@@ -1906,7 +1906,7 @@ BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
 
   CompiledKernel* kernel = resources.kernel;
   TF_RET_CHECK(kernel->host_func != nullptr)
-      << "InternalError: build_kernel_spec is null";
+      << "build_kernel_spec is null";
   mosaic::gpu::MosaicKernelSpec cfg;
   kernel->host_func(&cfg, buffer_ptrs.data());
   return std::make_pair(std::move(cfg), comm);
@@ -1939,7 +1939,7 @@ absl::Status MosaicGpuRecord(
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
-        << "InternalError: kernel_handle is null; MosaicGpuPrepare must run "
+        << "kernel_handle is null; MosaicGpuPrepare must run "
            "before MosaicGpuRecord";
     llvm::SmallVector<const XLA_FFI_Command*, 1> dependencies;
     if (comm != nullptr) {
@@ -1964,11 +1964,11 @@ absl::Status MosaicGpuRecord(
         .status();
   }
   TF_RET_CHECK(record_ctx.action() == ffi::RecordAction::kUpdate)
-      << "InternalError: unexpected record action: "
+      << "unexpected record action: "
       << static_cast<int>(record_ctx.action());
   if (comm != nullptr) {
     TF_RET_CHECK(record_ctx.commands().size() == 2)
-        << "InternalError: expected 2 commands in record context, got "
+        << "expected 2 commands in record context, got "
         << record_ctx.commands().size();
     RETURN_IF_ERROR(
         comm->RecordMultiGpuBarrier(record_ctx, record_ctx.commands()[0])
@@ -1976,7 +1976,7 @@ absl::Status MosaicGpuRecord(
     return record_ctx.UpdateLaunch(record_ctx.commands()[1], kernel_args);
   }
   TF_RET_CHECK(record_ctx.commands().size() == 1)
-      << "InternalError: expected 1 command in record context, got "
+      << "expected 1 command in record context, got "
       << record_ctx.commands().size();
   return record_ctx.UpdateLaunch(record_ctx.commands()[0], kernel_args);
 }
