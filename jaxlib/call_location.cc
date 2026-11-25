@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
@@ -79,7 +78,7 @@ bool IsJaxInternalFrame(PyCodeObject* code) {
 
   bool is_internal = false;
   for (const auto& prefix : *exclude_paths_from_python) {
-    if (absl::StartsWith(file_name_sv, prefix)) {
+    if (file_name_sv.starts_with(prefix)) {
       is_internal = true;
       break;
     }

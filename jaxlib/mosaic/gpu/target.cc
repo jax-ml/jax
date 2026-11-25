@@ -21,7 +21,6 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -67,8 +66,8 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
     }
     for (const llvm::SubtargetSubTypeKV& subtype :
          subtarget_info->getAllProcessorDescriptions()) {
-      if (absl::StartsWith(subtype.key(), sm_base) &&
-          absl::EndsWith(subtype.key(), "a")) {
+      std::string_view key = subtype.key();
+      if (key.starts_with(sm_base) && key.ends_with('a')) {
         sm_arch_specific = subtype.key();
         break;
       }

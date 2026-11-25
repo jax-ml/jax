@@ -460,7 +460,7 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
       &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
 
   ASSIGN_OR_RETURN(std::string sm, mosaic::gpu::GetSmVersion(major, minor));
-  bool has_accelerated_features = absl::EndsWith(sm, "a");
+  bool has_accelerated_features = sm.ends_with('a');
 
   using FeatureExtension = se::CudaComputeCapability::FeatureExtension;
   return se::CudaComputeCapability(major, minor,
