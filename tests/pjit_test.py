@@ -40,7 +40,6 @@ from jax._src import pretty_printer as pp
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_version
 from jax.lax import with_sharding_constraint
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.random import prng
@@ -424,7 +423,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
-  def testBufferDonationWithoutAlias(self):
+  def testBufferDonationNotDonated(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
 
@@ -434,10 +433,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     x = jax.device_put(np.arange(16).reshape(8, 2), s)
     f(x)
-    if xla_version >= 94:
-      self.assertDeleted(x)
-    else:
-      self.assertNotDeleted(x)
+    self.assertNotDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationDifferentIOShapes(self):
