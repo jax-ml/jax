@@ -80,6 +80,11 @@ class ReentrantHashMap {
     return set_.find(key);
   }
 
+  template <typename K>
+  bool contains(const K& key) const {
+    return set_.contains(key);
+  }
+
   iterator begin() { return set_.begin(); }
   iterator end() { return set_.end(); }
   const_iterator begin() const { return set_.begin(); }

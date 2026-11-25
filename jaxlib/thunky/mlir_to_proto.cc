@@ -1048,7 +1048,7 @@ GpuExecutableProtoToThunkyModule(const GpuExecutableProto& gpu_proto,
                                     param_alloc_indices.end());
   std::vector<int64_t> fresh_out_alloc_indices;
   for (int64_t idx : out_alloc_indices) {
-    if (param_alloc_set.find(idx) == param_alloc_set.end()) {
+    if (!param_alloc_set.contains(idx)) {
       fresh_out_alloc_indices.push_back(idx);
     }
   }
@@ -1076,10 +1076,8 @@ GpuExecutableProtoToThunkyModule(const GpuExecutableProto& gpu_proto,
 
   std::vector<int64_t> internal_alloc_indices;
   for (const auto& alloc : gpu_proto.buffer_allocations().values()) {
-    if (param_or_out_indices.find(alloc.index()) ==
-            param_or_out_indices.end() &&
-        constant_alloc_indices.find(alloc.index()) ==
-            constant_alloc_indices.end()) {
+    if (!param_or_out_indices.contains(alloc.index()) &&
+        !constant_alloc_indices.contains(alloc.index())) {
       internal_alloc_indices.push_back(alloc.index());
     }
   }

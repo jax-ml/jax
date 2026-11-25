@@ -1592,8 +1592,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
 
     for (int i = 0; i < dst_addressable_devices.size(); ++i) {
       const int shard_device_id = addressable_devices[i]->Id().value();
-      const auto it = device_id_to_array_shard_index.find(shard_device_id);
-      if (it == device_id_to_array_shard_index.end()) {
+      if (!device_id_to_array_shard_index.contains(shard_device_id)) {
         return absl::InvalidArgumentError(absl::StrCat(
             "Array shard ", i, " is on device id=", shard_device_id,
             ", but sharding does not have a shard on that device."));

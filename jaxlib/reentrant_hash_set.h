@@ -395,6 +395,13 @@ class ReentrantHashSet {
     }
   }
 
+  // Returns true if the key is present in the set.
+  template <typename K>
+  bool contains(const K& key) const {
+    const_iterator it = find(key);
+    return it != end();
+  }
+
   // Returns a pair of the inserted (or existing) key pointer, and a boolean
   // which is true if inserted, false if already exists.
   std::pair<Key*, bool> insert(const Key& key) {

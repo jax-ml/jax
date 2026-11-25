@@ -128,6 +128,22 @@ TEST(ReentrantHashSetTest, TryEmplace) {
   EXPECT_EQ(set.size(), 1);
 }
 
+TEST(ReentrantHashSetTest, Contains) {
+  ReentrantHashSet<int> set;
+  const auto& const_set = set;
+  EXPECT_FALSE(set.contains(42));
+  EXPECT_FALSE(const_set.contains(42));
+
+  set.insert(42);
+  EXPECT_TRUE(set.contains(42));
+  EXPECT_TRUE(const_set.contains(42));
+  EXPECT_FALSE(set.contains(99));
+
+  set.erase(set.find(42));
+  EXPECT_FALSE(set.contains(42));
+  EXPECT_FALSE(const_set.contains(42));
+}
+
 TEST(ReentrantHashMapTest, Basic) {
   ReentrantHashMap<int, int> map;
   EXPECT_EQ(map.find(42), map.end());
@@ -150,6 +166,22 @@ TEST(ReentrantHashMapTest, TryEmplace) {
   ASSERT_NE(map.find(42), map.end());
   EXPECT_EQ(map.find(42)->second, 100);
   EXPECT_EQ(map.size(), 1);
+}
+
+TEST(ReentrantHashMapTest, Contains) {
+  ReentrantHashMap<int, int> map;
+  const auto& const_map = map;
+  EXPECT_FALSE(map.contains(42));
+  EXPECT_FALSE(const_map.contains(42));
+
+  map.insert(42, 100);
+  EXPECT_TRUE(map.contains(42));
+  EXPECT_TRUE(const_map.contains(42));
+  EXPECT_FALSE(map.contains(99));
+
+  map.erase(map.find(42));
+  EXPECT_FALSE(map.contains(42));
+  EXPECT_FALSE(const_map.contains(42));
 }
 
 struct StringHash {
@@ -177,18 +209,23 @@ TEST(ReentrantHashMapTest, HeterogeneousLookup) {
   // Heterogeneous find
   ASSERT_NE(map.find("hello"), map.end());  // const char* lookup
   EXPECT_EQ(map.find("hello")->second, 42);
+  EXPECT_TRUE(map.contains("hello"));
+  EXPECT_FALSE(map.contains("world"));
 
   // Heterogeneous erase
   auto it1 = map.find("hello");
   ASSERT_NE(it1, map.end());
   map.erase(it1);
   EXPECT_EQ(map.size(), 0);
+  EXPECT_FALSE(map.contains("hello"));
 }
 
 TEST(ReentrantHashSetTest, TryEmplaceHeterogeneous) {
   ReentrantHashSet<std::string, StringHash, StringEq> set;
   EXPECT_TRUE(set.try_emplace("hello", "hello").second);
   EXPECT_FALSE(set.try_emplace("hello", "hello").second);
+  EXPECT_TRUE(set.contains("hello"));
+  EXPECT_FALSE(set.contains("world"));
   ASSERT_NE(set.find("hello"), set.end());
   EXPECT_EQ(*set.find("hello"), "hello");
 }
