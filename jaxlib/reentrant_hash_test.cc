@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -306,6 +307,48 @@ TEST(ReentrantHashSetTest, ExceptionSafety) {
 
   EXPECT_TRUE(set.insert(3).second);
   EXPECT_EQ(set.size(), 3);
+}
+
+TEST(ReentrantHashSetTest, EmptyFunctorsTakeNoSpace) {
+  struct EmptyHash {
+    size_t operator()(int x) const { return static_cast<size_t>(x); }
+  };
+  struct EmptyEq {
+    bool operator()(int a, int b) const { return a == b; }
+  };
+  struct NonEmptyHash {
+    char salt = 0;
+    size_t operator()(int x) const { return static_cast<size_t>(x) ^ salt; }
+  };
+  struct NonEmptyEq {
+    char tag = 0;
+    bool operator()(int a, int b) const { return tag == 0 && a == b; }
+  };
+  struct ExpectedSetLayout {
+    std::unique_ptr<int8_t[]> ctrl;
+    std::unique_ptr<int[]> slots;
+    size_t size;
+    size_t num_deleted;
+    size_t capacity;
+    float max_load_factor;
+    size_t version;
+  };
+
+  static_assert(sizeof(ReentrantHashSet<int>) == sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashMap<int, int>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashSet<int, NonEmptyHash, EmptyEq>));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashSet<int, EmptyHash, NonEmptyEq>));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashMap<int, int, NonEmptyHash, EmptyEq>));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashMap<int, int, EmptyHash, NonEmptyEq>));
 }
 
 TEST(ReentrantHashSetTest, RandomizedCorrectnessTest) {

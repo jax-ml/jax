@@ -660,8 +660,8 @@ class ReentrantHashSet {
   // and Use-After-Free problems.
   size_t version_ = 0;
 
-  Hash hasher_;
-  Eq eq_;
+  [[no_unique_address]] Hash hasher_;
+  [[no_unique_address]] Eq eq_;
 };
 
 }  // namespace jax
