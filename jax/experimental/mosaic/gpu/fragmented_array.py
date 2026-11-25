@@ -4625,7 +4625,7 @@ class FragmentedArray:
         )
       if not tiling_rank:
         raise ValueError(
-            "Tiling rank for reference of shape {tiled_shape} must be at least"
+            f"Tiling rank for reference of shape {tiled_shape} must be at least"
             " 1"
         )
     tiling = Tiling((tuple(tiled_shape[-tiling_rank:]),))
