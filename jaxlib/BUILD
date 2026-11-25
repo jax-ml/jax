@@ -290,6 +290,7 @@ nanobind_extension(
 nanobind_pywrap_extension(
     name = "_pretty_printer",
     srcs = ["_pretty_printer.cc"],
+    pytype_srcs = ["_pretty_printer.pyi"],
     deps = [
         ":nb_class_ptr",
         "@com_google_absl//absl/container:inlined_vector",
@@ -330,6 +331,7 @@ nanobind_pywrap_extension(
         "weakref_lru_cache.h",
         "weakref_lru_cache_module.cc",
     ],
+    pytype_srcs = ["weakref_lru_cache.pyi"],
     deps = [
         ":nb_class_ptr",
         ":pytree",
@@ -380,6 +382,7 @@ py_test(
 nanobind_pywrap_extension(
     name = "utils",
     srcs = ["utils.cc"],
+    pytype_srcs = ["utils.pyi"],
     deps = [
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/cleanup",
@@ -407,6 +410,19 @@ nanobind_pywrap_extension(
     ],
     postprocess_stubgen = "//jaxlib:backport_stubs",
     pytype_deps = py_deps(["numpy"]) + ["@xla//xla/python:_hlo"],
+    pytype_srcs = [
+        "_jax/__init__.pyi",
+        "_jax/config.pyi",
+        "_jax/donation_recovery.pyi",
+        "_jax/ffi.pyi",
+        "_jax/guard_lib.pyi",
+        "_jax/hlo_sharding_util.pyi",
+        "_jax/ifrt_programs.pyi",
+        "_jax/jax_jit.pyi",
+        "_jax/mlir.pyi",
+        "_jax/pytree.pyi",
+        "_jax/transfer_guard_lib.pyi",
+    ],
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
@@ -804,6 +820,7 @@ cc_library(
 nanobind_pywrap_extension(
     name = "_ifrt_proxy",
     srcs = ["ifrt_proxy.cc"],
+    pytype_srcs = ["_ifrt_proxy.pyi"],
     stub_replacement_patterns = {
         "_ifrt_proxy.__prefix__": "from jax.jaxlib._jax import Client",
     },
@@ -833,6 +850,7 @@ nanobind_pywrap_extension(
 nanobind_pywrap_extension(
     name = "_pathways",
     srcs = ["pathways.cc"],
+    pytype_srcs = ["_pathways.pyi"],
     stub_replacement_patterns = {
         "_pathways.__prefix__": "from jax.jaxlib._jax import Client",
     },
@@ -1504,6 +1522,7 @@ nanobind_pywrap_extension(
         "//third_party/py/numpy",
         "@xla//xla/python:_hlo",
     ],
+    pytype_srcs = ["_sdy_mpmd.pyi"],
     stub_replacement_patterns = {
         # TODO(slebedev): Remove all of these once we no longer need to support pytype.
         "PartitioningPhase._boundary_": "_boundary_: enum.FlagBoundary = ...",
