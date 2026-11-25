@@ -343,6 +343,70 @@ def _run_state_resource_estimator(
   return _estimate_resources(ctx, jaxpr)
 
 
+def _smem_ref_bytes(ref: state_types.AbstractRef) -> int:
+  ref_bits = math.prod(ref.shape) * dtypes.itemsize_bits(ref.dtype)
+  if ref_bits % 8:
+    raise ValueError(
+        "Only byte-aligned shapes are supported. Got shape:"
+        f" {ref.dtype}{ref.shape}"
+    )
+  return ref_bits // 8
+
+
+def _smem_ref_union_layout(
+    aval: gpu_core.AbstractRefUnion,
+) -> tuple[int, tuple[int, ...]]:
+  union_bytes = 0
+  offsets: list[int] = []
+  for ref_group in aval.refs:
+    byte_offset = 0
+    for ref in jax.tree.leaves(ref_group):
+      # Make sure that the start of each ref is aligned with `SMEM_ALIGNMENT`.
+      byte_offset = gpu_core.align_to(byte_offset, gpu_core.SMEM_ALIGNMENT)
+      offsets.append(byte_offset)
+      byte_offset += _smem_ref_bytes(ref)
+    union_bytes = max(union_bytes, byte_offset)
+  return union_bytes, tuple(offsets)
+
+
+def _tmem_cols_for_ref(ref: gpu_core.AbstractTMEMRef) -> int:
+  # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+  # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+  # on the collapsed shape.
+  shape = ref.shape
+  if len(shape) > 2:
+    shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+  assert ref.layout is not None
+  return ref.layout.cols_in_shape(shape, dtypes.itemsize_bits(ref.dtype))
+
+
+def _tmem_ref_union_layout(
+    aval: gpu_core.AbstractRefUnion,
+) -> tuple[int, bool, tuple[int, ...]]:
+  """Returns `(total_cols, collective, member_col_offsets)` for a TMEM union."""
+  union_cols = 0
+  offsets: list[int] = []
+  collective: bool | None = None
+  for ref_group in aval.refs:
+    col_offset = 0
+    for ref in jax.tree.leaves(ref_group):
+      assert isinstance(ref, gpu_core.AbstractTMEMRef)
+      if collective is None:
+        collective = ref.collective
+      elif ref.collective != collective:
+        raise ValueError(
+            "Some aliased TMEM references are collective and some are not."
+        )
+      col_offset = gpu_core.align_to(col_offset, gpu_core.TMEM_COL_ALIGNMENT)
+      offsets.append(col_offset)
+      col_offset += _tmem_cols_for_ref(ref)
+    union_cols = max(
+        union_cols, gpu_core.align_to(col_offset, gpu_core.TMEM_COL_ALIGNMENT)
+    )
+  assert collective is not None
+  return union_cols, collective, tuple(offsets)
+
+
 @_register_resource_estimator(primitives.run_scoped_p)
 def _run_scoped_resource_estimator(
     ctx: ResourceEstimatorContext,
@@ -360,6 +424,21 @@ def _run_scoped_resource_estimator(
   for v, transforms in zip(jaxpr.invars, ref_transforms):
     aval = v.aval
     assert isinstance(aval, state_types.AbstractRef)
+    if isinstance(aval, gpu_core.AbstractRefUnion):
+      if aval.memory_space == gpu_core.TMEM:
+        cols_used, is_collective, _ = _tmem_ref_union_layout(aval)
+        if is_collective:
+          rs += Resources(tmem_collective_scratch_cols=cols_used)
+        else:
+          rs += Resources(tmem_scratch_cols=cols_used)
+      elif aval.memory_space == gpu_core.SMEM:
+        smem_bytes, _ = _smem_ref_union_layout(aval)
+        rs += Resources(smem_scratch_bytes=smem_bytes)
+      else:
+        raise NotImplementedError(
+            f"Unsupported memory space for RefUnion: {aval.memory_space}"
+        )
+      continue
     if isinstance(aval.dtype, gpu_core.BarrierType):
       barrier = _get_barrier(aval, ctx.arrival_multiplier)
       rs += Resources(barrier_counts=collections.Counter([barrier]))
@@ -370,24 +449,18 @@ def _run_scoped_resource_estimator(
       continue
     if aval.memory_space == gpu_core.TMEM:
       # Estimate columns used.
-      if isinstance(aval, gpu_core.AbstractRefUnion):
-        # `AbstractRefUnion` is canonicalized to a 2D `(128, max_cols)` shape at
-        # creation time, even when wrapping nD refs.
-        assert len(aval.shape) == 2 and aval.shape[0] == 128
-        cols_used = aval.shape[1]
-      else:
-        physical_aval = cast(
-            state_types.AbstractRef,
-            state_types.transform_type(transforms, aval),
+      physical_aval = cast(
+          state_types.AbstractRef,
+          state_types.transform_type(transforms, aval),
+      )
+      if len(physical_aval.shape) != 2:
+        raise ValueError(
+            f"TMEM allocations must be 2D. Got {physical_aval.shape}"
         )
-        if len(physical_aval.shape) != 2:
-          raise ValueError(
-              f"TMEM allocations must be 2D. Got {physical_aval.shape}"
-          )
-        # pyrefly: ignore[missing-attribute]
-        cols_used = aval.layout.cols_in_shape(
-            physical_aval.shape, dtypes.itemsize_bits(aval.dtype)
-        )
+      # pyrefly: ignore[missing-attribute]
+      cols_used = aval.layout.cols_in_shape(
+          physical_aval.shape, dtypes.itemsize_bits(aval.dtype)
+      )
       if aval.collective:  # pyrefly: ignore[missing-attribute]
         rs += Resources(tmem_collective_scratch_cols=cols_used)
       else:
@@ -1342,13 +1415,22 @@ def _extract_aliased_ref(
   # Ref there, updating the transforms.
   match transforms:
     case (
-        gpu_core.ExtractAliasedRef(dtype, transformed_shape, offset, alias_group_idx, layout) as t,
+        gpu_core.ExtractAliasedRef(_, alias_group_idx, idx) as t,
         *other_transforms,
     ):
+      assert isinstance(ref_aval, gpu_core.AbstractRefUnion)
+      if ref_aval.memory_space == gpu_core.TMEM:
+        _, _, offsets = _tmem_ref_union_layout(ref_aval)
+      elif ref_aval.memory_space == gpu_core.SMEM:
+        _, offsets = _smem_ref_union_layout(ref_aval)
+      else:
+        raise NotImplementedError("Unsupported memory space.")
+      offset = offsets[idx]
       ref_aval = t.transform_type(ref_aval)
-      mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+      mlir_dtype = mgpu_utils.dtype_to_ir_type(ref_aval.dtype)
       if isinstance(ref, tcgen05.TMEMRef):
-        assert layout is not None
+        assert isinstance(ref_aval, gpu_core.AbstractTMEMRef)
+        assert ref_aval.layout is not None
         physical_shape = cast(
             state_types.AbstractRef,
             state_types.transform_type(scratch_transforms, ref_aval),
@@ -1363,14 +1445,13 @@ def _extract_aliased_ref(
             address=address,
             shape=cast(tuple[int, int], physical_shape),
             dtype=mlir_dtype,
-            layout=layout,
+            layout=ref_aval.layout,
         )
       else:
         assert isinstance(ref, ir.Value)  # make pyrefly happy
         input_ref_ty = ir.MemRefType(ref.type)
         if input_ref_ty.memory_space == mgpu_utils.smem():
-          assert layout is None
-          ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(
+          ref_bits = math.prod(ref_aval.shape) * mgpu_utils.bitwidth(
               mlir_dtype
           )
           if ref_bits % 8:
@@ -1378,7 +1459,7 @@ def _extract_aliased_ref(
           assert offset % gpu_core.SMEM_ALIGNMENT == 0
 
           ref_ty = ir.MemRefType.get(
-              transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
+              ref_aval.shape, mlir_dtype, memory_space=mgpu_utils.smem()
           )
           if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
             if not isinstance(ref.owner, mgpu.dialect.SliceSMEMOp):
@@ -1444,8 +1525,9 @@ def _extract_aliased_ref(
           i64 = ir.IntegerType.get_signless(64)
           slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
           ref = slice_op.result
-          assert layout is not None
-          layout_attr = mgpu.layouts.to_layout_attr(layout)
+          assert isinstance(ref_aval, gpu_core.AbstractTMEMRef)
+          assert ref_aval.layout is not None
+          layout_attr = mgpu.layouts.to_layout_attr(ref_aval.layout)
           ref = mgpu.dialect.tmem_layout_cast(ref, layout_attr)
         else:
           raise NotImplementedError("Unsupported memory space.")
@@ -3533,6 +3615,7 @@ def _run_scoped_lowering_rule(
         continue
       if (
           isinstance(aval, state_types.AbstractRef)
+          and not isinstance(aval, gpu_core.AbstractRefUnion)
           and aval.memory_space == gpu_core.GMEM
           and jnp.issubdtype(aval.dtype, pallas_core.semaphore)
       ):
@@ -3554,6 +3637,42 @@ def _run_scoped_lowering_rule(
             " run_scoped if you intend all threads to share the same"
             f" allocation (currently collective_axes={collective_axes})."
         )
+      if isinstance(aval, gpu_core.AbstractRefUnion):
+        # Despite its name, `flatten_ref_union` preserves each ref group's
+        # PyTree structure (for `AbstractRefUnion._iter`).
+        extracted_refs = jax.tree.leaves(
+            gpu_core.flatten_ref_union(aval),
+            is_leaf=lambda x: isinstance(x, pallas_core.TransformedRef),
+        )
+        union_transforms = {}
+        for r, t in zip(extracted_refs, transform):
+          (extract,) = r.transforms
+          assert isinstance(extract, gpu_core.ExtractAliasedRef)
+          union_transforms[extract] = t
+        if aval.memory_space == gpu_core.SMEM:
+          smem_bytes, _ = _smem_ref_union_layout(aval)
+          input_ref = alloc_stack.enter_context(
+              ctx.module_ctx.scratch_view(
+                  jax.ShapeDtypeStruct((smem_bytes,), jnp.int8),
+                  transforms=union_transforms,
+              )
+          )
+        elif aval.memory_space == gpu_core.TMEM:
+          max_cols, _, _ = _tmem_ref_union_layout(aval)
+          input_ref = alloc_stack.enter_context(
+              ctx.module_ctx.alloc_tmem(
+                  jax.ShapeDtypeStruct((128, max_cols), jnp.int32),
+                  layout=tcgen05.tmem_default_layout(packing=1),
+                  transforms=union_transforms,
+              )
+          )
+        else:
+          raise NotImplementedError(
+              f"Unsupported memory space for RefUnion: {aval.memory_space}"
+          )
+        input_refs.append(input_ref)
+        should_discharge.append(False)
+        continue
       if isinstance(aval.dtype, gpu_core.BarrierType):
         barrier = _get_barrier(aval, ctx.estimator_ctx.arrival_multiplier)
         barrier_ctx = ctx.module_ctx.reserve_barrier(barrier)
@@ -3567,19 +3686,6 @@ def _run_scoped_lowering_rule(
         should_discharge.append(False)
         continue
 
-      if isinstance(aval, gpu_core.AbstractRefUnion):
-        # Despite its name, `flatten_ref_union` preserves each ref group's
-        # PyTree structure (for `AbstractRefUnion._iter`).
-        extracted_refs = jax.tree.leaves(
-            gpu_core.flatten_ref_union(aval),
-            is_leaf=lambda x: isinstance(x, pallas_core.TransformedRef),
-        )
-        union_transforms = {}
-        for r, t in zip(extracted_refs, transform):
-          (extract,) = r.transforms
-          assert isinstance(extract, gpu_core.ExtractAliasedRef)
-          union_transforms[extract] = t
-        transform = union_transforms
       if aval.memory_space == gpu_core.SMEM:
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.scratch_view(
