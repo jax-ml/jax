@@ -85,6 +85,9 @@ def create_instr_descriptor(
     elif ty == ir.BF16Type.get():
       assert acc_dtype == f32
       return 1
+    elif ty == ir.FloatTF32Type.get():
+      assert acc_dtype == f32
+      return 2
     elif ty == ir.Float8E4M3FNType.get():
       assert acc_dtype in {f16, f32}
       return 0
@@ -455,6 +458,9 @@ def mma(
   if n % n_group_elems:
     raise ValueError(f"N must be a multiple of {n_group_elems}, got: {n}")
   n_groups = n // n_group_elems
+  # On sm_100, the MMA truncates the mantissas of f32 operands to the 10 bits of
+  # TF32 instead of rounding them. Callers that want round-to-nearest TF32
+  # inputs must round the operands first, e.g. with `jax.lax.reduce_precision`.
   # TODO(apaszke): Require users to bitcast input refs to tf32 before MMA.
   mma_b_element_type = (
       ir.FloatTF32Type.get() if b_element_type == ir.F32Type.get() else b_element_type
@@ -608,6 +614,18 @@ def mma(
     if b_desc.fastest_dim != mma_utils.Dim.K:
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
+      )
+  if isinstance(mma_a_element_type, ir.FloatTF32Type):
+    # M- or N-fastest TF32 operands need the 128B swizzle with 32B atoms.
+    if a_fastest != mma_utils.Dim.K:
+      raise NotImplementedError(
+          "MMA with f32 inputs only supports K-fastest operands, but A is"
+          " M-fastest"
+      )
+    if b_desc.fastest_dim != mma_utils.Dim.K:
+      raise NotImplementedError(
+          "MMA with f32 inputs only supports K-fastest operands, but B is"
+          " N-fastest"
       )
   if is_sparse and b_swizzle == 32 and b_desc.fastest_dim == mma_utils.Dim.K:
     raise NotImplementedError(
@@ -779,6 +797,8 @@ def _do_mma(
   else:
     if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
       kind = "f16"
+    elif isinstance(a_element_type, ir.FloatTF32Type):
+      kind = "tf32"
     elif isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       kind = "f8f6f4"
     elif (

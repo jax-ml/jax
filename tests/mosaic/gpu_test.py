@@ -2065,7 +2065,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),  # TODO(apaszke): f32
+      # TODO(apaszke): f32 with M- or N-fastest operands (K-fastest f32 is
+      # covered by test_mma_basic_tf32).
+      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(64, 128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 192, 224, 256, 512),
@@ -2089,6 +2091,35 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         lhs_transpose_tiles=False,
         rhs_transpose_tiles=False,
     )
+
+  def test_mma_basic_tf32(self):
+    # MMA only supports K-fastest f32 operands.
+    self._basic_mma_test(
+        m=128,
+        n=128,
+        k_steps=2,  # Reducing to 1 can be helpful while debugging.
+        swizzle=128,
+        lhs_transpose=False,
+        rhs_transpose=True,
+        in_jax_dtype=jnp.float32,
+        out_jax_dtype=jnp.float32,
+    )
+
+  @parameterized.parameters((True, True), (False, False), (True, False))
+  def test_mma_mn_fastest_f32_unsupported(self, lhs_transpose, rhs_transpose):
+    with self.assertRaisesRegex(
+        NotImplementedError, "only supports K-fastest operands"
+    ):
+      self._basic_mma_test(
+          m=128,
+          n=128,
+          k_steps=1,
+          swizzle=128,
+          lhs_transpose=lhs_transpose,
+          rhs_transpose=rhs_transpose,
+          in_jax_dtype=jnp.float32,
+          out_jax_dtype=jnp.float32,
+      )
 
   @parameterized.product(
       lhs_transpose=(False, True),
@@ -2233,6 +2264,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    if in_jax_dtype == jnp.float32:
+      # The MMA computes with TF32, so the inputs are exact in TF32.
+      x, y = (np.asarray(jax.lax.reduce_precision(a, 8, 10)) for a in (x, y))
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     if y_shape[0] % rhs_tiling[0] != 0 or y_shape[1] % rhs_tiling[1] != 0:
       self.skipTest("rhs tiling must divide y_shape")
@@ -2269,7 +2303,9 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
 
   @parameterized.product(
-      in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
+      # TODO(apaszke): f32 with N-fastest B (K-fastest f32 is covered by
+      # test_mma_lhs_tmem_tf32).
+      in_jax_dtype=(jnp.float16, jnp.bfloat16),
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 160, 128, 256),
@@ -2277,6 +2313,18 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_lhs_tmem_float(self, m, n, in_jax_dtype, out_jax_dtype):
     self._basic_mma_lhs_tmem_test(
         m, n, in_jax_dtype, out_jax_dtype, tcgen05.LAYOUT, swizzle=128
+    )
+
+  def test_mma_lhs_tmem_tf32(self):
+    # MMA only supports K-fastest f32 operands.
+    self._basic_mma_lhs_tmem_test(
+        m=128,
+        n=128,
+        in_jax_dtype=jnp.float32,
+        out_jax_dtype=jnp.float32,
+        lhs_layout=tcgen05.LAYOUT,
+        swizzle=128,
+        rhs_transpose=True,
     )
 
   @parameterized.product(
@@ -2293,7 +2341,14 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
 
   def _basic_mma_lhs_tmem_test(
-      self, m, n, in_jax_dtype, out_jax_dtype, lhs_layout, swizzle
+      self,
+      m,
+      n,
+      in_jax_dtype,
+      out_jax_dtype,
+      lhs_layout,
+      swizzle,
+      rhs_transpose=False,
   ):
     k_steps = 2  # Reducing to 1 can be helpful while debugging.
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
@@ -2325,6 +2380,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       )
       tcgen05.commit_tmem()
       with mgpu.single_thread():
+        if rhs_transpose:
+          rhs_smem = memref_transpose(rhs_smem, (1, 0, 3, 2))
         tcgen05.mma(
             acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
@@ -2334,8 +2391,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
     x_shape = (m, k)
     x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
-    y_shape = (k, n)
+    y_shape = (n, k) if rhs_transpose else (k, n)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+    if in_jax_dtype == jnp.float32:
+      # The MMA computes with TF32, so the inputs are exact in TF32.
+      x, y = (np.asarray(jax.lax.reduce_precision(a, 8, 10)) for a in (x, y))
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     if y_shape[0] % rhs_tiling[0] != 0 or y_shape[1] % rhs_tiling[1] != 0:
       self.skipTest("rhs tiling must divide y_shape")
@@ -2350,7 +2410,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = jnp.matmul(x32, y32, precision="high")
+    ref = jnp.matmul(x32, y32.T if rhs_transpose else y32, precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
