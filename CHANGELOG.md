@@ -33,6 +33,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     (logged at `WARNING` when `jax_log_compiles` is enabled). Previously this
     raised a `ValueError`.
 * Bug fixes
+  * {func}`jax.numpy.quantile`, {func}`jax.numpy.percentile`,
+    {func}`jax.numpy.median`, and their `nan` variants now return the same
+    shape as NumPy for 0-d inputs with `keepdims=True`. Previously a size-1
+    axis was added to the result.
 
 ## JAX 0.12.1 (November 18, 2026)
 

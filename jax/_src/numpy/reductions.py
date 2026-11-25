@@ -2745,7 +2745,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       weights = lax.broadcast_in_dim(weights, a.shape, broadcast_dimensions=ax_tuple)
   else:
     a, = promote_dtypes_inexact(a)
-  keepdim = []
+  keepdim: list[int] | None = None
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
   if out_sharding is not None:
@@ -2801,7 +2801,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if squash_nans and core.definitely_equal(a_shape[axis], 0):
     # NumPy handles empty nanquantile inputs via nanmean, so q does not
     # contribute a leading dimension to the result shape.
-    if keepdims and keepdim:
+    if keepdims and keepdim is not None:
       result_shape = keepdim
     else:
       result_shape = list(a_shape)
@@ -2950,7 +2950,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = _where(force_nan_f, lax.full_like(result, np.nan), result)
   else:
     raise ValueError(f"{method=!r} not recognized")
-  if keepdims and keepdim:
+  if keepdims and keepdim is not None:
     if q_ndim > 0:
       keepdim = [np.shape(q)[0], *keepdim]
     result = result.reshape(keepdim)

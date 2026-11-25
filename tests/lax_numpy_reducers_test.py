@@ -906,6 +906,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     ],
     [dict(a_shape=a_shape, axis=axis)
       for a_shape, axis in (
+        ((), None),
         ((7,), None),
         ((6, 7,), None),
         ((47, 7), 0),
@@ -961,6 +962,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(a_shape=a_shape, axis=axis)
       for a_shape, axis in (
+        ((), None),
         ((7,), None),
         ((6, 7,), None),
         ((47, 7), 0),
@@ -977,6 +979,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     else:
       a_rng = jtu.rand_some_nan(self.rng())
     args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="All-NaN slice encountered")
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
