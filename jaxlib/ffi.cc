@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
@@ -443,6 +444,30 @@ nb::tuple PyFfiAnyBuffer::DLPackDevice() const {
   return nb::make_tuple(static_cast<int32_t>(device_type_), device_ordinal_);
 }
 
+// Keep nanobind conversions alongside the Python type bindings to avoid
+// sharing bound types across incompatible nanobind ABIs.
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kXlaBufferPythonGpuCallbackRocm,
+    (XlaBufferCallback<kDLROCM>),
+    xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
+        .Ctx<xla::ffi::DeviceOrdinal>()
+        .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
+        .Attr<uint64_t>("index")
+        .RemainingArgs()
+        .RemainingRets());
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kXlaBufferPythonGpuCallbackRocmCmdBuffer,
+    (XlaBufferCallback<kDLROCM>),
+    xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
+        .Ctx<xla::ffi::DeviceOrdinal>()
+        .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
+        .Attr<uint64_t>("index")
+        .RemainingArgs()
+        .RemainingRets(),
+    {ffi::Traits::kCmdBufferCompatible});
+
 void RegisterFfiApis(nb::module_& m) {
   nb::module_ ffi_module =
       m.def_submodule("ffi", "Python bindings for the XLA FFI.");
@@ -524,6 +549,24 @@ void RegisterFfiApis(nb::module_& m) {
       },
       nb::arg("fn_name"), nb::arg("fn"), nb::arg("platform"),
       nb::arg("api_version") = 0, nb::arg("traits") = 0);
+
+  m.def(
+      "gpu_buffer_callback_handlers",
+      [](const std::string& platform) {
+        if (platform != "ROCM") {
+          std::string message = absl::StrFormat(
+              "gpu_buffer_callback_handlers does not support platform '%s'",
+              platform);
+          throw nb::value_error(message.c_str());
+        }
+        nb::dict handlers;
+        handlers["xla_buffer_python_gpu_callback"] =
+            EncapsulateFfiHandler(kXlaBufferPythonGpuCallbackRocm);
+        handlers["xla_buffer_python_gpu_callback_cmd_buffer"] =
+            EncapsulateFfiHandler(kXlaBufferPythonGpuCallbackRocmCmdBuffer);
+        return handlers;
+      },
+      nb::arg("platform"));
 
   m.def(
       "custom_call_targets",
