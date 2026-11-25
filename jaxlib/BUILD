@@ -1021,6 +1021,7 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:lru_cache",
+        "@xla//xla/pjrt:pjrt_layout",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:safe_static_init",

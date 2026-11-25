@@ -115,6 +115,7 @@ limitations under the License.
 #include "xla/python/safe_static_init.h"
 #include "xla/python/strides.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -240,8 +241,13 @@ absl::StatusOr<xla::ifrt::ArrayRef> RemapArrayWithHloSharding(
   ABSL_ASSIGN_OR_RETURN(xla::ifrt::ShardingRef hlo_sharding,
                         GetIfrtHloSharding(py_sharding, ifrt_array->shape()));
   xla::ifrt::UserContextScope user_context_scope(ifrt_array->user_context());
+#if JAX_XLA_VERSION_NUMBER >= 95
+  std::shared_ptr<const xla::PjRtLayout> pjrt_layout =
+      ifrt_array->pjrt_layout();
+#else
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
                         ifrt_array->pjrt_layout());
+#endif
   ABSL_ASSIGN_OR_RETURN(
       std::vector<xla::ifrt::ArrayRef> remapped,
       client->RemapArrays(

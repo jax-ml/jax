@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -568,7 +569,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     if (!in_device_local_layout.is_none()) {
       xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+#if JAX_XLA_VERSION_NUMBER >= 95
+      std::shared_ptr<const xla::PjRtLayout> arr_layout =
+          ifrt_array->pjrt_layout();
+#else
       ABSL_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
+#endif
       if (arr_layout == nullptr) {
         ABSL_ASSIGN_OR_RETURN(
             xla::ifrt::Shape shard_shape,
