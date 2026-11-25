@@ -507,8 +507,8 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
   return [data, py_buffer_ref = std::move(py_buffer_ref),
           ifrt_dtype]() mutable -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
-        [](const auto& v) -> const void* {
-          if constexpr (std::is_same_v<std::decay_t<decltype(v)>, void*>) {
+        []<typename U>(const U& v) -> const void* {
+          if constexpr (std::is_same_v<U, void*>) {
             return v;
           } else {
             return static_cast<const void*>(&v);

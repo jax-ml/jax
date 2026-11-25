@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <new>
 #include <string>
@@ -90,17 +89,12 @@ namespace jax {
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(
     std::int64_t value, std::string_view source = __FILE__) {
-  if constexpr (sizeof(T) == sizeof(std::int64_t)) {
-    return value;
-  } else {
-    if (value > std::numeric_limits<T>::max()) [[unlikely]] {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "%s: Value (=%d) exceeds the maximum representable value of the "
-          "desired type",
-          source, value));
-    }
-    return static_cast<T>(value);
+  if (!std::in_range<T>(value)) [[unlikely]] {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%s: Value (=%d) is out of the representable range of the desired type",
+        source, value));
   }
+  return static_cast<T>(value);
 }
 
 inline ::xla::ffi::Error AsFfiError(const absl::Status& status) {

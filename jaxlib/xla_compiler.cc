@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/xla_compiler.h"
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -145,7 +146,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                 nb::gil_scoped_release gil_release;
                 absl::Span<ifrt::Device* const> devices =
                     ifrt_devices->devices();
-                if (static_cast<int64_t>(devices.size()) !=
+                if (std::ssize(devices) !=
                     static_cast<int64_t>(num_replicas) * num_partitions) {
                   return InvalidArgument(
                       "DeviceList length (%d) does not match num_replicas (%d) "

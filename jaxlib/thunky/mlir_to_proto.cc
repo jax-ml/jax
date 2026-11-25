@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -500,7 +501,7 @@ absl::Status RebaseBufferSliceProtos(
     absl::Span<const BufferAllocationSliceProto> operand_slices) {
   return ForEachBufferSlice(thunk, [&](auto* slice) {
     int64_t idx = slice->buffer_allocation_index();
-    if (idx >= 0 && idx < static_cast<int64_t>(operand_slices.size())) {
+    if (idx >= 0 && idx < std::ssize(operand_slices)) {
       const BufferAllocationSliceProto& base = operand_slices[idx];
       slice->set_buffer_allocation_index(base.buffer_allocation_index());
       slice->set_offset(base.offset() + slice->offset());
@@ -698,8 +699,7 @@ absl::Status LowerBlockToThunkProtos(
       for (int64_t i = 0; i < num_cc_operands; ++i) {
         const BufferAllocationSliceProto& slice = value_to_slice.at(buffers[i]);
         mlir::Attribute shape_attr = nullptr;
-        if (operand_shapes_attr &&
-            static_cast<size_t>(i) < operand_shapes_attr.size()) {
+        if (operand_shapes_attr && i < std::ssize(operand_shapes_attr)) {
           shape_attr = operand_shapes_attr[i];
         }
         ABSL_ASSIGN_OR_RETURN(xla::Shape shape,
@@ -711,8 +711,7 @@ absl::Status LowerBlockToThunkProtos(
         const BufferAllocationSliceProto& slice =
             value_to_slice.at(buffers[num_cc_operands + i]);
         mlir::Attribute shape_attr = nullptr;
-        if (result_shapes_attr &&
-            static_cast<size_t>(i) < result_shapes_attr.size()) {
+        if (result_shapes_attr && i < std::ssize(result_shapes_attr)) {
           shape_attr = result_shapes_attr[i];
         }
         ABSL_ASSIGN_OR_RETURN(xla::Shape shape,
@@ -852,7 +851,7 @@ absl::Status LowerBlockToThunkProtos(
                               ? 0
                               : config.replica_groups(0).replica_ids_size();
       if (!all_to_all_op.getHasSplitDimension() &&
-          static_cast<int64_t>(src_vals.size()) != num_ranks) {
+          std::ssize(src_vals) != num_ranks) {
         return absl::InvalidArgumentError(absl::StrCat(
             "all_to_all with has_split_dimension=false requires ", num_ranks,
             " buffer pairs (one per peer rank), got ", src_vals.size()));
@@ -1133,7 +1132,7 @@ GpuExecutableProtoToThunkyModule(const GpuExecutableProto& gpu_proto,
       ABSL_ASSIGN_OR_RETURN(std::string const_bytes,
                             ExtractConstantBytes(c, symbol_to_instr));
       int64_t base_size = alloc_sizes.at(idx);
-      if (static_cast<int64_t>(const_bytes.size()) < base_size) {
+      if (std::ssize(const_bytes) < base_size) {
         const_bytes.resize(base_size, '\0');
       }
       auto const_op = mlir::thunky::ConstantOp::create(

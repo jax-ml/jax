@@ -475,7 +475,7 @@ class ModuleImage {
         &shared_optin, GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
         device));
 
-    if (shared_mem_bytes_ > shared_optin) {
+    if (std::cmp_greater(shared_mem_bytes_, shared_optin)) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Shared memory requested (%d b) exceeds device resources (%d b).",
           shared_mem_bytes_, shared_optin));

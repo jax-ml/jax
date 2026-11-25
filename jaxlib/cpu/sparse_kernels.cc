@@ -87,8 +87,7 @@ static ffi::Future CsrSparseDenseKernelImpl(
 
     ffi::CountDownPromise promise(batch_sizes.size());
     ffi::Future future(promise);
-    int64_t batch_start = 0;
-    for (int64_t size : batch_sizes) {
+    for (int64_t batch_start = 0; int64_t size : batch_sizes) {
       thread_pool.Schedule([out_matrix, lhs_matrix, rhs_matrix, batch_start,
                             size, promise]() mutable {
         out_matrix.middleRows(batch_start, size).noalias() =

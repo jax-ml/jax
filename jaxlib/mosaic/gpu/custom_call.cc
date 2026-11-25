@@ -26,6 +26,7 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1497,7 +1498,8 @@ bool HasMatchingCollectiveMetadata(
 
 DeviceState& GetDeviceState(CustomCallResources* resources,
                             int32_t device_ordinal) {
-  CHECK(0 <= device_ordinal && device_ordinal < resources->device_states.size())
+  CHECK(0 <= device_ordinal &&
+        device_ordinal < std::ssize(resources->device_states))
       << "Device ordinal " << device_ordinal
       << " is out of collective metadata bounds: "
       << resources->device_states.size();
