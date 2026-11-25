@@ -1304,6 +1304,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     reduce_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive is jax.lax.reduce_p]
     self.assertLen(reduce_eqns, 1)
 
+  def testTracedAxisErrorNamesFunction(self):
+    # https://github.com/jax-ml/jax/issues/10493
+    x = jnp.ones((3, 2))
+    axis = jnp.array([0, 1, 0])
+    with self.assertRaisesRegex(
+        jax.errors.ConcretizationTypeError, r"axis argument to jnp\.sum\(\)"):
+      jax.vmap(jnp.sum)(x, axis)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

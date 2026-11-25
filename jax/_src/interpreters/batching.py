@@ -173,10 +173,14 @@ class BatchTracer(Tracer['BatchTrace']):
       return self
 
   def _origin_msg(self):
-    if self.source_info is None:
-      return ""
-    return (f"\nThis VmapTracer with object id {id(self)} was created on line:"
-            f"\n  {source_info_util.summarize(self.source_info)}")
+    msg = ""
+    if self.batch_dim is not None:
+      msg += ("\nThis value is mapped over by vmap, so it takes a different "
+              "value for each batch element and has no single concrete value.")
+    if self.source_info is not None:
+      msg += (f"\nThis VmapTracer with object id {id(self)} was created on line:"
+              f"\n  {source_info_util.summarize(self.source_info)}")
+    return msg
 
   def _contents(self):
     return [('val', self.val), ('batch_dim', self.batch_dim)]
