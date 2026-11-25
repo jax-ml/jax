@@ -233,7 +233,7 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
 
         std::unique_ptr<IntType[]> ipiv_tmp;
         if constexpr (!std::is_same_v<IntType, int32_t>) {
-          ipiv_tmp = std::make_unique<IntType[]>(ipiv_step);
+          ipiv_tmp = std::make_unique_for_overwrite<IntType[]>(ipiv_step);
         }
 
         for (int64_t j = 0; j < count; ++j) {
@@ -246,6 +246,8 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
             CallLapackFn(LuDecomposition<dtype, IntType>::fn, &x_rows_v,
                          &x_cols_v, local_x_out_data, &x_leading_dim_v,
                          ipiv_tmp.get(), &info_v);
+            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(ipiv_tmp.get(),
+                                                ipiv_step * sizeof(IntType));
             for (int64_t k = 0; k < ipiv_step; ++k) {
               local_ipiv_data[k] = static_cast<int32_t>(ipiv_tmp[k]);
             }
@@ -259,9 +261,6 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
           if constexpr (std::is_same_v<IntType, int32_t>) {
             ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(local_ipiv_data,
                                                 ipiv_step * sizeof(int32_t));
-          } else {
-            ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(ipiv_tmp.get(),
-                                                ipiv_step * sizeof(IntType));
           }
 
           local_x_out_data += x_out_step;
@@ -437,7 +436,7 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
 
         std::unique_ptr<IntType[]> jpvt_tmp;
         if constexpr (!std::is_same_v<IntType, int32_t>) {
-          jpvt_tmp = std::make_unique<IntType[]>(jpvt_step);
+          jpvt_tmp = std::make_unique_for_overwrite<IntType[]>(jpvt_step);
         }
 
         for (int64_t j = 0; j < count; ++j) {

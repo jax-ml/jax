@@ -553,12 +553,13 @@ class ReentrantHashSet {
     num_deleted_ = 0;
     capacity_ = capacity;
     if (capacity_ == 0) {
-      ctrl_.reset(new int8_t[Group::kWidth + 1]);
+      ctrl_ = std::make_unique_for_overwrite<int8_t[]>(Group::kWidth + 1);
       std::memset(ctrl_.get(), kEmpty, Group::kWidth + 1);
       ctrl_[Group::kWidth] = kSentinel;
       slots_.reset();
     } else {
-      ctrl_.reset(new int8_t[capacity_ + Group::kWidth + 1]);
+      ctrl_ = std::make_unique_for_overwrite<int8_t[]>(capacity_ +
+                                                       Group::kWidth + 1);
       std::memset(ctrl_.get(), kEmpty, capacity_ + Group::kWidth + 1);
       ctrl_[capacity_ + Group::kWidth] = kSentinel;
       slots_.reset(static_cast<Key*>(::operator new(capacity_ * sizeof(Key))));

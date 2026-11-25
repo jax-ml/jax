@@ -22,7 +22,6 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
-#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,18 +54,9 @@ class HostBuffer {
   static_assert(std::is_trivially_destructible_v<T>,
                 "HostBuffer requires trivially destructible element types");
 
-  struct Deleter {
-    void operator()(T* ptr) const {
-      ::operator delete(ptr, std::align_val_t(alignof(T)));
-    }
-  };
-
  public:
-  explicit HostBuffer(std::size_t size) : size_(size) {
-    data_.reset(static_cast<T*>(
-        ::operator new(size * sizeof(T), std::align_val_t(alignof(T)))));
-    std::uninitialized_default_construct_n(data_.get(), size);
-  }
+  explicit HostBuffer(std::size_t size)
+      : data_(std::make_unique_for_overwrite<T[]>(size)), size_(size) {}
 
   absl::Status CopyFromDevice(gpuStream_t stream, const void* buffer) {
     return JAX_AS_STATUS(gpuMemcpyAsync(data_.get(), buffer, size_ * sizeof(T),
@@ -81,7 +71,7 @@ class HostBuffer {
   T* get() const { return data_.get(); }
 
  private:
-  std::unique_ptr<T, Deleter> data_;
+  std::unique_ptr<T[]> data_;
   std::size_t size_;
 };
 
@@ -292,7 +282,7 @@ class PivotingQrFactorizationHost {
 
     std::unique_ptr<IntType[]> jpvt_tmp;
     if constexpr (!std::is_same_v<IntType, int32_t>) {
-      jpvt_tmp = std::make_unique<IntType[]>(n);
+      jpvt_tmp = std::make_unique_for_overwrite<IntType[]>(n);
     }
 
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));

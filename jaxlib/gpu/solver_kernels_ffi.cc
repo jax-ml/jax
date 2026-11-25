@@ -703,7 +703,7 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
   }
   auto workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
-      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+      std::make_unique_for_overwrite<char[]>(workspaceInBytesOnHost);
 
   const char* a_data = static_cast<const char*>(a.untyped_data());
   char* out_data = static_cast<char*>(out->untyped_data());
@@ -1000,7 +1000,7 @@ ffi::Error Gesvd64Impl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
   }
   auto workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
-      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+      std::make_unique_for_overwrite<char[]>(workspaceInBytesOnHost);
 
   const char* a_data = static_cast<const char*>(a.untyped_data());
   char* out_data = static_cast<char*>(out->untyped_data());
@@ -1479,7 +1479,7 @@ ffi::Error GesvdpImpl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
   }
   auto workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
-      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+      std::make_unique_for_overwrite<char[]>(workspaceInBytesOnHost);
 
   const char* a_data = static_cast<const char*>(a.untyped_data());
   char* out_data = static_cast<char*>(out->untyped_data());
@@ -1823,7 +1823,7 @@ ffi::Error GeevImpl(gpuStream_t stream, ffi::ScratchAllocator scratch,
   }
   auto workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
-      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+      std::make_unique_for_overwrite<char[]>(workspaceInBytesOnHost);
 
   const char* a_data = static_cast<const char*>(a.untyped_data());
   char* out_data = static_cast<char*>(out->untyped_data());
