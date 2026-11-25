@@ -5543,6 +5543,8 @@ def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
   """
   a1, a2 = asarray(a1), asarray(a2)
   try:
+    # equal raises TypeError for same-rank shape mismatches (jax-ml/jax#42873)
+    lax.broadcast_shapes(np.shape(a1), np.shape(a2))
     eq = ufuncs.equal(a1, a2)
   except ValueError:
     # shapes are not broadcastable
