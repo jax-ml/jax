@@ -21,7 +21,6 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/log/globals.h"
@@ -36,16 +35,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/time/clock.h"
-#include "absl/time/time.h"
 #include "jaxlib/mosaic/gpu/target.h"
-#include "xla/client/local_client.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
-#include "xla/pjrt/stream_executor_executable.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
@@ -67,40 +62,7 @@ absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
   ASSIGN_OR_RETURN(auto result,
                    executable->Execute({no_buffers}, /*options=*/{}));
-  RETURN_IF_ERROR(result[0][0]->GetReadyFuture().Await());
-  // During `Execute()`, PJRT registers an `AndThen` cleanup callback on the
-  // compute stream's definition event that holds a
-  // `shared_ptr<LocalExecutable>` (which transitively owns
-  // `CustomCallResources` and `KernelHandle`). Calling `GetReadyFuture()`
-  // registers a second `AndThen` waiter on that same event. Because
-  // `tsl::AsyncValue` runs `AndThen` waiters in LIFO order on the
-  // single-threaded `py_xla_callback` worker, `GetReadyFuture().Await()` wakes
-  // the main thread *before* `py_xla_callback` destroys the `Execute()` cleanup
-  // callback and drops its `shared_ptr<LocalExecutable>`.
-  //
-  // Explicitly wait until no other references to `LocalExecutable` remain
-  // besides the one held by `executable` itself, so that a subsequent
-  // `executable.reset()` synchronously destroys `LocalExecutable` and unloads
-  // the GPU module.
-  std::weak_ptr<xla::LocalExecutable> local_executable;
-  {
-    ASSIGN_OR_RETURN(
-        std::shared_ptr<xla::LocalExecutable> owned_local_executable,
-        absl::down_cast<xla::StreamExecutorExecutable*>(
-            executable->GetExecutable())
-            ->GetOrLoadExecutable(nullptr));
-    local_executable = owned_local_executable;
-  }
-  const absl::Time deadline = absl::Now() + absl::Seconds(5);
-  while (local_executable.use_count() > 1) {
-    if (absl::Now() >= deadline) {
-      return absl::DeadlineExceededError(
-          "Timed out waiting for in-flight references to LocalExecutable to "
-          "drop.");
-    }
-    absl::SleepFor(absl::Microseconds(10));
-  }
-  return absl::OkStatus();
+  return result[0][0]->GetReadyFuture().Await();
 }
 
 extern "C" void MosaicGpuClearKernelCache();
@@ -454,7 +416,7 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                                           serialized, std::nullopt, {}));
     EXPECT_OK(ExecuteSync(executable1.get()));
     std::vector<std::string> logs = collector.Stop();
-    // Should not hit the cache during Prepare.
+    // Should not hit the cache during deserialization.
     EXPECT_THAT(logs, Not(Contains("Found Mosaic GPU kernel in cache")));
     EXPECT_THAT(logs,
                 Not(Contains(
@@ -477,112 +439,6 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                     "Successfully compiled Mosaic GPU kernel to object file")));
     EXPECT_THAT(logs,
                 Not(Contains("Successfully JIT-linked Mosaic GPU kernel")));
-  }
-}
-
-TEST_F(CustomCallTest, UnloadGPUModule) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
-
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
-                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
-
-  SetVLogLevel("custom_call", 5);
-  {
-    InfoLogCollector collector;
-    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(
-        collector.Stop(),
-        Contains("Successfully initialized Mosaic GPU kernel").Times(1));
-  }
-
-  {
-    // The second execution the compilation should be cached.
-    InfoLogCollector collector;
-    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(collector.Stop(),
-                Not(Contains("Successfully initialized Mosaic GPU kernel")));
-  }
-
-  {
-    // GPU module should be unloaded when the executable is destroyed.
-    InfoLogCollector collector;
-    executable.reset();
-    EXPECT_THAT(collector.Stop(),
-                Contains("Successfully unloaded GPU module").Times(1));
-  }
-}
-
-TEST_F(CustomCallTest, GPUModuleIsOnlyUnloadedWhenAllExecutablesAreDestroyed) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
-                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable1,
-      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable2,
-      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
-
-  EXPECT_THAT(ExecuteSync(executable1.get()), IsOk());
-  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
-
-  SetVLogLevel("custom_call", 5);
-  {
-    // executable2 still holds a reference to the GPU module.
-    InfoLogCollector collector;
-    executable1.reset();
-    EXPECT_THAT(collector.Stop(),
-                Not(Contains("Successfully unloaded GPU module")));
-  }
-  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
-  {
-    InfoLogCollector collector;
-    executable2.reset();
-    EXPECT_THAT(collector.Stop(),
-                Contains("Successfully unloaded GPU module").Times(1));
-  }
-}
-
-TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
-                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                             /*options=*/{}));
-
-  SetVLogLevel("custom_call", 5);
-  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-
-  {
-    InfoLogCollector collector;
-    executable.reset();
-    EXPECT_THAT(collector.Stop(),
-                Contains("Successfully unloaded GPU module").Times(1));
-  }
-
-  ASSERT_OK_AND_ASSIGN(
-      executable, client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
-                                         /*options=*/{}));
-
-  {
-    // executable was destroyed and the module was unloaded. We re-compile the
-    // kernel.
-    InfoLogCollector collector;
-    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
-    EXPECT_THAT(
-        collector.Stop(),
-        Contains("Successfully initialized Mosaic GPU kernel").Times(1));
   }
 }
 

@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +48,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -60,7 +62,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/driver_types.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
@@ -164,6 +165,7 @@ limitations under the License.
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
+#include "xla/ffi/kernel_registry_ffi.h"
 #include "xla/ffi/record_ffi.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/runtime/device_id.h"
@@ -508,8 +510,8 @@ struct CompiledKernel {
         object_file(std::move(object_file)),
         host_func_name(std::move(host_func_name)) {}
 
-  // CompiledKernel is neither copyable nor movable. We use CompiledKernel* as a
-  // key in a cache, so we require pointer stability.
+  // CompiledKernel is neither copyable nor movable. Custom call resources keep
+  // a CompiledKernel*, so we require pointer stability.
   CompiledKernel(const CompiledKernel&) = delete;
   CompiledKernel(CompiledKernel&& other) = delete;
 
@@ -965,6 +967,7 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
     absl::MutexLock lock(cache.mutex);
     auto it = cache.kernels.find(kernel_hash);
     if (it != cache.kernels.end()) {
+      VLOG(5) << "Found Mosaic GPU kernel in cache";
       return it->second.get();
     }
   }
@@ -976,39 +979,6 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
   auto [iter, _] = cache.kernels.try_emplace(kernel_hash, std::move(kernel));
   return iter->second.get();
 }
-
-class KernelHandle {
- public:
-  KernelHandle(CUmodule module, CUfunction function, CUcontext ctx)
-      : module_(module), function_(function), ctx_(ctx) {}
-  ~KernelHandle() {
-    if (auto s = Unload(module_, ctx_); !s.ok()) {
-      LOG(ERROR) << "Failed to unload GPU module: " << s;
-    } else {
-      VLOG(5) << "Successfully unloaded GPU module";
-    }
-  }
-
-  // KernelHandle is neither copyable nor movable.
-  KernelHandle(const KernelHandle&) = delete;
-  KernelHandle& operator=(const KernelHandle&) = delete;
-
-  CUmodule module() const { return module_; }
-  CUfunction function() const { return function_; }
-
- private:
-  static absl::Status Unload(CUmodule module, CUcontext ctx) {
-    CUDA_RETURN_IF_ERROR(cuCtxPushCurrent(ctx));
-    CUDA_RETURN_IF_ERROR(cuModuleUnload(module));
-    CUcontext unused;
-    CUDA_RETURN_IF_ERROR(cuCtxPopCurrent(&unused));
-    return absl::OkStatus();
-  }
-
-  CUmodule module_;
-  CUfunction function_;
-  CUcontext ctx_;
-};
 
 struct InitResult {
   CUmodule module;
@@ -1084,35 +1054,6 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   return InitResult{module, function};
 }
 
-// Initializes the kernel in the current CUDA context and return a handle to the
-// kernel.
-absl::StatusOr<std::shared_ptr<KernelHandle>> CachedInit(
-    const CompiledKernel* absl_nonnull kernel) {
-  using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
-  struct Cache {
-    absl::Mutex mutex;
-    absl::flat_hash_map<CacheKey, std::weak_ptr<KernelHandle>> handles
-        ABSL_GUARDED_BY(mutex);
-  };
-  static absl::NoDestructor<Cache> cache;
-
-  CUcontext ctx;
-  CUDA_RETURN_IF_ERROR(cuCtxGetCurrent(&ctx));
-  CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
-
-  absl::MutexLock lock(cache->mutex);
-  if (auto it = cache->handles.find(key); it != cache->handles.end()) {
-    if (auto handle = it->second.lock()) {
-      VLOG(5) << "Found Mosaic GPU kernel in cache";
-      return handle;
-    }
-  }
-  ASSIGN_OR_RETURN(InitResult res, InitKernel(*kernel));
-  auto handle = std::make_shared<KernelHandle>(res.module, res.function, ctx);
-  cache->handles.insert_or_assign(key, handle);
-  return handle;
-}
-
 // Structure stores data needed during the execution and filled during the
 // initialization.
 struct DeviceState {
@@ -1128,9 +1069,6 @@ struct DeviceState {
   // The RAII handle of the buffer on the device which stores the structure
   // above.
   se::ScopedDeviceAddress<uint8_t> metadata_handle;
-
-  // Pointer (CUmodule + CUfunction) to the kernel loaded on the GPU.
-  std::shared_ptr<KernelHandle> kernel_handle;
 };
 
 constexpr int kMaxLocalDevices = 8;
@@ -1140,6 +1078,10 @@ constexpr int kMaxLocalDevices = 8;
 namespace mosaic::gpu {
 struct CustomCallResources {
   CompiledKernel* kernel = nullptr;
+
+  // Handle to the kernel registered with XLA's FFI KernelRegistry, shared
+  // across all devices in the executable.
+  std::atomic<const XLA_FFI_Kernel*> kernel_handle{nullptr};
 
   // For each participating local device store device-specific metadata for the
   // custom call operation.
@@ -1361,7 +1303,7 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
         symmetric_memory_parameters,
         ParseCollectiveMemoryParameters(attrs, inputs.size() + results.size()));
   }
-  return std::make_unique<CustomCallResources>(CustomCallResources{
+  return absl::WrapUnique(new CustomCallResources{
       .kernel = kernel,
       .hash = hash,
       .xla_replica_ids = std::move(xla_replica_ids),
@@ -1507,6 +1449,7 @@ DeviceState& GetDeviceState(CustomCallResources* resources,
 }
 
 absl::Status MosaicGpuPrepare(
+    ffi::PrepareKernelRegistry kernel_registry,
     const xla::gpu::CollectiveParams* absl_nullable collective_params,
     xla::gpu::CollectiveMemoryRequests* absl_nullable
         collective_memory_requests,
@@ -1530,10 +1473,24 @@ absl::Status MosaicGpuPrepare(
   // Initializing during Prepare ensures all devices finish loading before
   // XLA's clique acquisition and post-initialize rendezvous, and before any
   // device starts executing.
-  DeviceState& device_state =
-      GetDeviceState(resources, collective_params->local_device_id.value());
-  ASSIGN_OR_RETURN(device_state.kernel_handle, CachedInit(resources->kernel));
-  CHECK(device_state.kernel_handle != nullptr);
+  const CompiledKernel& kernel = *resources->kernel;
+  const XLA_FFI_Kernel* existing_kernel =
+      resources->kernel_handle.load(std::memory_order_acquire);
+  ffi::RequiredFeatures required_features =
+      kernel.is_multimem_used ? ffi::RequiredFeatures::Multimem()
+                              : ffi::RequiredFeatures::None();
+  ASSIGN_OR_RETURN(ffi::RegisterResult registered,
+                   kernel_registry.Register(
+                       kernel.kernel_name, kernel.gpu_binary.data(),
+                       kernel.gpu_binary.size(), ffi::SourceFormat::kCubin,
+                       kernel.uses_pdl, required_features, existing_kernel));
+  if (!registered.already_loaded) {
+    VLOG(5) << "Successfully initialized Mosaic GPU kernel";
+  }
+  if (existing_kernel == nullptr) {
+    resources->kernel_handle.store(registered.kernel,
+                                   std::memory_order_release);
+  }
 
   if (!resources->uses_xla_collective_metadata) {
     return absl::OkStatus();
@@ -1579,6 +1536,8 @@ absl::Status MosaicGpuPrepare(
       buffers.size() + (use_barrier_semaphores ? 1 : 0);
   const size_t metadata_size =
       GetCollectiveMetadataSize(num_metadata_buffers, clique_key.num_devices());
+  DeviceState& device_state =
+      GetDeviceState(resources, collective_params->local_device_id.value());
   if (device_state.metadata_handle.is_null()) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "Allocating device memory for Mosaic GPU collective metadata";
@@ -1939,9 +1898,11 @@ absl::Status MosaicGpuRecord(
   auto [kernel_args, dims] = BuildKernelArgsAndDims(cfg);
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
-    TF_RET_CHECK(device_state.kernel_handle != nullptr)
-        << "kernel_handle is null; MosaicGpuPrepare must run "
-           "before MosaicGpuRecord";
+    const XLA_FFI_Kernel* kernel_handle =
+        resources->kernel_handle.load(std::memory_order_acquire);
+    TF_RET_CHECK(kernel_handle != nullptr)
+        << "kernel_handle is null; MosaicGpuPrepare must run before "
+           "MosaicGpuRecord";
     llvm::SmallVector<const XLA_FFI_Command*, 1> dependencies;
     if (comm != nullptr) {
       ASSIGN_OR_RETURN(
@@ -1951,16 +1912,13 @@ absl::Status MosaicGpuRecord(
     }
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord creating launch for " << kernel->kernel_name
-        << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
+        << " uses_pdl: " << kernel->uses_pdl << " grid: " << cfg.grid.x << ", "
         << cfg.grid.y << ", " << cfg.grid.z << " cluster: " << cfg.cluster.x
         << ", " << cfg.cluster.y << ", " << cfg.cluster.z
         << " block: " << cfg.block.x << ", " << cfg.block.y << ", "
         << cfg.block.z << " smem_bytes: " << cfg.smem_bytes;
     return record_ctx
-        .CreateLaunch(kernel->kernel_name.c_str(),
-                      device_state.kernel_handle->function(),
-                      /*kernel_size=*/0, ffi::SourceFormat::kFunctionPtr, dims,
-                      cfg.smem_bytes, /*uses_pdl=*/cfg.uses_pdl, kernel_args,
+        .CreateLaunch(kernel_handle, dims, cfg.smem_bytes, kernel_args,
                       dependencies)
         .status();
   }
@@ -1983,13 +1941,12 @@ absl::Status MosaicGpuRecord(
 }
 
 absl::Status MosaicGpuExecute(
-    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    se::Stream* stream, ffi::ExecuteKernelRegistry kernel_registry,
+    const xla::gpu::CollectiveParams* collective_params,
     const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources) {
   CompiledKernel* kernel = resources->kernel;
-  cudaStream_t cuda_stream =
-      reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
   int device_ordinal = collective_params->global_device_id.value();
@@ -2006,15 +1963,21 @@ absl::Status MosaicGpuExecute(
     XLA_VLOG_DEVICE(6, device_ordinal) << "Finished multi-GPU barrier";
   }
 
+  const XLA_FFI_Kernel* kernel_handle =
+      resources->kernel_handle.load(std::memory_order_acquire);
+  TF_RET_CHECK(kernel_handle != nullptr)
+      << "kernel_handle is null; MosaicGpuPrepare must run before "
+         "MosaicGpuExecute";
+  auto [kernel_args, dims] = BuildKernelArgsAndDims(cfg);
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuExecute launching kernel with name: " << kernel->kernel_name
-      << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
+      << " uses_pdl: " << kernel->uses_pdl << " grid: " << cfg.grid.x << ", "
       << cfg.grid.y << ", " << cfg.grid.z << " cluster: " << cfg.cluster.x
       << ", " << cfg.cluster.y << ", " << cfg.cluster.z
       << " block: " << cfg.block.x << ", " << cfg.block.y << ", " << cfg.block.z
       << " smem_bytes: " << cfg.smem_bytes;
-  return MosaicGpuLaunchKernel(device_state.kernel_handle->function(),
-                               cuda_stream, &cfg, *kernel, device_ordinal);
+  return kernel_registry.Launch(kernel_handle, dims, cfg.smem_bytes,
+                                kernel_args);
 }
 
 }  // namespace
@@ -2039,6 +2002,7 @@ struct TypeRegistry::SerDes<mosaic::gpu::CustomCallResources> {
 namespace {
 XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                        ffi::Ffi::BindPrepare()
+                           .Ctx<ffi::KernelRegistry>()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveMemoryRequests>()
                            .Ctx<ffi::CollectiveCliqueRequests>()
@@ -2091,6 +2055,7 @@ XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuExecute, MosaicGpuExecute,
     ffi::Ffi::BindExecute()
         .Ctx<ffi::Stream>()
+        .Ctx<ffi::KernelRegistry>()
         .Ctx<ffi::CollectiveParams>()
         .Ctx<ffi::CollectiveCliques>()
         .RemainingArgs()
