@@ -1094,12 +1094,12 @@ class MpmdTest(PallasSCTest):
     )
     num_cores = v_mesh.num_cores
     num_subcores = v_mesh.num_subcores
-    x1 = jnp.arange(num_cores * 8 * 128, dtype=jnp.int32).reshape(
-        num_cores, 8, 128
-    )
-    x2 = jnp.arange(
+    x1 = jnp.arange(
         num_cores * num_subcores * 8 * 128, dtype=jnp.int32
     ).reshape(num_cores, num_subcores, 8, 128)
+    x2 = jnp.arange(num_cores * 8 * 128, dtype=jnp.int32).reshape(
+        num_cores, 8, 128
+    )
 
     def _barrier(my_sem, scs_sem, tec_sem):
       num_cores = jax.lax.axis_size("core")
@@ -1367,10 +1367,6 @@ class MpmdTest(PallasSCTest):
   def test_async_copy_scs_vmem_shared_to_smem_stream(
       self, use_dst_sem, wait_method
   ):
-    self.skipTest(
-        "TODO(rdyro): Enable once the SparseCore compiler supports lowering"
-        " VMEM_SHARED to SMEM streams on the scalar subcore (b/565149365)."
-    )
     s_mesh = plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1)
     shape = (32,)
     x = jnp.arange(32, dtype=jnp.int32)

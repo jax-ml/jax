@@ -1,7 +1,7 @@
-``jax.experimental.pallas`` module
-==================================
+``jax.pallas`` module
+=====================
 
-.. automodule:: jax.experimental.pallas
+.. automodule:: jax.pallas
 
 Backends
 --------
@@ -9,9 +9,9 @@ Backends
 .. toctree::
     :maxdepth: 1
 
-    Pallas TPU (TensorCore) <jax.experimental.pallas.tpu>
-    Pallas TPU (SparseCore) <jax.experimental.pallas.tpu_sc>
-    Pallas MGPU <jax.experimental.pallas.mosaic_gpu>
+    Pallas TPU (TensorCore) <jax.pallas.tpu>
+    Pallas TPU (SparseCore) <jax.pallas.tpu_sc>
+    Pallas MGPU <jax.pallas.mosaic_gpu>
 
 Libraries
 ---------
@@ -19,7 +19,7 @@ Libraries
 .. toctree::
     :maxdepth: 1
 
-    Fuser <jax.experimental.pallas.fuser>
+    Fuser <jax.pallas.fuser>
 
 Classes
 -------
@@ -34,7 +34,6 @@ Classes
   CompilerParams
   CostEstimate
   Element
-  GridSpec
   Indirect
   MemoryRef
   MemorySpace
@@ -49,7 +48,6 @@ Functions
 .. autosummary::
   :toctree: _autosummary
 
-  core_map
   kernel
   pallas_call
   program_id
@@ -61,6 +59,7 @@ Functions
   empty
   empty_like
   empty_ref_like
+  pad_ref
 
   broadcast_to
   debug_check

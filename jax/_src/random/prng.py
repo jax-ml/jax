@@ -599,7 +599,8 @@ def random_seed_lowering(ctx, seeds, *, impl):
       avals_out=map(core.physical_aval, ctx.avals_out))
 
 mlir.register_lowering(
-    random_seed_p, random_seed_lowering, shard_map_passthrough=True
+    random_seed_p, random_seed_lowering,
+    shard_map_collective_rule=lambda *_, **__: None
 )
 
 
@@ -705,7 +706,8 @@ def random_split_lowering(ctx, keys, *, shape, out_sharding):
       avals_out=map(core.physical_aval, ctx.avals_out))
 
 mlir.register_lowering(
-    random_split_p, random_split_lowering, shard_map_passthrough=True
+    random_split_p, random_split_lowering,
+    shard_map_collective_rule=lambda *_, **__: None
 )
 
 
@@ -753,7 +755,8 @@ def random_fold_in_lowering(ctx, keys, msgs):
       avals_out=map(core.physical_aval, ctx.avals_out))
 
 mlir.register_lowering(
-    random_fold_in_p, random_fold_in_lowering, shard_map_passthrough=True
+    random_fold_in_p, random_fold_in_lowering,
+    shard_map_collective_rule=lambda *_, **__: None
 )
 
 
@@ -790,7 +793,7 @@ def raw_bits_abstract_eval(keys_aval, *, shape):
   out_dtype = dtypes.dtype(impl.raw_dtype)
   out_sharding = lax.lax_utils.call_sharding_rule(
       raw_bits_p, _random_split_sharding_rule, None, None, keys_aval,
-      shape=shape)
+      shape=shape, out_sharding=None)
   out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
                               manual_axis_type=keys_aval.mat)
   return (out_aval,) * impl.num_streams
@@ -817,7 +820,8 @@ def raw_bits_lowering(ctx, keys, *, shape):
   return out
 
 mlir.register_lowering(
-    raw_bits_p, raw_bits_lowering, shard_map_passthrough=True
+    raw_bits_p, raw_bits_lowering,
+    shard_map_collective_rule=lambda *_, **__: None
 )
 
 
@@ -977,7 +981,8 @@ def random_bits_lowering(
       ctx, bits_lowering, keys, avals_in=[phys_in])
 
 mlir.register_lowering(
-    random_bits_p, random_bits_lowering, shard_map_passthrough=True
+    random_bits_p, random_bits_lowering,
+    shard_map_collective_rule=lambda *_, **__: None
 )
 
 
@@ -1028,7 +1033,8 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   return random_wrap(x, impl=impl), 0
 
 mlir.register_lowering(
-    random_wrap_p, random_wrap_lowering, shard_map_passthrough=True
+    random_wrap_p, random_wrap_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
@@ -1054,7 +1060,8 @@ def random_unwrap_lowering(ctx, keys):
   return [keys]
 
 mlir.register_lowering(
-    random_unwrap_p, random_unwrap_lowering, shard_map_passthrough=True
+    random_unwrap_p, random_unwrap_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 
 

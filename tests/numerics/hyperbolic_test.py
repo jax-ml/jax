@@ -21,7 +21,6 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version, xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -108,33 +107,14 @@ class SinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_sinh_accuracy(self, dtype):
-    if jaxlib_extension_version >= 507:
-      bounds = [
-          ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
-          ("gpu", {f32: 3.0, f64: 2.5}),
-          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
-          (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
-      ]
-      ignore_inputs = []
-      check_signed_zeros = True
-    else:
-      bounds = [
-          ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
-          ("gpu", {f32: 3.0, f64: 2.5}),
-          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1794.0}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1332.5}),
-          ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
-          ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
-      ]
-      # Ignore x = +-89.415985: near the float32 overflow threshold, where the
-      # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU
-      # computes 0.5 * exp(x), where exp(x) overflows float32 to inf.
-      ignore_inputs = [
-          (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
-      ]
-      check_signed_zeros = [
-          ("tpu", False),
-      ]
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
+        ("gpu", {f32: 3.0, f64: 2.5}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
+    ]
+    ignore_inputs = []
+    check_signed_zeros = True
     interesting_points = [
         *_sinh_cosh_interesting_points(dtype),
         # Worst-case inputs across math libraries from Gladman et al.:
@@ -172,28 +152,12 @@ class CoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_cosh_accuracy(self, dtype):
-    if jaxlib_extension_version >= 511:
-      bounds = [
-          ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
-          ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
-          ("tpu", {f16: 1.0, f32: 1.0}),
-      ]
-      ignore_inputs = []
-    else:
-      bounds = [
-          ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
-          ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
-          (TPU_EUPV1, {f16: 1.0, f32: 93.5}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 99.0}),
-          ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
-          ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
-      ]
-      # Ignore x = +-89.415985: near the float32 overflow threshold, where the
-      # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU
-      # computes 0.5 * exp(x), where exp(x) overflows float32 to inf.
-      ignore_inputs = [
-          (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
-      ]
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
+        ("tpu", {f16: 1.0, f32: 1.0}),
+    ]
+    ignore_inputs = []
     interesting_points = [
         *_sinh_cosh_interesting_points(dtype),
         # Worst-case inputs across math libraries from Gladman et al.:
@@ -307,14 +271,7 @@ class TanhGradTest(jtu.JaxTestCase):
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
-        (
-            "tpu_7x",
-            {
-                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
-                f16: 1.0,
-                f32: 8.0,
-            },
-        ),
+        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 8.0}),
     ]
     with jtu.global_config_context(jax_tanh_sech_jvp=True):
       util.check_unary_precision(
@@ -384,12 +341,8 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
-    if xla_version >= 88:
-      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 3.5, f64: 3.5})
-    else:
-      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5})
     bounds = [
-        cpu_bounds,
+        ("cpu", {bf16: 2.0, f16: 2.0, f32: 3.5, f64: 3.5}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
@@ -458,12 +411,8 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
-    if xla_version >= 88:
-      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
-    else:
-      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5})
     bounds = [
-        cpu_bounds,
+        ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5}),
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
@@ -528,12 +477,8 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
-    if xla_version >= 88:
-      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
-    else:
-      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5})
     bounds = [
-        cpu_bounds,
+        ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5}),
         ("gpu", {f32: 3.5, f64: 3.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 2183.5}),
         ("tpu_v5p", {f16: 1.0, f32: 43.0}),

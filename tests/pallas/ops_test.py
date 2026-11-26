@@ -32,7 +32,6 @@ from jax._src import state
 from jax._src import test_util as jtu
 from jax._src import flattree as ft
 from jax._src import hypothesis_test_util as htu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
@@ -1073,13 +1072,8 @@ class OpsTest(PallasBaseTest):
         self.skipTest("lax.fma is not supported on TPU")
       if not self.INTERPRET and dtype == jnp.float16:
         self.skipTest("float16 (8, 128) is not supported on all TPU generations")
-    if op is lax.fma and (
-        jaxlib_extension_version < 515
-        or not jtu.stablehlo_version_at_least("1.24.0")
-    ):
-      self.skipTest(
-          "lax.fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0"
-      )
+    if op is lax.fma and not jtu.stablehlo_version_at_least("1.24.0"):
+      self.skipTest("lax.fma requires StableHLO >= 1.24.0")
     if jtu.test_device_matches(["cpu"]) and op is lax.fma and dtype != jnp.float32:
       self.skipTest("CPU backend only supports float32/float64 lax.fma")
 

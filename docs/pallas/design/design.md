@@ -124,7 +124,7 @@ Let’s look at an example Pallas program for adding two vectors:
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
+from jax import pallas as pl
 
 def add_kernel(x_ref, y_ref, o_ref):
   # In this code, `x_ref`, `y_ref` and `o_ref` are (8,)-shaped `Ref`s

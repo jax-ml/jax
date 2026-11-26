@@ -16,7 +16,7 @@ import gc
 
 from absl.testing import absltest
 import jax
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 
@@ -26,8 +26,6 @@ jax.config.parse_flags_with_absl()
 class DeviceTest(jtu.JaxTestCase):
 
   def test_uninitialized_device_list(self):
-    if jaxlib_extension_version < 517:
-      self.skipTest('Requires jaxlib_extension_version >= 517')
     dl = _jax.DeviceList.__new__(_jax.DeviceList)
     with self.assertRaises(TypeError):
       _ = dl.addressable_device_list
@@ -37,8 +35,6 @@ class DeviceTest(jtu.JaxTestCase):
       _ = dl.default_memory_kind
 
   def test_uninitialized_device_gc_clear(self):
-    if jaxlib_extension_version < 517:
-      self.skipTest('Requires jaxlib_extension_version >= 517')
     dev = _jax.Device.__new__(_jax.Device)
     cycle = [dev]
     cycle.append(cycle)
@@ -82,8 +78,6 @@ class DeviceTest(jtu.JaxTestCase):
       self.assertEqual(str(device), 'cpu:0')
 
   def test_empty_device_list_is_fully_addressable(self):
-    if jaxlib_extension_version < 518:
-      self.skipTest('Requires jaxlib_extension_version >= 518')
     dl = xc.DeviceList(())
     self.assertLen(dl, 0)
     self.assertEqual(dl.process_indices, set())

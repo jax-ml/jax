@@ -355,8 +355,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum_broadcast(self, impl):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Only works with TPU v5+')
     dtype = jnp.float32
     k0, k1 = jax.random.split(jax.random.key(0))
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -422,8 +420,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_bias(self, dtype, impl):
-    if dtype == 'bfloat16' and not jtu.is_device_tpu_at_least(5):
-      self.skipTest('bfloat16 bcast not supported on TPU generations < 5')
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (512, 512), dtype)
     y = jax.random.normal(k1, (512, 512), dtype)
@@ -620,8 +616,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_multiple_mixed_slices_and_bias(self, dtype, impl):
-    if dtype == 'bfloat16' and not jtu.is_device_tpu_at_least(5):
-      self.skipTest('bfloat16 bcast not supported on TPU generations < 5')
     k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
     x = jax.random.normal(k0, (4, 4, 512, 512), dtype)
     y = jax.random.normal(k1, (4, 2, 3, 512, 512), dtype)
@@ -649,8 +643,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_input_concat_output(self, dtype, impl):
-    self.skipTest('select_n does not support more than 3 elements')
-    # TODO(sharadmv): fix this test
     k0, k1, k2, k3 = jax.random.split(jax.random.key(0), 4)
     x = jax.random.normal(k0, (128, 128), dtype)
     y1 = jax.random.normal(k1, (128, 256), dtype)
@@ -1304,8 +1296,6 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_bf16_out(self, impl):
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('TPU v4+ required')
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 256), dtype)
@@ -1419,8 +1409,6 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_out_bf16_with_f32_activation(self, impl):
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('TPU v4+ required')
     dtype = jnp.bfloat16
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (2048, 2048), dtype)

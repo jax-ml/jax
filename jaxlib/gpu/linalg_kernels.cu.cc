@@ -203,18 +203,19 @@ void LaunchTridiagonalSolvePerturbedKernel(
     gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
     xla::ffi::DataType dtype, const void* subdiag, const void* diag,
     const void* superdiag, const void* rhs, void* x, void* workspace) {
+  using enum xla::ffi::DataType;
   switch (dtype) {
-    case xla::ffi::DataType::F32:
+    case F32:
       LaunchTridiagonalSolvePerturbedKernelBody<float>(
           stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
           workspace);
       break;
-    case xla::ffi::DataType::F64:
+    case F64:
       LaunchTridiagonalSolvePerturbedKernelBody<double>(
           stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
           workspace);
       break;
-    case xla::ffi::DataType::C64:
+    case C64:
 #if defined(JAX_GPU_CUDA)
       LaunchTridiagonalSolvePerturbedKernelBody<::cuda::std::complex<float>>(
 #else
@@ -223,7 +224,7 @@ void LaunchTridiagonalSolvePerturbedKernel(
           stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
           workspace);
       break;
-    case xla::ffi::DataType::C128:
+    case C128:
 #if defined(JAX_GPU_CUDA)
       LaunchTridiagonalSolvePerturbedKernelBody<::cuda::std::complex<double>>(
 #else

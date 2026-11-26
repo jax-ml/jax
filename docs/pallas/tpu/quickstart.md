@@ -21,8 +21,8 @@ memory spaces, `pl.kernel`, and pipelining.
 ```python
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
 ```
 
 ## TPU memory spaces

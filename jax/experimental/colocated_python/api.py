@@ -80,25 +80,43 @@ def colocated_cpu_devices(devices_or_mesh):
 def _colocated_cpu_devices_cached(
     devices: tuple[jax.Device, ...],
 ) -> Sequence[jax.Device]:
-  cpu_devices_by_colocation_id = collections.defaultdict(list)
+  # Match by colocation_id using a flat dict instead of defaultdict(list) to
+  # avoid allocating a list per CPU device on large meshes.
+  cpu_devices_by_colocation_id: dict[Any, jax.Device] = {}
+  ambiguous_colocation_ids: set[Any] = set()
   for device in devices[0].client._get_all_devices():
     if device.device_kind == "cpu":
-      cpu_devices_by_colocation_id[device.colocation_id].append(device)
+      cid = device.colocation_id
+      if cid in cpu_devices_by_colocation_id:
+        ambiguous_colocation_ids.add(cid)
+      else:
+        cpu_devices_by_colocation_id[cid] = device
   if not cpu_devices_by_colocation_id:
     raise ValueError("No CPU devices found")
 
-  colocated_cpu_devices = []
-  for device in devices:
-    matches = cpu_devices_by_colocation_id[device.colocation_id]
-    if not matches:
-      raise ValueError(f"Device {device} has no colocated devices")
-    elif len(matches) > 1:
-      raise ValueError(
-          f"Ambiguous colocated devices; device {device} has"
-          f" {len(matches)} colocated devices: f{matches}"
-      )
-    colocated_cpu_devices.append(matches[0])
-  return colocated_cpu_devices
+  if ambiguous_colocation_ids:
+    for device in devices:
+      if device.colocation_id in ambiguous_colocation_ids:
+        matches = [
+            d
+            for d in devices[0].client._get_all_devices()
+            if d.device_kind == "cpu"
+            and d.colocation_id == device.colocation_id
+        ]
+        raise ValueError(
+            f"Ambiguous colocated devices; device {device} has"
+            f" {len(matches)} colocated devices: {matches}"
+        )
+
+  try:
+    return [
+        cpu_devices_by_colocation_id[device.colocation_id] for device in devices
+    ]
+  except KeyError:
+    for device in devices:
+      if device.colocation_id not in cpu_devices_by_colocation_id:
+        raise ValueError(f"Device {device} has no colocated devices") from None
+    raise
 
 
 @util.cache(max_size=1024, trace_context_in_key=False)

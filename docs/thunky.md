@@ -383,10 +383,10 @@ def run_ptx_add_one(in_ref, out_ref):
 
 ### Launching Pallas Mosaic GPU Kernels (`plgpu.kernel` via `thunky.call_jax`)
 
-Because Pallas Mosaic GPU kernels (`jax.experimental.pallas.mosaic_gpu.kernel`) accept mutable `Ref` arguments directly and integrate with JAX's state discharge, you can pass a `@plgpu.kernel`-decorated function directly to `thunky.call_jax` (supporting Tensor Memory Accelerator (TMA) async copies, shared memory barriers, and WGMMA instructions):
+Because Pallas Mosaic GPU kernels (`jax.pallas.mosaic_gpu.kernel`) accept mutable `Ref` arguments directly and integrate with JAX's state discharge, you can pass a `@plgpu.kernel`-decorated function directly to `thunky.call_jax` (supporting Tensor Memory Accelerator (TMA) async copies, shared memory barriers, and WGMMA instructions):
 
 ```python
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.pallas import mosaic_gpu as plgpu
 
 shape = (128, 128)
 dtype = jnp.float32

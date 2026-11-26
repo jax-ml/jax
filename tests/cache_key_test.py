@@ -77,7 +77,7 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
 
     dev_hash1 = self.get_hashed_value(cache_key._hash_devices, devices)
     dev_hash2 = self.get_hashed_value(cache_key._hash_devices, devices)
@@ -111,7 +111,7 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   def test_same_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -123,7 +123,7 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   def test_different_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options_not_filled = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -139,7 +139,7 @@ class CacheKeyTest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()
   def test_custom_hook(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -155,7 +155,7 @@ class CacheKeyTest(jtu.JaxTestCase):
   def test_different_computations(self):
     computation1 = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     computation2 = jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -221,19 +221,19 @@ class CacheKeyTest(jtu.JaxTestCase):
       backend = xla_bridge.get_backend()
       hash_without_callback_ptrs = cache_key.get(
           computation,
-          devices,
+          m._internal_device_list,
           compile_options,
           backend,
           ignore_custom_partitioning=True,
       )
       expected_hash = cache_key.get(
-          updated_module, devices, compile_options, backend
+          updated_module, m._internal_device_list, compile_options, backend
       )
       self.assertEqual(expected_hash, hash_without_callback_ptrs)
 
   def test_different_device_assignment(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options_1 = compiler.get_compile_options(
         num_replicas=1, num_partitions=1, device_assignment=np.array([[0]])
     )
@@ -243,8 +243,15 @@ class CacheKeyTest(jtu.JaxTestCase):
     backend = xla_bridge.get_backend()
     hash_1 = cache_key.get(computation, devices, compile_options_1, backend)
     hash_2 = cache_key.get(computation, devices, compile_options_2, backend)
-    if backend.platform == "gpu":
+    if backend.platform in ("gpu", "cpu"):
       self.assertEqual(hash_1, hash_2)
+      compile_options_2p = compiler.get_compile_options(
+          num_replicas=1, num_partitions=2, device_assignment=np.array([[0, 1]])
+      )
+      hash_2p = cache_key.get(
+          computation, devices, compile_options_2p, backend
+      )
+      self.assertNotEqual(hash_1, hash_2p)
     else:
       self.assertNotEqual(hash_1, hash_2)
 
@@ -256,7 +263,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     assert id(f) != id(g)
     computation1 = jax.jit(f).lower(1, 1).compiler_ir()
     computation2 = jax.jit(g).lower(2, 3).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -287,7 +294,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     x = np.ones((128,), dtype=np.float32)
     computation1 = make_caller_a().lower(x).compiler_ir()
     computation2 = make_caller_b().lower(x).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -303,7 +310,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -350,7 +357,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xla_client.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )

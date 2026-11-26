@@ -30,7 +30,6 @@ import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax.test_util import check_grads
 
 jax.config.parse_flags_with_absl()
@@ -276,15 +275,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     for rec in LAX_GRAD_OPS
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
-    if op is lax.fma and (
-        jaxlib_extension_version < 515
-        or not jtu.is_libtpu_at_least("0.0.52")
-        or not jtu.stablehlo_version_at_least("1.24.0")
-    ):
-      raise SkipTest(
-          "fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, "
-          "and StableHLO >= 1.24.0"
-      )
+    if op is lax.fma and not jtu.stablehlo_version_at_least("1.24.0"):
+      raise SkipTest("fma requires StableHLO >= 1.24.0")
     rng = rng_factory(self.rng())
     if jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       if op is lax.cosh and dtype == np.complex64:
@@ -1515,6 +1507,25 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     jtu.check_grads(
         lambda x_in, p_in: lax.polynomial(x_in, p_in),
         (x, p),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+  def testPolynomialBroadcast(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42480
+    x = jnp.array([0.5], dtype=jnp.float32)
+    a0 = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    jtu.check_grads(
+        lambda z: lax.polynomial(z, [a0, 2.0]),
+        (x,),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+    jtu.check_grads(
+        lambda z, c0: lax.polynomial(z, [c0, 2.0]),
+        (x, a0),
         order=2,
         atol=1e-3,
         rtol=1e-3,

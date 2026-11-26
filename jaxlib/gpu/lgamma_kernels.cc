@@ -49,10 +49,11 @@ ffi::Error LgammaImpl(gpuStream_t stream, int32_t device_ordinal,
     return ffi::Error::Success();
   }
 
+  using enum ffi::DataType;
   switch (dtype) {
-    case ffi::DataType::BF16:
-    case ffi::DataType::F16:
-    case ffi::DataType::F32: {
+    case BF16:
+    case F16:
+    case F32: {
       const int ratio = GetSingleToDoublePrecisionPerfRatio(device_ordinal);
       if (ratio >= 1 && ratio <= kMaxF64PerfRatio) {
         LaunchLgammaF32WithF64Kernel(stream, n, dtype, x.untyped_data(),
@@ -63,7 +64,7 @@ ffi::Error LgammaImpl(gpuStream_t stream, int32_t device_ordinal,
       }
       break;
     }
-    case ffi::DataType::F64:
+    case F64:
       LaunchLgammaF64Kernel(stream, n, x.reinterpret_data<double>(),
                             out->reinterpret_data<double>());
       break;

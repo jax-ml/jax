@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <vector>
 
@@ -47,7 +48,7 @@ absl::Status RebaseBufferAllocations(
     absl::Span<const BufferAllocation::Slice> operand_slices) {
   return ForEachBufferSlice(thunk, [&](auto* slice) {
     int64_t idx = slice->buffer_allocation_index();
-    if (idx >= 0 && idx < static_cast<int64_t>(operand_slices.size())) {
+    if (idx >= 0 && idx < std::ssize(operand_slices)) {
       const BufferAllocation::Slice& base = operand_slices[idx];
       slice->set_buffer_allocation_index(base.allocation()->index());
       slice->set_offset(base.offset() + slice->offset());

@@ -762,8 +762,6 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('DMAs only guaranteed to work on TPU v4+')
     if jax.device_count() < 2:
       self.skipTest('Test only works with >2 devices')
 

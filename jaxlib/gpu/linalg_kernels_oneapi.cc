@@ -229,23 +229,24 @@ void LaunchTridiagonalSolvePerturbedKernel(
     xla::ffi::DataType dtype, const void* subdiag, const void* diag,
     const void* superdiag, const void* rhs, void* x, void* workspace) {
   absl::Status status = TryCatchToStatus([&] {
+    using enum xla::ffi::DataType;
     switch (dtype) {
-      case xla::ffi::DataType::F32:
+      case F32:
         LaunchTridiagonalSolvePerturbedKernelBody<float>(
             *stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
             workspace);
         break;
-      case xla::ffi::DataType::F64:
+      case F64:
         LaunchTridiagonalSolvePerturbedKernelBody<double>(
             *stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
             workspace);
         break;
-      case xla::ffi::DataType::C64:
+      case C64:
         LaunchTridiagonalSolvePerturbedKernelBody<std::complex<float>>(
             *stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
             workspace);
         break;
-      case xla::ffi::DataType::C128:
+      case C128:
         LaunchTridiagonalSolvePerturbedKernelBody<std::complex<double>>(
             *stream, batch_size, n, k_rhs, subdiag, diag, superdiag, rhs, x,
             workspace);

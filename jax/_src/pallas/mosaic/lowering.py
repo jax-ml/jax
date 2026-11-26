@@ -1022,10 +1022,24 @@ def _check_block_mappings(
     else:
       bs1, as1 = 1, 1
 
+    if bm.array_aval.dtype == jnp.bool_:
+      bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
+    else:
+      bitwidth = dtypes.itemsize_bits(physical_dtype)
+    packing = 32 // bitwidth
+
     if rank >= 2:
-      evenly_divisible = (
-          (bs0 == as0 or bs0 % 128 == 0) and
-          (bs1 == as1 or bs1 % 8 == 0)
+      # VMEM blocks with 1, 2 or 4 rows are retiled by the pipeline DMAs. A
+      # block needs at least as many rows as are packed into a sublane.
+      retiled = (
+          bs1 in (1, 2, 4)
+          and bs1 >= packing
+          and tpu_core.unwrap_core_memory_space(memory_space)
+          == tpu_core.MemorySpace.VMEM
+          and is_libtpu_at_least("0.0.54")
+      )
+      evenly_divisible = (bs0 == as0 or bs0 % 128 == 0) and (
+          bs1 == as1 or bs1 % 8 == 0 or retiled
       )
       if not evenly_divisible:
         extra_msg = ""
@@ -1040,17 +1054,13 @@ def _check_block_mappings(
             "The Pallas TPU lowering currently requires that the last two "
             "dimensions of your block shape are divisible by 8 and 128 "
             "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
+            "overall array. The second to last dimension of a VMEM block "
+            "may also be 1, 2 or 4, if it is at least 32 // dtype bitwidth. "
             + extra_msg
             + err_details()
         )
     else:
       assert rank == 1
-      if bm.array_aval.dtype == jnp.bool_:
-        bitwidth = dtypes.itemsize_bits(BOOL_MEMREF_TYPE)
-      else:
-        bitwidth = dtypes.itemsize_bits(physical_dtype)
-      packing = 32 // bitwidth
       sublane_count = tpu_info.get_tpu_info().num_sublanes
       lane_count = tpu_info.get_tpu_info().num_lanes
       min_tiling = lane_count * packing
@@ -1116,10 +1126,10 @@ def lower_jaxpr_into_pipelined_module(
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.53"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.53). Found"
         f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
@@ -1474,6 +1484,190 @@ def _get_mesh_shape_and_semantics(
   return mesh_shape, dimension_semantics
 
 
+def _match_emit_pipeline_eqn(
+    jaxpr: jax_core.Jaxpr,
+    *,
+    num_inputs: int,
+    num_scratch: int,
+    pallas_mesh: pallas_core.Mesh,
+) -> tuple[dict[str, Any], Any, pallas_core.GridMapping, list[jax_core.Var]]:
+  if len(jaxpr.eqns) != 1 or jaxpr.eqns[0].primitive.name != "emit_pipeline":
+    raise ValueError(
+        "use_compiler_pipeline_emitter requires pltpu.emit_pipeline to be the"
+        " only top-level equation in the kernel jaxpr (traced with"
+        " jax_use_emit_pipeline_primitive=True), got"
+        f" {[e.primitive for e in jaxpr.eqns]}."
+    )
+
+  eqn = jaxpr.eqns[0]
+  params = eqn.params
+  prim_args = params["args_tree"].unflatten(eqn.invars)
+  if prim_args.all_index_map_consts:
+    raise NotImplementedError(
+        "Scalar prefetch is not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  if prim_args.dynamic_grid_spec:
+    raise NotImplementedError(
+        "Dynamic grid bounds are not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  if (
+      prim_args.allocations is not None
+      or params["tiling"] is not None
+      or params["no_pipelining"]
+      or params["output_wait_read_only"]
+      or params["core_axis"] is not None
+      or params["core_axis_name"] is not None
+  ):
+    raise NotImplementedError(
+        "Unsupported pltpu.emit_pipeline options for"
+        " use_compiler_pipeline_emitter."
+    )
+
+  scratch_avals = (
+      tuple(v.aval for v in jaxpr.invars[-num_scratch:]) if num_scratch else ()
+  )
+  grid_mapping: pallas_core.GridMapping = params["grid_mapping"].replace(
+      scratch_avals=scratch_avals,
+  )
+  if grid_mapping.vmapped_dims:
+    raise NotImplementedError(
+        "vmap is not yet supported with use_compiler_pipeline_emitter."
+    )
+  dim_semantics = tuple(
+      _canonicalize_dimension_semantic(s) for s in params["dimension_semantics"]
+  )
+  if len(dim_semantics) != len(grid_mapping.static_grid) or any(
+      s not in ("parallel", "arbitrary") for s in dim_semantics
+  ):
+    raise ValueError(
+        f"Invalid dimension_semantics for grid {grid_mapping.static_grid}:"
+        f" {params['dimension_semantics']}."
+    )
+
+  io_invars = jaxpr.invars[grid_mapping.slice_block_ops]
+  scratch_invars = jaxpr.invars[grid_mapping.slice_scratch_ops]
+  refs, _ = tree_util.tracing_registry.flatten(
+      params["refs_tree"].unflatten(prim_args.refs_flat),
+      lambda x: isinstance(x, state.TransformedRef),
+  )
+  if (
+      len(jaxpr.invars)
+      != len(grid_mapping.block_mappings) + grid_mapping.num_scratch_operands
+      or grid_mapping.num_inputs != num_inputs
+      or tuple(refs) != tuple(io_invars)
+  ):
+    raise ValueError(
+        "pltpu.emit_pipeline inputs and outputs must match the kernel"
+        " input/output Refs positionally without slicing, transforms, or"
+        " omission when use_compiler_pipeline_emitter=True."
+    )
+  for v in io_invars:
+    ms = tpu_core.memory_space_to_tpu_memory_space(
+        pallas_core.get_memory_space_aval(v.aval), tpu_core.CoreType.TC
+    )
+    if ms not in (ANY, tpu_core.MemorySpace.HBM):
+      raise ValueError(
+          "Expected kernel input/output Refs in HBM or ANY for"
+          f" use_compiler_pipeline_emitter, got {ms}."
+      )
+  if not set(prim_args.body_consts).issubset(scratch_invars):
+    raise ValueError(
+        "pltpu.emit_pipeline body may only close over top-level kernel"
+        " scratch Refs when use_compiler_pipeline_emitter=True."
+    )
+  all_effects = set(params["body_jaxpr"].effects).union(
+      *(bm.index_map_jaxpr.effects for bm in grid_mapping.block_mappings)
+  )
+  if any(
+      isinstance(e, jax_core.NamedAxisEffect) and e.name in pallas_mesh.shape
+      for e in all_effects
+  ):
+    raise NotImplementedError(
+        "Querying pallas_mesh axes is not yet supported with"
+        " use_compiler_pipeline_emitter."
+    )
+  return params, prim_args, grid_mapping, scratch_invars
+
+
+def lower_emit_pipeline_into_pipelined_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    pallas_mesh: pallas_core.Mesh,
+    jax_mesh: mesh_lib.Mesh | None,
+    dynamic_shape_replacement_enabled: bool = False,
+    num_inputs: int,
+    num_scratch: int,
+    fuse_transposed_lhs_in_matmul: bool = False,
+) -> None:
+  if pallas_mesh is None:
+    raise ValueError("Mesh must be provided.")
+  if pallas_mesh.core_type != tpu_core.CoreType.TC:
+    raise ValueError(
+        "use_compiler_pipeline_emitter is only supported on TensorCore."
+    )
+  if (
+      getattr(pallas_mesh, "num_cores", 1) > 1
+      or math.prod(pallas_mesh.shape.values()) > 1
+  ):
+    raise NotImplementedError(
+        "use_compiler_pipeline_emitter does not yet support multi-core"
+        " TensorCoreMesh."
+    )
+  params, prim_args, grid_mapping, scratch_invars = _match_emit_pipeline_eqn(
+      jaxpr,
+      num_inputs=num_inputs,
+      num_scratch=num_scratch,
+      pallas_mesh=pallas_mesh,
+  )
+
+  num_grid = len(grid_mapping.static_grid)
+  body_jaxpr: jax_core.Jaxpr = params["body_jaxpr"]
+  io_vars = body_jaxpr.invars[2 * num_grid + 1 :]
+  assert len(io_vars) == len(grid_mapping.block_mappings)
+
+  def new_body(*args):
+    io_args, scratch_args = split_list(args, [len(io_vars)])
+    scratch_by_invar = dict(zip(scratch_invars, scratch_args))
+    consts = [scratch_by_invar[v] for v in prim_args.body_consts]
+    idx = [primitives.program_id(i) for i in range(num_grid)]
+    sizes = [jnp.int32(primitives.num_programs(i)) for i in range(num_grid)]
+    local_idx = jnp.int32(0)
+    if params["_explicit_indices"]:
+      for i, s in zip(idx, sizes):
+        local_idx = local_idx * s + i
+    return jax_core.eval_jaxpr(
+        body_jaxpr, consts, *idx, local_idx, *sizes, *io_args
+    )
+
+  in_avals = [*(v.aval for v in io_vars), *grid_mapping.scratch_avals]
+  with grid_mapping.trace_env():
+    pipelined_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        new_body,
+        ft.flatten_args(*in_avals),
+        jaxpr.debug_info.with_unknown_names(),
+    )
+  assert not pipelined_jaxpr.consts
+  # The compiler shards PARALLEL dims across all physical TensorCores on a
+  # megacore device, so always emit ARBITRARY to honor single-core execution.
+  lower_jaxpr_into_pipelined_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      pipelined_jaxpr,
+      name=name,
+      dimension_semantics=("arbitrary",) * num_grid,
+      kernel_type=tpu_core.CoreType.TC,
+      mesh=jax_mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
+  )
+
+
 def lower_jaxpr_into_unpipelined_module(
     lowering_context: mlir.LoweringRuleContext,
     module: ir.Module,
@@ -1495,10 +1689,10 @@ def lower_jaxpr_into_unpipelined_module(
     )
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.53"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.53). Found"
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
@@ -2245,8 +2439,6 @@ def _pad_memref(
     padder: pallas_core.PadTransform,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
-  if not is_libtpu_at_least("0.0.52"):
-    raise NotImplementedError("pad_ref requires libtpu >= 0.0.52")
   ref_ty = ir.MemRefType(ref.type)
   padded_iter = iter(padder.shape)
   new_shape: list[int] = []
@@ -3748,9 +3940,17 @@ def _reduce_index_helper(
     raise NotImplementedError("Only single axis reduction supported")
 
   axis = axes[0]
-  # TODO(b/460843515): Support 1D inputs in Mosaic.
+  # Mosaic natively supports 1D inputs to tpu.reduce_index since XLA version
+  # 89. Older versions (and the forward compatible serialization format, which
+  # drops the reduced dimension) require reshaping the input to 2D first.
+  supports_1d = (
+      xla_version >= 89
+      and ctx.is_libtpu_at_least("0.0.54")
+      and not ctx.forward_compatible
+  )
   is_1d = len(x_aval.shape) == 1
-  if is_1d:
+  reshape_1d = is_1d and not supports_1d
+  if reshape_1d:
     x = vector.shape_cast(
         ctx.aval_to_ir_type(
             jax_core.ShapedArray((1, *x_aval.shape), x_aval.dtype)
@@ -3762,10 +3962,9 @@ def _reduce_index_helper(
   else:
     in_shape = x_aval.shape
 
-  keep_dims = xla_version >= 84
   out_shape = (
       *in_shape[:axis],
-      *((1,) if keep_dims else ()),
+      1,
       *in_shape[axis + 1 :],
   )
   native_dtype = jnp.int16 if x_aval.dtype == jnp.bfloat16 else jnp.int32
@@ -3786,9 +3985,7 @@ def _reduce_index_helper(
 
   if is_1d:
     return vector.extract(result, [], [0] * len(out_shape))
-  if keep_dims:
-    return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
-  return result
+  return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
 
 @register_lowering_rule(lax.argmax_p, ensure_mlir_values=False)
 def _argmax_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):
@@ -4502,16 +4699,12 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
 
   if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[primitive]
-    # Older TC compilers (libtpu < 0.0.53) reject UNE but lower ONE to the same
-    # unordered hardware compare.
+    # Older TC compilers reject UNE but lower ONE to the same unordered
+    # hardware compare.
     if (
         primitive == lax.ne_p
         and ctx.lowering_context.kernel_type == tpu_core.CoreType.TC
-        and (
-            ctx.forward_compatible
-            or ctx.lowering_context.backend is None
-            or not ctx.is_libtpu_at_least("0.0.53")
-        )
+        and (ctx.forward_compatible or ctx.lowering_context.backend is None)
     ):
       pred = arith.CmpFPredicate.ONE
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
@@ -5630,9 +5823,11 @@ def _semaphore_signal_lowering_rule(
 @register_lowering_rule(
     primitives.semaphore_wait_p, kernel_types=[*tpu_core.CoreType]
 )
-def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
-  sem_aval, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
+def _semaphore_wait_lowering_rule(
+    ctx: LoweringRuleContext, *args, args_tree, decrement: bool
+):
+  sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
   if not decrement:
     raise NotImplementedError("Non-decrementing wait is not supported.")
   sem, _ = _transform_ref(

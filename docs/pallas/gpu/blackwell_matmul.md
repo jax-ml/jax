@@ -90,7 +90,7 @@ We unpack the config variables for easier access, set the tiling and swizzling
 transforms to get the SMEM data format to match [what's expected by MMA instructions](#memory-space-a-b-mma).
 
 The kernel implementation itself is relatively short. The first part sets up
-a [compute/memory pipeline](./pipelining.md) using {py:func}`plgpu.emit_pipeline <jax.experimental.pallas.mosaic_gpu.emit_pipeline>`. At each step, the compute function (`do_mma`) consumes a
+a [compute/memory pipeline](./pipelining.md) using {py:func}`plgpu.emit_pipeline <jax.pallas.mosaic_gpu.emit_pipeline>`. At each step, the compute function (`do_mma`) consumes a
 `(tile_m, tile_k)` slice of LHS and `(tile_k, tile_n)` slice of RHS. As mentioned
 before, we specify `transforms`, as well `delay_release=1`. This last parameter
 ensures that the input windows (`a_smem`, `b_smem`) passed into `do_mma` will not
@@ -150,7 +150,7 @@ and copy it back to GMEM using TMA.
 ```
 
 What remains is to actually turn the kernel into a function that can be called
-with JAX arrays. We use {py:func}`plgpu.kernel <jax.experimental.pallas.mosaic_gpu.kernel>`
+with JAX arrays. We use {py:func}`plgpu.kernel <jax.pallas.mosaic_gpu.kernel>`
 for that. The grid is for now simply 2D and iterates over the output tiles. We
 allocate intermediates used by the kernel:
 1. The TMEM buffer used as an accumulator
@@ -540,7 +540,7 @@ def matmul4(a, b, config):
   )
 ```
 
-The change is relatively simple. We utilize the {py:func}`plgpu.nd_loop <jax.experimental.pallas.mosaic_gpu.nd_loop>`
+The change is relatively simple. We utilize the {py:func}`plgpu.nd_loop <jax.pallas.mosaic_gpu.nd_loop>`
 helper to specify that our iteration space is `(m_iters, n_iters)`, but we also
 request that it should be split across the cluster grid using the `collective_axes=`
 argument.
@@ -753,7 +753,7 @@ tile. But there's a twist! Instead of jumping to the beginning of the second til
 we start from the end and work our way back. This ensures that as we switch the
 tiles, we can reuse some of the recent blocks of one of the operands.
 
-Since this strategy is so common, we provide a helper for it: {py:func}`plgpu.planar_snake <jax.experimental.pallas.mosaic_gpu.planar_snake>`.
+Since this strategy is so common, we provide a helper for it: {py:func}`plgpu.planar_snake <jax.pallas.mosaic_gpu.planar_snake>`.
 When using the helper, the changes to the kernel are quite trivial:
 
 ```python

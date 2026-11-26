@@ -108,12 +108,23 @@ import jaxlib._xla as _xla  # noqa: F401
 
 
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
+
+donation_recovery: ModuleType | None
+if jaxlib_extension_version >= 527:
+  from jaxlib._jax import donation_recovery as donation_recovery  # noqa: F401
+else:
+  donation_recovery = None
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
 from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
 from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
 from jaxlib import _profile_data as _profile_data  # noqa: F401
+_gpu_spec: ModuleType | None
+if jaxlib_extension_version >= 531:
+  from jaxlib import _gpu_spec as _gpu_spec  # noqa: F401
+else:
+  _gpu_spec = None
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.plugin_support as plugin_support

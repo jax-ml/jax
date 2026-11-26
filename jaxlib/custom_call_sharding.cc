@@ -17,8 +17,9 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <array>
+#include <bit>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -252,11 +253,12 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
         if (extension == nullptr) {
           return;
         }
-        PJRT_Register_Custom_Partitioner_Args args;
-        args.struct_size = PJRT_Register_Custom_Partitioner_Args_STRUCT_SIZE;
-        args.name = name.c_str();
-        args.name_size = name.size();
-        args.callbacks = c_fns.get();
+        PJRT_Register_Custom_Partitioner_Args args{
+            .struct_size = PJRT_Register_Custom_Partitioner_Args_STRUCT_SIZE,
+            .name = name.c_str(),
+            .name_size = name.size(),
+            .callbacks = c_fns.get(),
+        };
         PJRT_Error* error =
             reinterpret_cast<const PJRT_Custom_Partitioner_Extension*>(
                 extension)
@@ -296,9 +298,9 @@ Args:
           JAX_InspectSharding_Callback cb;
           cb.call = &CallInspectSharding;
           cb.data = handler.ptr();
-          char bytes[sizeof(JAX_InspectSharding_Callback)];
-          std::memcpy(&bytes, &cb, sizeof(JAX_InspectSharding_Callback));
-          return nb::bytes(bytes, sizeof(JAX_InspectSharding_Callback));
+          auto bytes =
+              std::bit_cast<std::array<char, sizeof(cb)>>(cb);
+          return nb::bytes(bytes.data(), bytes.size());
         });
 
   nb::module_ hlo_sharding_util_m = m.def_submodule(
@@ -340,10 +342,11 @@ Args:
         if (extension == nullptr) {
           return;
         }
-        PJRT_Register_Batch_Partitionable_Args args;
-        args.struct_size = PJRT_Register_Batch_Partitionable_Args_STRUCT_SIZE;
-        args.name = target_name.c_str();
-        args.name_size = target_name.size();
+        PJRT_Register_Batch_Partitionable_Args args{
+            .struct_size = PJRT_Register_Batch_Partitionable_Args_STRUCT_SIZE,
+            .name = target_name.c_str(),
+            .name_size = target_name.size(),
+        };
         PJRT_Error* error = extension->register_batch_partitionable(&args);
         std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error_ptr(
             error, pjrt::MakeErrorDeleter(c_api_value));

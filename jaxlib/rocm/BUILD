@@ -52,7 +52,6 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":hip_vendor",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",

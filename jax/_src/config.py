@@ -30,7 +30,6 @@ from jax._src import logging_config
 from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 
 config_ext = _jax.config
@@ -210,28 +209,10 @@ register_trace_context_callback = []
 trace_context = config_ext.trace_context
 trace_context_names = config_ext.trace_context_names
 
-if jaxlib_extension_version >= 509:
-  jaxpr_eqn_ctx_vals = config_ext.jaxpr_eqn_ctx_vals
-  jaxpr_eqn_ctx_names = config_ext.jaxpr_eqn_ctx_names
-  swap_local_jaxpr_eqn_ctx = config_ext.swap_local_jaxpr_eqn_ctx
-  set_local_jaxpr_eqn_ctx = config_ext.set_local_jaxpr_eqn_ctx
-else:
-  _jaxpr_eqn_ctx_configs: list[config_ext.Config] = []
-
-  def jaxpr_eqn_ctx_vals():
-    return tuple(c.value for c in _jaxpr_eqn_ctx_configs)
-
-  def jaxpr_eqn_ctx_names():
-    return tuple(c.name for c in _jaxpr_eqn_ctx_configs)
-
-  def swap_local_jaxpr_eqn_ctx(values):
-    return tuple(
-        c.swap_local(v) for c, v in zip(_jaxpr_eqn_ctx_configs, values)
-    )
-
-  def set_local_jaxpr_eqn_ctx(values):
-    for c, v in zip(_jaxpr_eqn_ctx_configs, values):
-      c.set_local(v)
+jaxpr_eqn_ctx_vals = config_ext.jaxpr_eqn_ctx_vals
+jaxpr_eqn_ctx_names = config_ext.jaxpr_eqn_ctx_names
+swap_local_jaxpr_eqn_ctx = config_ext.swap_local_jaxpr_eqn_ctx
+set_local_jaxpr_eqn_ctx = config_ext.set_local_jaxpr_eqn_ctx
 
 
 config = Config()
@@ -269,17 +250,10 @@ class State(config_ext.Config[_T]):
   ):
     if parser is not None:
       default = parser(default)
-    if TYPE_CHECKING or jaxlib_extension_version >= 509:
-      super().__init__(
-          name, default, include_in_jit_key=include_in_jit_key,
-          include_in_trace_context=include_in_trace_context,
-          include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
-    else:
-      super().__init__(
-          name, default, include_in_jit_key=include_in_jit_key,
-          include_in_trace_context=include_in_trace_context)
-      if include_in_jaxpr_eqn_ctx:
-        _jaxpr_eqn_ctx_configs.append(self)
+    super().__init__(
+        name, default, include_in_jit_key=include_in_jit_key,
+        include_in_trace_context=include_in_trace_context,
+        include_in_jaxpr_eqn_ctx=include_in_jaxpr_eqn_ctx)
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = (f"Context manager for `{name}` config option"
@@ -1044,22 +1018,13 @@ mesh_context_manager = config_ext.Config[Any](
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-if TYPE_CHECKING or jaxlib_extension_version >= 509:
-  compute_on_context_manager = config_ext.Config[Any](
-      'compute_on_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-      include_in_jaxpr_eqn_ctx=True,
-  )
-else:
-  compute_on_context_manager = config_ext.Config[Any](
-      'compute_on_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  _jaxpr_eqn_ctx_configs.append(compute_on_context_manager)
+compute_on_context_manager = config_ext.Config[Any](
+    'compute_on_context_manager',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
+)
 xla_metadata_context_manager = config_ext.Config[Any](
     'xla_metadata_context_manager',
     None,
@@ -1954,7 +1919,8 @@ allow_f16_reductions = bool_state(
     help=('If False, `reduce_sum` on `f16` or `bf16` inputs will raise an error.'
           'Defaults to True.'),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True)
 
 
 traceback_filtering = enum_state(
@@ -1981,6 +1947,21 @@ use_emit_pipeline_primitive = bool_state(
     help="Controls whether to use the emit_pipeline primitive.",
     include_in_jit_key=True,
     include_in_trace_context=True)
+
+pallas_tpu_pipeline_explicit_indices = bool_state(
+    name='jax_pallas_tpu_pipeline_explicit_indices',
+    default=False,
+    help=(
+        'If True, pltpu.emit_pipeline* passes a pltpu.PipelineStep as the '
+        'first argument to `body` by default.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+# Temporary allowlist of file path suffixes whose pltpu.emit_pipeline* calls
+# still default to _explicit_indices=False.
+pallas_tpu_emit_pipeline_legacy_files: tuple[str, ...] = ()
 
 
 # This flag is for internal use.
@@ -2578,4 +2559,15 @@ jax_partitioning = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True,
     include_in_jaxpr_eqn_ctx=True,
+)
+
+cpu_flush_subnormals = bool_state(
+    name='jax_cpu_flush_subnormals',
+    default=True,
+    help=(
+        'If True (the default), flushes subnormal floating-point inputs and'
+        ' outputs to zero on CPU.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
 )

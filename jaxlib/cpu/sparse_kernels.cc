@@ -87,8 +87,7 @@ static ffi::Future CsrSparseDenseKernelImpl(
 
     ffi::CountDownPromise promise(batch_sizes.size());
     ffi::Future future(promise);
-    int64_t batch_start = 0;
-    for (int64_t size : batch_sizes) {
+    for (int64_t batch_start = 0; int64_t size : batch_sizes) {
       thread_pool.Schedule([out_matrix, lhs_matrix, rhs_matrix, batch_start,
                             size, promise]() mutable {
         out_matrix.middleRows(batch_start, size).noalias() =
@@ -167,28 +166,29 @@ static ffi::Future CsrSparseDenseKernelDispatch(
     return ffi::Future(promise);
   }
 
+  using enum ffi::DataType;
   switch (lhs_data.element_type()) {
-    case ffi::DataType::S32:
+    case S32:
       return CsrSparseDenseKernelTypedDispatch<int32_t>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);
-    case ffi::DataType::S64:
+    case S64:
       return CsrSparseDenseKernelTypedDispatch<int64_t>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);
-    case ffi::DataType::F32:
+    case F32:
       return CsrSparseDenseKernelTypedDispatch<float>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);
-    case ffi::DataType::F64:
+    case F64:
       return CsrSparseDenseKernelTypedDispatch<double>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);
-    case ffi::DataType::C64:
+    case C64:
       return CsrSparseDenseKernelTypedDispatch<std::complex<float>>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);
-    case ffi::DataType::C128:
+    case C128:
       return CsrSparseDenseKernelTypedDispatch<std::complex<double>>(
           lhs_data, lhs_outer_indicies, lhs_inner_indicies, rhs, out,
           thread_pool);

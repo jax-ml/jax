@@ -676,6 +676,27 @@ class CheckpointTest(jtu.JaxTestCase):
         for s, s_ref in zip(out.addressable_shards, out_ref.addressable_shards):
           self.assertArraysEqual(s.data, s_ref.data)
 
+  def test_combine_kvstores(self):
+    ckpt_dir = pathlib.Path(self.create_tempdir('combine_kvstores').full_path)
+    dummy_key_path = os.path.join(ckpt_dir, 'dummy_key')
+    combined_kvstore = ts_impl.get_tensorstore_spec(
+        dummy_key_path, ocdbt=True, process_idx=None)['kvstore']
+    combined_kvstore.pop('path')
+    children_kvstores = []
+    for i in range(2):
+      child_kvstore = ts_impl.get_tensorstore_spec(
+          dummy_key_path, ocdbt=True, process_idx=i)['kvstore']
+      child_kvstore.pop('path')
+      store = ts.KvStore.open(child_kvstore).result()
+      store[f'key_{i}'] = f'val_{i}'.encode()
+      children_kvstores.append(child_kvstore)
+
+    asyncio.run(ts_impl.combine_kvstores(combined_kvstore, children_kvstores))
+
+    combined = ts.KvStore.open(combined_kvstore).result()
+    self.assertEqual(combined['key_0'], b'val_0')
+    self.assertEqual(combined['key_1'], b'val_1')
+
   def test_deserialization_with_int4(self):
     self.skipTest('TODO(b/376077396): Fix JaxRuntimeError: INVALID_ARGUMENT')
     if jtu.test_device_matches(['gpu']):

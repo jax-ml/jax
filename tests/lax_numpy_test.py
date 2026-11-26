@@ -50,7 +50,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_version
 from jax._src.numpy import ufuncs as jnp_ufuncs
 from jax._src.util import safe_zip, tuple_update
 
@@ -638,8 +637,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(dtype=float_dtypes)
   def testMatmulBroadcastOperandReduce(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41414
-    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
-      self.skipTest("Requires xla_version >= 84")
     x = jnp.ones((64, 8), dtype=dtype)
     y = jax.jit(lambda x: (x @ jnp.ones((8, 64), dtype)).sum())(x)
     tol = {np.float16: 1e-2, jnp.bfloat16: 2e-2}
@@ -647,8 +644,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testMatmulBroadcastOperandGrad(self):
     # Regression test for https://github.com/jax-ml/jax/issues/41414
-    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
-      self.skipTest("Requires xla_version >= 84")
     rng = jtu.rand_default(self.rng())
     x = rng((1000, 16), np.float32)
     grad_fn = jax.jit(jax.grad(lambda s, x: jnp.sum(x.T @ (s * x))))
@@ -656,6 +651,50 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = np.sum(x.T @ x)
     tol = 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
     self.assertAllClose(actual, expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      shape_and_transpose=[(16, 16, 256, False), (13, 13, 316, True)],
+      dtype=float_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  def testMatmulConstantLhsReduce(self, shape_and_transpose, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42651
+    m, k, n, transpose_rhs = shape_and_transpose
+    rng = jtu.rand_default(self.rng())
+    tol = {
+        np.float16: 5e-2,
+        jnp.bfloat16: 2e-1,
+        np.float32: 1e-3,
+        np.float64: 1e-12,
+    }
+    c_np = (rng((m, k), dtype) * 0.25).astype(dtype)
+    rhs_shape = (n, k) if transpose_rhs else (k, n)
+    x_np = (rng(rhs_shape, dtype) * 0.25).astype(dtype)
+    c = jnp.asarray(c_np)
+    x = jnp.asarray(x_np)
+    x_mat = x_np.T if transpose_rhs else x_np
+    expected_dot = c_np.astype(np.float64) @ x_mat.astype(np.float64)
+    expected_col_sum = expected_dot.sum(axis=0).astype(dtype)
+    expected_total_sum = np.asarray(expected_dot.sum(), dtype=dtype)
+
+    def col_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def col_sum_const(rhs):
+      return (c_np @ (rhs.T if transpose_rhs else rhs)).sum(axis=0)
+
+    def total_sum_arr(rhs):
+      return (c @ (rhs.T if transpose_rhs else rhs)).sum()
+
+    self.assertAllClose(
+        jax.jit(col_sum_arr)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(col_sum_const)(x), expected_col_sum, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        jax.jit(total_sum_arr)(x), expected_total_sum, atol=tol, rtol=tol
+    )
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
@@ -2584,6 +2623,113 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = dtype(np.exp(np.linspace(-90, -20, 1000)))
     g = jax.grad(lambda z: jnp.sum(jnp_fun(z, z, jnp.ones_like(z))))(x)
     np.testing.assert_equal(np.all(np.isfinite(g)), True)
+    _, tangent = jax.jvp(
+        lambda z: jnp_fun(z, x, jnp.ones_like(x)), (x,), (jnp.ones_like(x),))
+    np.testing.assert_equal(np.all(np.isfinite(tangent)), True)
+
+    # Subnormal knot spacing at x == xp[0] should not produce NaN in grad wrt xp.
+    sub_step = np.nextafter(dtype(0), dtype(1))
+    if sub_step > 0:
+      xp_sub = np.array([0., 1., 2.], dtype)
+      xp_sub[1] = sub_step
+      fp_sub = np.array([0., 1., 2.], dtype)
+      g_xp = jax.grad(lambda xp_: jnp_fun(dtype(0), xp_, fp_sub))(xp_sub)
+      np.testing.assert_equal(np.any(np.isnan(g_xp)), False)
+
+  @jtu.sample_product(
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.all_floating,
+  )
+  def testInterpSmallDx(self, dtype, left, right):
+    # Regression test for https://github.com/jax-ml/jax/issues/42650:
+    # knot spacing smaller than eps**2 must still interpolate linearly and
+    # return fp[-1] at x == xp[-1].
+    kwds = dict(left=left, right=right)
+    np_fun = lambda x, xp, fp: np.interp(
+        x.astype(np.float64), xp.astype(np.float64), fp.astype(np.float64), **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    step = dtype(2.0 ** (2 * dtypes.finfo(dtype).machep - 1))
+    xp = np.array([0., 1., 2., 3.], dtype) * step
+    fp = np.array([1., 2., 4., 8.], dtype)
+    x = np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, 3., 3.5, np.nan], dtype) * step
+    args_maker = lambda: [x, xp, fp]
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1}.get(dtype, 1e-5)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            rtol=tol, atol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+    fp_grad = fp * dtypes.finfo(dtype).eps
+    x_mid = np.array([0.5, 1.5, 2.5], dtype) * step
+    g = jax.vmap(jax.grad(lambda z: jnp.interp(z, xp, fp_grad, **kwds)))(x_mid)
+    expected = np.diff(fp_grad) / np.diff(xp)
+    self.assertAllClose(g, expected, check_dtypes=False, rtol=tol, atol=tol)
+
+    # Out-of-bounds clamped x on a tiny boundary interval must have zero (non-NaN)
+    # gradient with respect to xp.
+    x_oob = np.array([-10., 10.], dtype)
+    g_oob = jax.grad(lambda xp_: jnp.sum(jnp.interp(x_oob, xp_, fp, **kwds)))(xp)
+    self.assertAllClose(g_oob, np.zeros_like(xp), check_dtypes=False)
+
+  @jtu.sample_product(
+    xp_fp=[
+      ([0., 0., 1.], [10., 20., 30.]),
+      ([0., 1., 1., 2.], [10., 20., 30., 40.]),
+      ([0., 1., 1.], [10., 20., 30.]),
+      ([0., 1., 1.], [10., 20., np.nan]),
+      ([0., 1., 1.], [10., np.nan, 30.]),
+      ([0., 1., 1.], [10., np.inf, 30.]),
+      ([1., 1., 1.], [10., 20., 30.]),
+    ],
+    period=[None, 3.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpDuplicateKnots(self, xp_fp, period, left, right, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42650:
+    # duplicate knots (dx == 0), including at the right endpoint, must match
+    # numpy.interp, propagate NaN in x, and produce finite gradients.
+    xp_list, fp_list = xp_fp
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.5, 1., 1.5, 2., 2.5, np.nan], dtype),
+      np.array(xp_list, dtype),
+      np.array(fp_list, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+    if period is None:
+      xp_arr = np.array(xp_list, dtype)
+      fp_arr = np.array(fp_list, dtype)
+      if np.all(np.isfinite(fp_arr)):
+        x_fin = np.array([-0.5, 0., 0.5, 1., 1.5, 2., 2.5], dtype)
+        gx, gxp, gfp = jax.grad(
+            lambda x_, xp_, fp_: jnp.sum(jnp_fun(x_, xp_, fp_)),
+            argnums=(0, 1, 2))(x_fin, xp_arr, fp_arr)
+        self.assertTrue(np.all(np.isfinite(gx)))
+        self.assertTrue(np.all(np.isfinite(gxp)))
+        self.assertTrue(np.all(np.isfinite(gfp)))
+      elif np.isfinite(fp_arr[-1]):
+        # When fp[-2] is NaN/Inf on a duplicate right endpoint, primal at x=1.0
+        # selects finite fp[-1] and must still have finite gradients.
+        gx, gxp, gfp = jax.grad(
+            lambda x_, xp_, fp_: jnp_fun(x_, xp_, fp_),
+            argnums=(0, 1, 2))(dtype(1.0), xp_arr, fp_arr)
+        self.assertTrue(np.all(np.isfinite(gx)))
+        self.assertTrue(np.all(np.isfinite(gxp)))
+        self.assertTrue(np.all(np.isfinite(gfp)))
+
+    # Duplicate +/-inf knots exercise the x_arr == xp_right check in f_alt.
+    if period is None:
+      for xp_inf in ([0., np.inf, np.inf], [-np.inf, -np.inf, 1.]):
+        args_inf = lambda xp_inf=xp_inf: [
+            np.array([-np.inf, -1., 0., 0.5, 1., 2., np.inf, np.nan], dtype),
+            np.array(xp_inf, dtype),
+            np.array([10., 20., 30.], dtype)]
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_inf, check_dtypes=False)
 
   @jtu.sample_product(
     [dict(x1_shape=x1_shape, x2_shape=x2_shape)

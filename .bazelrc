@@ -79,8 +79,8 @@ common:linux --cxxopt=-std=c++20
 common:linux --host_cxxopt=-std=c++20
 
 common:macos --config=posix
-common:macos --cxxopt=-std=c++17
-common:macos --host_cxxopt=-std=c++17
+common:macos --cxxopt=-std=c++20
+common:macos --host_cxxopt=-std=c++20
 common:macos --apple_platform_type=macos
 
 # Bazel 7.0.0 no longer supports dynamic symbol lookup on macOS. To resolve
@@ -119,8 +119,8 @@ common:windows --host_copt=-DNOGDI
 # https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
 # otherwise, there will be some compiling error due to preprocessing.
 common:windows --copt=/Zc:preprocessor
-common:windows --cxxopt=/std:c++17
-common:windows --host_cxxopt=/std:c++17
+common:windows --cxxopt=/std:c++20
+common:windows --host_cxxopt=/std:c++20
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
 # --copt /Z7 is needed.
 common:windows --linkopt=/DEBUG

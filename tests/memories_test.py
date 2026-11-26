@@ -28,7 +28,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, Recompute
@@ -176,8 +175,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     self.assertEqual(dev.default_memory().kind, self._default_memory_kind)
 
   def test_uninitialized_memory_gc_clear(self):
-    if jaxlib_extension_version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     mem = _jax.Memory.__new__(_jax.Memory)
     cycle = [mem]
     cycle.append(cycle)
@@ -1794,8 +1791,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
-    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     w = jax.device_put(np.arange(8.0), P("y", reduced={'x'}))
     x = jax.device_put(np.ones(8), P(reduced={'x', 'y'}))
 
@@ -1835,8 +1830,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   @jtu.run_on_devices('tpu')
   @jtu.with_explicit_mesh((2, 4), ("dcn", "ici"))
   def test_compute_on_unreduced_single_dcn_all_reduce(self, mesh):
-    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     def collect_dcn(weight):
       return jax.shard_map(
           lambda x: jax.lax.pcast(x, "dcn", to="reduced"),

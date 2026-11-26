@@ -45,6 +45,7 @@ from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
+from jax.interpreters import pxla
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
@@ -151,16 +152,35 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_get_no_executable(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xc.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     executable, compile_time = cc.get_executable_and_time(
-        key, compile_options, backend, xc.DeviceList(tuple(devices.flat)))
+        key, compile_options, backend, devices)
     self.assertIsNone(executable)
     self.assertIsNone(compile_time)
+
+  def test_create_compile_options_device_list_and_ndarray(self):
+    def add(x, y):
+      return x + y
+
+    computation = jax.jit(add).lower(1, 1).compiler_ir()
+    local_devs = tuple(jax.local_devices())
+    da = xc.DeviceList(local_devs)
+    np_devs = np.array(local_devs, dtype=object)
+    backend = xla_bridge.get_backend()
+    opts_from_dl = pxla.create_compile_options(
+        computation, False, [False, False], [False], backend, da, {}
+    )
+    opts_from_np = pxla.create_compile_options(
+        computation, False, [False, False], [False], backend, np_devs, {}
+    )
+    self.assertEqual(
+        opts_from_dl.SerializeAsString(), opts_from_np.SerializeAsString()
+    )
 
   def test_diff_executables(self):
     computation1 = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
@@ -191,19 +211,18 @@ class CompilationCacheTest(CompilationCacheTestCase):
         .lower(np.int32(1), np.int32(1))
         .compiler_ir()
     )
-    devices = np.array([[jax.local_devices()[0]]])
+    devices = xc.DeviceList((jax.local_devices()[0],))
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
-    executable_devices = xc.DeviceList(tuple(devices.flat))
     executable = backend.compile_and_load(
-        str(computation), executable_devices, compile_options)
+        str(computation), devices, compile_options)
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     cc.put_executable_and_time(
         key, "alambda", executable, backend, FAKE_COMPILE_TIME)
     executable_retrieved, compile_time_retrieved = cc.get_executable_and_time(
-        key, compile_options, backend, executable_devices)
+        key, compile_options, backend, devices)
     inputs_to_executable = (
         jnp.array(1, dtype=np.int32),
         jnp.array(2, dtype=np.int32),

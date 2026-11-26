@@ -47,14 +47,12 @@ np_unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                      np.dtype('uint64')]
 unsigned_dtypes = list(np_unsigned_dtypes)
 
-intn_dtypes = [np.dtype('int2'), np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
-signed_dtypes += [np.dtype('int2'), np.dtype('int4')]
-unsigned_dtypes += [np.dtype('uint2'), np.dtype('uint4')]
-if dtypes.int1 is not None:
-  assert dtypes.uint1 is not None
-  intn_dtypes[:0] = [np.dtype('int1'), np.dtype('uint1')]
-  signed_dtypes[:0] = [np.dtype('int1')]
-  unsigned_dtypes[:0] = [np.dtype('uint1')]
+intn_dtypes = [np.dtype('int1'), np.dtype('uint1'), np.dtype('int2'),
+               np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
+signed_dtypes = [np.dtype('int1'), *signed_dtypes, np.dtype('int2'),
+                 np.dtype('int4')]
+unsigned_dtypes = [np.dtype('uint1'), *unsigned_dtypes, np.dtype('uint2'),
+                   np.dtype('uint4')]
 
 np_float_dtypes = [np.dtype('float16'), np.dtype('float32'), np.dtype('float64')]
 
@@ -65,15 +63,12 @@ fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn
               np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
               np.dtype(dtypes.float8_e5m2fnuz),
               np.dtype(dtypes.float8_e3m4), np.dtype(dtypes.float8_e4m3),
-              np.dtype(dtypes.float8_e8m0fnu)]
-if dtypes.float8_e5m3fnu is not None:
-  fp8_dtypes.append(np.dtype(dtypes.float8_e5m3fnu))
+              np.dtype(dtypes.float8_e8m0fnu),
+              np.dtype(dtypes.float8_e5m3fnu)]
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
-fp4_dtypes = []
-if dtypes.float4_e2m1fn is not None:
-  fp4_dtypes += [np.dtype(dtypes.float4_e2m1fn)]
+fp4_dtypes = [np.dtype(dtypes.float4_e2m1fn)]
 float_dtypes += fp4_dtypes
 custom_float_dtypes += fp4_dtypes
 
@@ -85,21 +80,15 @@ x64_dtypes = [np.dtype('int64'), np.dtype('uint64'), np.dtype('float64'),
               np.dtype('complex128')]
 
 np_complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
-custom_complex_dtypes = []
-if dtypes.bcomplex32 is not None:
-  custom_complex_dtypes.append(np.dtype(dtypes.bcomplex32))
-if dtypes.complex32 is not None:
-  custom_complex_dtypes.append(np.dtype(dtypes.complex32))
+custom_complex_dtypes = [np.dtype(dtypes.bcomplex32),
+                         np.dtype(dtypes.complex32)]
 complex_dtypes = custom_complex_dtypes + np_complex_dtypes
 
 
 all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
               complex_dtypes)
 
-custom_complex_scalar_types = [
-    *( [jnp.bcomplex32] if hasattr(jnp, 'bcomplex32') else [] ),
-    *( [jnp.complex32] if hasattr(jnp, 'complex32') else [] ),
-]
+custom_complex_scalar_types = [jnp.bcomplex32, jnp.complex32]
 
 scalar_types = [jnp.bool_, jnp.int4, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
@@ -576,7 +565,7 @@ class DtypesTest(jtu.JaxTestCase):
       jax.jit(f)(x)
 
   @parameterized.parameters(
-      *([(jnp.int1, 1)] if dtypes.int1 is not None else []),
+      (jnp.int1, 1),
       (jnp.int2, 2),
       (jnp.int4, 4),
       (jnp.int8, 8),
@@ -1234,7 +1223,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
-    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+    if dtype == dtypes.float8_e5m3fnu:
       self.skipTest("XLA does not support float8_e5m3fnu.")
     if dtype in custom_complex_dtypes:
       self.skipTest("XLA does not support complex32 or bcomplex32.")
@@ -1267,7 +1256,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   @jax.numpy_dtype_promotion('standard')
   def testFloatPromotionError(self, dtype, bit_width):
-    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+    if dtype == dtypes.float8_e5m3fnu:
       self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
@@ -1300,7 +1289,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   @parameterized.parameters(float_dtypes)
   @config.explicit_x64_dtypes('allow')
   def testFloatArrayCreation(self, dtype):
-    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+    if dtype == dtypes.float8_e5m3fnu:
       self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
@@ -1370,7 +1359,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
-    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+    if dtype == dtypes.float8_e5m3fnu:
       self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype in custom_complex_dtypes:
       self.skipTest('XLA does not support complex32 or bcomplex32.')

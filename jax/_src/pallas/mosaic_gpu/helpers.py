@@ -17,7 +17,7 @@
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
-from typing import overload
+from typing import Any, Protocol, overload
 
 import jax
 from jax import lax
@@ -329,14 +329,25 @@ def planar_snake(
   return (minor, major) if minor_dim == 0 else (major, minor)
 
 
+class DynamicSchedulingLoop[F, R](Protocol):
+  """Protocol for the decorator returned by ``dynamic_scheduling_loop``."""
+
+  def __call__(self, body: F, /) -> R:
+    ...
+
+  def get_allocations(self) -> dict[str, Any]:
+    ...
+
+
 @overload
 def dynamic_scheduling_loop(
     grid_names: Sequence[Hashable],
     *,
     thread_axis: Hashable | None = None,
     cluster_axes: tuple[str | tuple[str, ...], ...] = (),
-    init_carry: None = None
-) -> Callable[[Callable[[NDLoopInfo], None]], None]:
+    init_carry: None = None,
+    allocations: dict[str, Any] | None = None,
+) -> DynamicSchedulingLoop[Callable[[NDLoopInfo], None], None]:
   ...
 
 
@@ -347,7 +358,8 @@ def dynamic_scheduling_loop[T](
     thread_axis: Hashable | None = None,
     cluster_axes: tuple[str | tuple[str, ...], ...] = (),
     init_carry: T,
-) -> Callable[[Callable[[NDLoopInfo, T], T]], T]:
+    allocations: dict[str, Any] | None = None,
+) -> DynamicSchedulingLoop[Callable[[NDLoopInfo, T], T], T]:
   ...
 
 
@@ -355,7 +367,8 @@ def dynamic_scheduling_loop(
     grid_names,
     thread_axis = None,
     cluster_axes = (),
-    init_carry = None):
+    init_carry = None,
+    allocations = None):
   """A loop over program instances using dynamic work scheduling.
 
   This loop will iterate through available program instances until all
@@ -371,6 +384,31 @@ def dynamic_scheduling_loop(
     def body(loop_info):
       work(loop_info.index)  # do work...
 
+  By default, the loop allocates its scheduling state itself, which requires
+  all threads to call it together. To run a separate loop in each thread (for
+  example, under ``pl.when`` on the thread index), allocate the state once
+  beforehand by passing the result of ``get_allocations`` on the returned
+  decorator to ``pl.run_scoped`` with ``collective_axes=thread_axis``, and
+  pass the provided refs to every loop as ``allocations``::
+
+    loop = functools.partial(
+        plgpu.dynamic_scheduling_loop, grid_names, thread_axis="wg"
+    )
+
+    @functools.partial(
+        pl.run_scoped,
+        allocs=loop().get_allocations(),
+        collective_axes="wg",
+    )
+    def _(allocs):
+      @pl.when(lax.axis_index("wg") == 0)
+      def _():
+        @loop(allocations=allocs)
+        def body(loop_info):
+          ...
+
+      ...  # One loop for every other thread.
+
   Args:
     grid_names: The names of the axes in the grid.
     thread_axis: The name of the thread axis. This must be passed in if
@@ -380,10 +418,39 @@ def dynamic_scheduling_loop(
     init_carry: An optional initial carry for the loop. If passed in, the
       body function should expect a ``carry`` keyword argument and return
       the next carry value.
+    allocations: The allocations provided by ``pl.run_scoped`` when the result
+      of calling ``get_allocations`` on the returned decorator is passed to
+      ``pl.run_scoped``. If not passed in, the loop allocates its own state.
+
+  Returns:
+    A decorator that runs the loop over the decorated body. Its
+    ``get_allocations`` method returns the scoped allocations needed by the
+    loop.
   """
   num_slots = 2
   num_threads = 1 if thread_axis is None else lax.axis_size(thread_axis)
   user_carry = init_carry
+
+  def get_allocations():
+    if cluster_axes:
+      cancel_used_barrier = gpu_core.ClusterBarrier(
+          collective_axes=cluster_axes,
+          num_arrivals=num_threads,
+          num_barriers=num_slots,
+      )
+    else:
+      cancel_used_barrier = gpu_core.Barrier(
+          num_arrivals=num_threads,
+          num_barriers=num_slots,
+      )
+    return dict(
+        try_cancel_buffer=gpu_core.TryClusterCancelResult(num_slots),
+        try_cancel_barrier=gpu_core.Barrier(
+            num_arrivals=num_threads,
+            num_barriers=num_slots,
+        ),
+        cancel_used_barrier=cancel_used_barrier,
+    )
 
   def decorator(body):
     def _scoped(try_cancel_buffer, try_cancel_barrier, cancel_used_barrier):
@@ -437,28 +504,13 @@ def dynamic_scheduling_loop(
 
       return None if user_carry is None else final_user_carry
 
-    if cluster_axes:
-      cancel_used_barrier = gpu_core.ClusterBarrier(
-          collective_axes=cluster_axes,
-          num_arrivals=num_threads,
-          num_barriers=num_slots,
-      )
-    else:
-      cancel_used_barrier = gpu_core.Barrier(
-          num_arrivals=num_threads,
-          num_barriers=num_slots,
-      )
-    try_cancel_barrier = gpu_core.Barrier(
-        num_arrivals=num_threads,
-        num_barriers=num_slots,
-    )
+    if allocations is not None:
+      return _scoped(**allocations)
     return pallas_primitives.run_scoped(
-        _scoped,
-        try_cancel_buffer=gpu_core.TryClusterCancelResult(num_slots),
-        try_cancel_barrier=try_cancel_barrier,
-        cancel_used_barrier=cancel_used_barrier,
-        collective_axes=thread_axis,
+        _scoped, **get_allocations(), collective_axes=thread_axis
     )
+
+  decorator.get_allocations = get_allocations  # pyrefly: ignore[missing-attribute]
   return decorator
 
 

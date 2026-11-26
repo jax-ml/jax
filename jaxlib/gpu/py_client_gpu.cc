@@ -94,7 +94,7 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
                                         xla::ffi::RemainingArgs args,
                                         xla::ffi::RemainingRets rets) {
   size_t arity = args.size();
-  std::vector<void*> host_input_buffers(arity);
+  std::vector<std::unique_ptr<char[]>> host_input_buffers(arity);
   // Copy input GPU buffers to host
   for (size_t i = 0; i < arity; ++i) {
     auto arg = args.get<xla::ffi::AnyBuffer>(i);
@@ -117,10 +117,10 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     if (bits_per_element == 2 || bits_per_element == 4) {
       size_bytes = arg->element_count() * bits_per_element / 8;
     }
-    host_input_buffers[i] = new char[size_bytes];
+    host_input_buffers[i] = std::make_unique_for_overwrite<char[]>(size_bytes);
     // TODO(b/238441608): Use pinned memory here to speed up the transfer.
     auto status = JAX_AS_STATUS(
-        gpuMemcpyAsync(host_input_buffers[i], arg.value().untyped_data(),
+        gpuMemcpyAsync(host_input_buffers[i].get(), arg.value().untyped_data(),
                        size_bytes, gpuMemcpyDeviceToHost, stream));
     CHECK(status.ok()) << status.message();
   }
@@ -156,20 +156,19 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       // assume that 2-bit and 4-bit types are packed.
       size_t size_bytes =
           xla::CeilOfRatio<size_t>(arg->element_count() * bits_per_element, 8);
-      auto* buffer = new char[arg->element_count()];
+      auto buffer =
+          std::make_unique_for_overwrite<char[]>(arg->element_count());
       xla::UnpackIntN(
           bits_per_element,
-          absl::MakeConstSpan(static_cast<const char*>(host_input_buffers[i]),
-                              size_bytes),
-          absl::MakeSpan(buffer, arg->element_count()));
-      delete[] static_cast<char*>(host_input_buffers[i]);
-      host_input_buffers[i] = buffer;
+          absl::MakeConstSpan(host_input_buffers[i].get(), size_bytes),
+          absl::MakeSpan(buffer.get(), arg->element_count()));
+      host_input_buffers[i] = std::move(buffer);
     }
-    nb::capsule base(host_input_buffers[i], [](void* ptr) noexcept {
+    nb::capsule base(host_input_buffers[i].get(), [](void* ptr) noexcept {
       delete[] static_cast<char*>(ptr);
     });
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt,
-                                       host_input_buffers[i], base);
+                                       host_input_buffers[i].release(), base);
     array.attr("flags").attr("writeable") = nb::bool_(false);
     host_input_arrays.put(std::move(array));
   }
@@ -189,7 +188,7 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     }
   }
 
-  std::vector<void*> temp_buffers;
+  std::vector<std::unique_ptr<char[]>> temp_buffers;
   for (size_t i = 0; i < rets.size(); ++i) {
     auto ret = rets.get<xla::ffi::AnyBuffer>(i).value();
     auto ptype = static_cast<xla::PrimitiveType>(ret->element_type());
@@ -238,15 +237,14 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
         return xla::ffi::Error::Internal(maybe_plan.status().ToString());
       }
       auto plan = maybe_plan.value();
-      void* temp = new char[size_bytes];
-      temp_buffers.push_back(temp);
-      plan->Execute(data, temp);
-      data = temp;
+      auto temp = std::make_unique_for_overwrite<char[]>(size_bytes);
+      plan->Execute(data, temp.get());
+      data = temp.get();
+      temp_buffers.push_back(std::move(temp));
     }
 
     // TODO(b/402422886): Remove this once we form Jax arrays directly instead
     // of packing/unpacking to/from numpy arrays.
-    std::unique_ptr<char[]> buffer;
     size_t bits_per_element = xla::primitive_util::BitWidth(ptype);
     if (bits_per_element == 2 || bits_per_element == 4) {
       // NOTE(dsuo): FFI arguments and return buffers are sized assuming
@@ -254,13 +252,13 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       // assume that 2-bit and 4-bit types are packed.
       size_t packed_size =
           xla::CeilOfRatio<size_t>(size_bytes * bits_per_element, 8);
-      auto* new_buffer = new char[packed_size];
+      auto new_buffer = std::make_unique_for_overwrite<char[]>(packed_size);
       xla::PackIntN(
           bits_per_element,
           absl::MakeConstSpan(static_cast<const char*>(data), size_bytes),
-          absl::MakeSpan(new_buffer, packed_size));
-      buffer.reset(new_buffer);
-      data = buffer.get();
+          absl::MakeSpan(new_buffer.get(), packed_size));
+      data = new_buffer.get();
+      temp_buffers.push_back(std::move(new_buffer));
       size_bytes = packed_size;
     }
 
@@ -272,9 +270,6 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   {
     auto status = JAX_AS_STATUS(gpuStreamSynchronize(stream));
     CHECK(status.ok()) << status.message();
-  }
-  for (int i = 0; i < temp_buffers.size(); ++i) {
-    delete[] static_cast<char*>(temp_buffers[i]);
   }
   return xla::ffi::Error::Success();
 }
@@ -291,13 +286,13 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_ffi_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
-                         {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
-                          kXlaFfiPythonGpuCallback});
+                         {.instantiate = kGpuTransposePlanCacheInstantiate,
+                          .execute = kXlaFfiPythonGpuCallback});
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          "xla_ffi_partitioned_python_gpu_callback",
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
-                         {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
-                          kXlaFfiPythonGpuCallback});
+                         {.instantiate = kGpuTransposePlanCacheInstantiate,
+                          .execute = kXlaFfiPythonGpuCallback});
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallback,

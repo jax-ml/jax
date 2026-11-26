@@ -19,6 +19,7 @@ limitations under the License.
 #include <structmember.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -39,7 +40,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -49,7 +49,6 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -116,6 +115,7 @@ limitations under the License.
 #include "xla/python/safe_static_init.h"
 #include "xla/python/strides.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -241,22 +241,27 @@ absl::StatusOr<xla::ifrt::ArrayRef> RemapArrayWithHloSharding(
   ABSL_ASSIGN_OR_RETURN(xla::ifrt::ShardingRef hlo_sharding,
                         GetIfrtHloSharding(py_sharding, ifrt_array->shape()));
   xla::ifrt::UserContextScope user_context_scope(ifrt_array->user_context());
+#if JAX_XLA_VERSION_NUMBER >= 95
+  std::shared_ptr<const xla::PjRtLayout> pjrt_layout =
+      ifrt_array->pjrt_layout();
+#else
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
                         ifrt_array->pjrt_layout());
+#endif
   ABSL_ASSIGN_OR_RETURN(
       std::vector<xla::ifrt::ArrayRef> remapped,
       client->RemapArrays(
           xla::ifrt::RemapPlan(
               /*input_specs=*/{xla::ifrt::ArraySpec{
-                  /*dtype=*/ifrt_array->dtype(),
-                  /*shape=*/ifrt_array->shape(),
-                  /*sharding=*/ifrt_array->shared_ptr_sharding(),
-                  /*layout=*/pjrt_layout}},
+                  .dtype = ifrt_array->dtype(),
+                  .shape = ifrt_array->shape(),
+                  .sharding = ifrt_array->shared_ptr_sharding(),
+                  .layout = pjrt_layout}},
               /*output_specs=*/
-              {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array->dtype(),
-                                    /*shape=*/ifrt_array->shape(),
-                                    /*sharding=*/std::move(hlo_sharding),
-                                    /*layout=*/std::move(pjrt_layout)}},
+              {xla::ifrt::ArraySpec{.dtype = ifrt_array->dtype(),
+                                    .shape = ifrt_array->shape(),
+                                    .sharding = std::move(hlo_sharding),
+                                    .layout = std::move(pjrt_layout)}},
               /*input_devices_for_output_map=*/
               {{0,
                 {xla::ifrt::RemapPlan::InputDeviceRange{
@@ -417,10 +422,7 @@ struct ShapedArrayCacheKey {
   friend H AbslHashValue(H h, const ShapedArrayCacheKey& value) {
     return H::combine(std::move(h), value.dims, value.dtype, value.weak_type);
   }
-  bool operator==(const ShapedArrayCacheKey& other) const {
-    return dims == other.dims && dtype == other.dtype &&
-           weak_type == other.weak_type;
-  }
+  bool operator==(const ShapedArrayCacheKey&) const = default;
 };
 
 // Constructing ShapedArrays has gotten slow. Cache it.
@@ -1064,21 +1066,22 @@ nb::dict PyArray::CudaArrayInterface() {
         "__cuda_array_interface__ is only defined for array buffers.");
   }
 
+  using enum xla::PrimitiveType;
   switch (pjrt_buffer->element_type()) {
-    case xla::PrimitiveType::PRED:
-    case xla::PrimitiveType::S8:
-    case xla::PrimitiveType::S16:
-    case xla::PrimitiveType::S32:
-    case xla::PrimitiveType::S64:
-    case xla::PrimitiveType::U8:
-    case xla::PrimitiveType::U16:
-    case xla::PrimitiveType::U32:
-    case xla::PrimitiveType::U64:
-    case xla::PrimitiveType::F16:
-    case xla::PrimitiveType::F32:
-    case xla::PrimitiveType::F64:
-    case xla::PrimitiveType::C64:
-    case xla::PrimitiveType::C128:
+    case PRED:
+    case S8:
+    case S16:
+    case S32:
+    case S64:
+    case U8:
+    case U16:
+    case U32:
+    case U64:
+    case F16:
+    case F32:
+    case F64:
+    case C64:
+    case C128:
       break;
 
     default:
@@ -1109,7 +1112,7 @@ nb::dict PyArray::CudaArrayInterface() {
   const void* root_ptr =
       external_reference_hold->OpaqueDeviceMemoryDataPointer();
   nb::tuple data =
-      nb::make_tuple(nb::int_(absl::bit_cast<std::uintptr_t>(root_ptr)),
+      nb::make_tuple(nb::int_(std::bit_cast<std::uintptr_t>(root_ptr)),
                      nb::bool_(true) /* read-only */
       );
   result["data"] = std::move(data);
@@ -1595,8 +1598,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
 
     for (int i = 0; i < dst_addressable_devices.size(); ++i) {
       const int shard_device_id = addressable_devices[i]->Id().value();
-      const auto it = device_id_to_array_shard_index.find(shard_device_id);
-      if (it == device_id_to_array_shard_index.end()) {
+      if (!device_id_to_array_shard_index.contains(shard_device_id)) {
         return absl::InvalidArgumentError(absl::StrCat(
             "Array shard ", i, " is on device id=", shard_device_id,
             ", but sharding does not have a shard on that device."));
@@ -2442,7 +2444,7 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
       dst_ptr = reinterpret_cast<char*>(string_array_contents->data());
     } else if (is_contiguous) {
       int64_t total_bytes = ifrt_array->shape().num_elements() * elem_size;
-      contiguous_buffer = absl::make_unique_for_overwrite<char[]>(
+      contiguous_buffer = std::make_unique_for_overwrite<char[]>(
           std::max<int64_t>(1, total_bytes));
       dst_ptr = contiguous_buffer.get();
     }
@@ -2519,16 +2521,16 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
               std::make_unique<std::vector<absl::Cord>>(shard_elements);
           data_ptr = slice.temp_string_buffer->data();
         } else {
-          slice.temp_buffer = absl::make_unique_for_overwrite<char[]>(
+          slice.temp_buffer = std::make_unique_for_overwrite<char[]>(
               std::max<int64_t>(1, shard_elements * copy_data.elem_size));
           data_ptr = slice.temp_buffer.get();
         }
       }
       buffers.push_back(xla::ifrt::Client::MutableHostBuffer{
-          /*data=*/data_ptr,
-          /*dtype=*/ifrt_array->dtype(),
-          /*shape=*/slice.index_domain.shape(),
-          /*byte_strides=*/copy_data.shard_byte_strides});
+          .data = data_ptr,
+          .dtype = ifrt_array->dtype(),
+          .shape = slice.index_domain.shape(),
+          .byte_strides = copy_data.shard_byte_strides});
     }
     specs.push_back(xla::ifrt::Client::CopyArraysToHostBufferShardsSpec{
         .array = ifrt_array,
@@ -2689,9 +2691,7 @@ absl::Status PyArray::BatchedCopyToHostAsync(nanobind::sequence py_arrays) {
     xla::ifrt::Client* client;
     xla::ifrt::DeviceListRef devices;
 
-    bool operator==(const GroupKey& other) const {
-      return client == other.client && devices == other.devices;
-    }
+    bool operator==(const GroupKey&) const = default;
 
     struct Hash {
       size_t operator()(const GroupKey& key) const {

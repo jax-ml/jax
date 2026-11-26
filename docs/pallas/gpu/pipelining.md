@@ -30,8 +30,8 @@ For a general overview of the pipelining API in Pallas, we recommend that users 
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.experimental.pallas import mosaic_gpu as plgpu
-from jax.experimental import pallas as pl
+from jax.pallas import mosaic_gpu as plgpu
+from jax import pallas as pl
 import numpy as np
 ```
 

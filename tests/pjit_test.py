@@ -40,6 +40,7 @@ from jax._src import pretty_printer as pp
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_version
 from jax.lax import with_sharding_constraint
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.random import prng
@@ -67,7 +68,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -424,7 +424,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
-  def testBufferDonationNotDonated(self):
+  def testBufferDonationWithoutAlias(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
 
@@ -434,7 +434,10 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     x = jax.device_put(np.arange(16).reshape(8, 2), s)
     f(x)
-    self.assertNotDeleted(x)
+    if xla_version >= 94:
+      self.assertDeleted(x)
+    else:
+      self.assertNotDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationDifferentIOShapes(self):
@@ -3623,10 +3626,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(out1, np_inp * 2)
     self.assertArraysEqual(out2, np_inp * 2)
-    self.assertTupleEqual(out1.sharding._device_assignment,
-                          s.mesh._flat_devices_tuple)
-    self.assertTupleEqual(out2.sharding._device_assignment,
-                          s.mesh._flat_devices_tuple)
+    self.assertEqual(out1.sharding._device_assignment,
+                     s.mesh._internal_device_list)
+    self.assertEqual(out2.sharding._device_assignment,
+                     s.mesh._internal_device_list)
 
   def test_vmap_spmd_axis_name_error(self):
     s = make_single_device_sharding(jax.devices()[0])
@@ -3817,8 +3820,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_device_put_fast_path_hit() as count:
       out = jax.device_put(arr1, NamedSharding(mesh2, P('x')))
     self.assertEqual(count(), 1)
-    self.assertTupleEqual(out.sharding._device_assignment,
-                          mesh2._flat_devices_tuple)
+    self.assertEqual(out.sharding._device_assignment,
+                     mesh2._internal_device_list)
     self.assertArraysEqual(out, inp)
 
   def test_prng_sharding_propagation(self):
@@ -3961,7 +3964,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x @ params
 
     feature_dim = 3
-    batch_size_total = 8
+    batch_size_total = jax.device_count()
 
     # Get example data
     x = jnp.ones((batch_size_total, feature_dim))
@@ -4221,12 +4224,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
-    dev = jax.devices()
+    dev = jax.devices()[:8]
     mesh1 = jax.sharding.Mesh(
         np.asarray(dev).reshape([1, 2, 2, 2]),
         ('replica', 'data', 'seq', 'model'))
     mesh2 = jax.sharding.Mesh(
-        np.asarray(jax.devices())
+        np.asarray(dev)
         .reshape([1, 1, 2, 2, 2, 1])
         .swapaxes(2, 3)
         .reshape([1, 1, 4, 2, 1]),
@@ -4257,12 +4260,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
-    dev = jax.devices()
+    dev = jax.devices()[:8]
     mesh1 = jax.sharding.Mesh(
         np.asarray(dev).reshape([1, 2, 2, 2]),
         ('replica', 'data', 'seq', 'model'))
     mesh2 = jax.sharding.Mesh(
-        np.asarray(jax.devices())
+        np.asarray(dev)
         .reshape([1, 1, 2, 2, 2, 1])
         .swapaxes(2, 3)
         .reshape([1, 1, 4, 2, 1]),
@@ -4765,20 +4768,96 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cpp_count(), 2)
     self.assertEqual(lowering_count(), 1)
 
-  def test_compiler_options_nested_jit_error(self):
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_compiler_options_nested_jit_ignored_and_logged(self):
     @jax.jit(compiler_options={"invalid_key": "invalid_value"})
     def g(x):
       return x * 2
 
     @jax.jit
     def f(x):
-      x = x + 2
-      return g(x)
+      return g(x + 2)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        '`compiler_options` can only be passed to top-level `jax.jit`'):
-      f(jnp.arange(4))
+    @jax.jit
+    def f_grad(x):
+      return jax.grad(lambda y: g(y).sum())(x)
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    msg = ("Ignoring compiler_options={'invalid_key': 'invalid_value'} "
+           "specified on nested jit 'g'")
+    with config.log_compiles(True):
+      with self.assertLogs('jax._src.pjit', level='WARNING') as log:
+        self.assertArraysEqual(f(x), (x + 2) * 2)
+    self.assertTrue(
+        any(
+            msg in m
+            and 'test_compiler_options_nested_jit_ignored_and_logged' in m
+            for m in log.output
+        ),
+        log.output,
+    )
+
+    with config.log_compiles(False):
+      with self.assertLogs('jax._src.pjit', level='DEBUG') as log:
+        self.assertArraysEqual(f_grad(x), jnp.full_like(x, 2.))
+    levels = {r.levelname for r in log.records if msg in r.getMessage()}
+    self.assertEqual(levels, {'DEBUG'})
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_compiler_options_nested_jax_early_inline(self):
+    @jax.jit(
+        inline=jax.Inline.JAX_EARLY,
+        compiler_options={"invalid_key": "invalid_value"},
+    )
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      return g(x) + 1
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    with config.log_compiles(True):
+      with self.assertLogs('jax._src.pjit', level='WARNING') as log:
+        lowered = f.lower(x)
+    self.assertNotIn('inlineable = "jax_early"', lowered.as_text())
+    self.assertTrue(
+        any("Ignoring compiler_options=" in m for m in log.output), log.output)
+    self.assertArraysEqual(lowered.compile()(x), x * 2 + 1)
+
+  def test_compiler_options_top_level_transforms(self):
+    @jax.jit(compiler_options={"xla_embed_ir_in_executable": True})
+    def g_valid(x):
+      return jnp.sum(x * x)
+
+    x = jnp.arange(4, dtype=jnp.float32)
+    kvs = (("xla_embed_ir_in_executable", True),)
+    self.assertEqual(
+        jax.make_jaxpr(g_valid)(x).eqns[0].params["compiler_options_kvs"], kvs)
+    self.assertArraysEqual(jax.grad(g_valid)(x), 2 * x)
+    self.assertArraysEqual(jax.vmap(g_valid)(x[:, None]), x * x)
+    self.assertArraysEqual(jax.checkpoint(g_valid)(x), jnp.sum(x * x))
+    y, f_lin = jax.linearize(g_valid, x)
+    self.assertArraysEqual(y, jnp.sum(x * x))
+    self.assertArraysEqual(f_lin(jnp.ones_like(x)), jnp.sum(2 * x))
+    # The staged tangent computation keeps g_valid's compiler_options.
+    self.assertTrue(any(e.params.get("compiler_options_kvs") == kvs
+                        for e in jax.make_jaxpr(f_lin)(x).eqns))
+
+    @jax.jit(compiler_options={"invalid_key": "invalid_value"})
+    def g_invalid(x):
+      return jnp.sum(x * x)
+
+    # Staging alone does not compile, so it does not raise.
+    jax.make_jaxpr(g_invalid)(x)
+
+    # Top-level transforms still compile with g_invalid's compiler_options.
+    for fun in [lambda: jax.grad(g_invalid)(x),
+                lambda: jax.vmap(g_invalid)(x[:, None]),
+                lambda: jax.linearize(g_invalid, x)]:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'"):
+        fun()
 
   def test_wsc_aval_cache_hit(self):
     mesh = jtu.create_mesh((2,), 'x')
@@ -7146,10 +7225,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(compilation_count(), 2)
     self.assertEqual(cpp_cache_miss_count(), 2)
 
-    self.assertTupleEqual(out1.sharding._device_assignment,
-                          tuple(mesh1.devices.flat))
-    self.assertTupleEqual(out2.sharding._device_assignment,
-                          tuple(mesh2.devices.flat))
+    self.assertEqual(out1.sharding._device_assignment,
+                     mesh1._internal_device_list)
+    self.assertEqual(out2.sharding._device_assignment,
+                     mesh2._internal_device_list)
 
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_svd(self, mesh):
@@ -12038,7 +12117,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jnp.take(a, empty_2d, axis=1, out_sharding=P('y', None, 'x'))
 
     with (jax.sharding.no_collectives({'x', 'y'}),
-          config.jax_partitioning(True)):
+          mesh.jax_partitioning(True)):
       out_e = f_empty(x_empty)
     self.assertEqual(out_e.shape, (8, 0, 4))
     self.assertEqual(out_e.sharding, NamedSharding(mesh, P('y', None, 'x')))
@@ -13831,10 +13910,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_while_loop_max(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     u_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
 
@@ -13856,10 +13931,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_cond_conflicting_kinds(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)
@@ -13886,10 +13957,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_shard_map_and_remat_max_min(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)
@@ -13920,10 +13987,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_max_all_gather_reshard_max_min(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     in_spec = P('y', None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     out_spec = P(None, None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
@@ -13942,10 +14005,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_manual_computation_conflicting_kinds(self, mesh):
-    if jaxlib_extension_version < 508:
-      self.skipTest('Requires jaxlib_extension_version >= 508')
-    if xla_version < 77:
-      self.skipTest('Requires xla_version >= 77')
 
     max_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.max)
     min_spec = P(None, unreduced={'x'}, unreduced_kind=UnreducedKind.min)

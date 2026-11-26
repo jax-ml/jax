@@ -39,6 +39,7 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
 from jax._src import pjit
+from jax._src import source_info_util
 from jax._src.random import prng
 from jax._src import tree_util
 from jax._src import typing
@@ -916,7 +917,6 @@ def make_kernel_function(
       if any(Usage.REGULAR in usage for usage in outvar_usages):
         in_vals = util.safe_map(read_env, eqn.invars)
         out_block_specs = tuple(util.safe_map(_read_block_spec, eqn.outvars))
-        # TODO(sharadmv,justinfu): preserve source mapping
         if all(bs is pallas_core.no_block_spec for bs in out_block_specs):
           eval_rule = _unblocked_eval_rule
         elif not (eval_rule := eval_rules.get(eqn.primitive, None)):
@@ -952,11 +952,17 @@ def make_kernel_function(
             out_block_specs=out_block_specs,
             out_usages=out_usages,
         )
-        # Eval rules may bind primitives directly, skipping the `pvary`s that
-        # `lax` functions insert, so `pvary` all operands to the same manual
-        # axes, as `check_vma` requires inside a `shard_map`.
-        in_vals = pvary_operands(in_vals)
-        outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
+        name_stack = (
+            source_info_util.current_name_stack() + eqn.source_info.name_stack
+        )
+        with source_info_util.user_context(
+            eqn.source_info.traceback, name_stack=name_stack
+        ):
+          # Eval rules may bind primitives directly, skipping the `pvary`s that
+          # `lax` functions insert, so `pvary` all operands to the same manual
+          # axes, as `check_vma` requires inside a `shard_map`.
+          in_vals = pvary_operands(in_vals)
+          outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
         util.foreach(write_env, eqn.outvars, outs)
@@ -2609,9 +2615,14 @@ def _iota_eval_rule(
   iota_shape = _ref_block_shape(block_spec.block_shape)
   dim_ = _ref_block_axis(block_spec.block_shape, dimension)
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * pallas_core.get_block_size(
-      block_spec.block_shape[dimension]
-  )
+  match pallas_core._canonicalize_block_dim(block_spec.block_shape[dimension]):
+    case pallas_core.Blocked(bs):
+      offset = block_idx[dimension] * bs
+    case pallas_core.Element(_, padding=(0, 0)):
+      offset = block_idx[dimension]
+    case bd:
+      raise NotImplementedError(f'iota not supported yet for block shape {bd}')
+  return local_iota + offset
 
 
 @register_pull_block_spec_rule(lax.iota_p)
@@ -2625,12 +2636,15 @@ def _iota_pull_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, sharding, dtype, shape
-  if _is_squeezed(block_transform.block_shape[dimension]):
-    raise ValueError(
-        f'Cannot pull iota along dimension {dimension} with squeezed block'
-        ' size.'
-    )
-  return []
+  match pallas_core._canonicalize_block_dim(
+      block_transform.block_shape[dimension]):
+    case pallas_core.Squeezed():
+      raise ValueError(f'Cannot pull iota along dimension {dimension} with'
+                       ' squeezed block size.')
+    case pallas_core.Blocked() | pallas_core.Element(_, padding=(0, 0)):
+      return []
+    case bd:
+      raise NotImplementedError(f'iota not supported yet for block type {bd}')
 
 
 def _pattern_match_lanes_to_sublanes_reshape(

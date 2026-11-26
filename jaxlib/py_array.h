@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
@@ -162,8 +163,13 @@ class PyArray : public nanobind::object {
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout() {
     ABSL_ASSIGN_OR_RETURN(xla::ifrt::ArrayRef ifrt_array_ptr, GetIfrtArray());
+#if JAX_XLA_VERSION_NUMBER >= 95
+    std::shared_ptr<const xla::PjRtLayout> layout =
+        ifrt_array_ptr->pjrt_layout();
+#else
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> layout,
                           ifrt_array_ptr->pjrt_layout());
+#endif
     if (layout == nullptr) {
       ABSL_ASSIGN_OR_RETURN(
           xla::ifrt::Shape shard_shape,

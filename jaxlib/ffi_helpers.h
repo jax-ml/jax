@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <new>
 #include <string>
@@ -29,7 +28,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -39,22 +37,22 @@ limitations under the License.
 namespace jax {
 
 // Returns from the function if the argument is an ffi::Error.
-#define FFI_RETURN_IF_ERROR(...)             \
-  do {                                       \
-    ::xla::ffi::Error err = (__VA_ARGS__);   \
-    if (ABSL_PREDICT_FALSE(err.failure())) { \
-      return err;                            \
-    }                                        \
+#define FFI_RETURN_IF_ERROR(...)           \
+  do {                                     \
+    ::xla::ffi::Error err = (__VA_ARGS__); \
+    if (err.failure()) [[unlikely]] {      \
+      return err;                          \
+    }                                      \
   } while (0)
 
 // Returns from the function with an ffi::Error if the argument is an
 // absl::Status.
-#define FFI_RETURN_IF_ERROR_STATUS(...)     \
-  do {                                      \
-    ::absl::Status status = (__VA_ARGS__);  \
-    if (ABSL_PREDICT_FALSE(!status.ok())) { \
-      return ::jax::AsFfiError(status);     \
-    }                                       \
+#define FFI_RETURN_IF_ERROR_STATUS(...)    \
+  do {                                     \
+    ::absl::Status status = (__VA_ARGS__); \
+    if (!status.ok()) [[unlikely]] {       \
+      return ::jax::AsFfiError(status);    \
+    }                                      \
   } while (0)
 
 // Returns from the function with an ffi::Error if the RHS is an absl::Status,
@@ -67,7 +65,7 @@ namespace jax {
 
 #define FFI_ASSIGN_OR_RETURN_IMPL_(statusor, lhs, rhs)        \
   auto statusor = (rhs);                                      \
-  if (ABSL_PREDICT_FALSE(!statusor.ok())) {                   \
+  if (!statusor.ok()) [[unlikely]] {                          \
     return ::jax::AsFfiError(statusor.status());              \
   }                                                           \
   FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
@@ -91,21 +89,16 @@ namespace jax {
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(
     std::int64_t value, std::string_view source = __FILE__) {
-  if constexpr (sizeof(T) == sizeof(std::int64_t)) {
-    return value;
-  } else {
-    if (value > std::numeric_limits<T>::max()) [[unlikely]] {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "%s: Value (=%d) exceeds the maximum representable value of the "
-          "desired type",
-          source, value));
-    }
-    return static_cast<T>(value);
+  if (!std::in_range<T>(value)) [[unlikely]] {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%s: Value (=%d) is out of the representable range of the desired type",
+        source, value));
   }
+  return static_cast<T>(value);
 }
 
 inline ::xla::ffi::Error AsFfiError(const absl::Status& status) {
-  if (ABSL_PREDICT_FALSE(!status.ok())) {
+  if (!status.ok()) [[unlikely]] {
     return ::xla::ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
                              std::string(status.message()));
   } else {

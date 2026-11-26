@@ -1020,6 +1020,23 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaises(jax.errors.JaxRuntimeError):
       kernel(x).block_until_ready()
 
+  def test_kernel_under_disable_jit(self):
+    disable_jit_seen = []
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+        interpret=pltpu.InterpretParams(),
+    )
+    def kernel(x_ref, o_ref):
+      disable_jit_seen.append(config.disable_jit.value)
+      pltpu.sync_copy(x_ref, o_ref)
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    with jax.disable_jit():
+      np.testing.assert_array_equal(kernel(x), x)
+    self.assertEqual(set(disable_jit_seen), {False})
+
   @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_hbm_allocation_in_run_scoped_raises(self, hbm_memory_space):
     mesh = pltpu.TensorCoreMesh(axis_name='x', num_cores=1)
@@ -1952,6 +1969,7 @@ class InterpretTest(jtu.JaxTestCase):
       use_prim=[False, True],
       mode=['interpret_true', 'interpret_params', 'tpu_lowering'],
   )
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_emit_pipeline_dynamic_and_megacore_num_programs(
       self, use_prim, mode
   ):

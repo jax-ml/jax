@@ -66,7 +66,7 @@ def custom_hook() -> str:
 
 def get(
     module: ir.Module,
-    devices: np.ndarray,
+    devices: xla_client.DeviceList,
     compile_options: xla_client.CompileOptions,
     backend: xla_client.Client,
     compression_algorithm: str = "zstandard",
@@ -79,7 +79,7 @@ def get(
 
   Args:
     module: the input program
-    devices: an array of accelerator devices that the program will run on
+    devices: a DeviceList of accelerator devices that the program will run on
     compile_options: options passed to the XLA compiler
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
@@ -116,9 +116,10 @@ def get(
           lambda hash_obj: _hash_serialized_compile_options(
               hash_obj,
               compile_options,
-              # In case of GPU multi-process tasks we need to strip device
-              # assignment to use cache key as invariant between processes.
-              strip_device_assignment=(backend.platform == "gpu"),
+              # In case of GPU and CPU multi-process tasks we need to strip
+              # device assignment to use cache key as invariant between
+              # processes.
+              strip_device_assignment=(backend.platform in ("gpu", "cpu")),
           ),
       ),
       (
@@ -262,17 +263,14 @@ def _hash_computation(hash_obj, module, ignore_custom_partitioning: bool):
   hash_obj.update(canonical_ir)
 
 
-def _hash_devices(hash_obj, devices: np.ndarray) -> None:
-  for device in devices.flat:
+def _hash_devices(hash_obj, devices: xla_client.DeviceList) -> None:
+  for device in devices:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
-  accelerator_devices = []
-  for accelerator in accelerators.flat:
-    accelerator_devices.append(accelerator)
+def _hash_accelerator_config(hash_obj, accelerators: xla_client.DeviceList):
   try:
-    topology = xla_client.get_topology_for_devices(accelerator_devices)
+    topology = xla_client.get_topology_for_devices(list(accelerators))
     hash_obj.update(topology.fingerprint().to_bytes(8, byteorder="big"))
   except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized

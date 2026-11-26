@@ -19,7 +19,6 @@ import threading
 from absl.testing import absltest
 
 from jax.jaxlib import _jax
-from jax.jaxlib import xla_client
 
 config = _jax.config
 
@@ -98,8 +97,6 @@ class ConfigTest(absltest.TestCase):
       t.join()
 
   def testUninitializedClear(self):
-    if xla_client._version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     obj = config.Config.__new__(config.Config)
     cycle = [obj]
     cycle.append(cycle)

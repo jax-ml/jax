@@ -149,6 +149,8 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.float64): ir.F64Type.get,
   np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
+  np.dtype(dtypes.int1): partial(ir.IntegerType.get_signless, 1),
+  np.dtype(dtypes.uint1): partial(ir.IntegerType.get_unsigned, 1),
   np.dtype(dtypes.int2): partial(ir.IntegerType.get_signless, 2),
   np.dtype(dtypes.uint2): partial(ir.IntegerType.get_unsigned, 2),
   np.dtype(dtypes.float8_e3m4): ir.Float8E3M4Type.get,
@@ -157,28 +159,10 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float4_e2m1fn): ir.Float4E2M1FNType.get,
   np.dtype(dtypes.float6_e2m3fn): ir.Float6E2M3FNType.get,
   np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
+  np.dtype(dtypes.float8_e5m3fnu): ir.Float8E5M3FNUType.get,
+  np.dtype(dtypes.bcomplex32): lambda: ir.ComplexType.get(ir.BF16Type.get()),
+  np.dtype(dtypes.complex32): lambda: ir.ComplexType.get(ir.F16Type.get()),
 }
-
-if dtypes.float8_e5m3fnu is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float8_e5m3fnu)] = ir.Float8E5M3FNUType.get
-
-if dtypes.int1 is not None:
-  assert dtypes.uint1 is not None
-  _dtype_to_ir_type[np.dtype(dtypes.int1)] = partial(
-      ir.IntegerType.get_signless, 1
-  )
-  _dtype_to_ir_type[np.dtype(dtypes.uint1)] = partial(
-      ir.IntegerType.get_unsigned, 1
-  )
-
-if dtypes.bcomplex32 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.bcomplex32)] = (
-      lambda: ir.ComplexType.get(ir.BF16Type.get())
-  )
-if dtypes.complex32 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.complex32)] = (
-      lambda: ir.ComplexType.get(ir.F16Type.get())
-  )
 
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
@@ -706,17 +690,22 @@ class ShapePolyLoweringState:
   # index argument.
   uses_dim_vars: bool
 
-  # If the first dimension variable is a platform index argument
+  # If the first dimension variable is a platform index argument, the
+  # module-level lowering platforms that `_platform_index` indexes into.
   has_platform_index_argument: bool
+  lowering_platforms: tuple[str, ...] | None
 
   def __init__(self,
                dim_vars: tuple[str, ...],
-               lowering_platforms: tuple[str, ...] | None):
+               lowering_platforms: Sequence[str] | None):
     if lowering_platforms is not None and len(lowering_platforms) > 1:
       dim_vars = ("_platform_index",) + tuple(dim_vars)
       self.has_platform_index_argument = True
     else:
       self.has_platform_index_argument = False
+    self.lowering_platforms = (
+        None if lowering_platforms is None else tuple(lowering_platforms)
+    )
     self.uses_dim_vars = (len(dim_vars) > 0)
     self.dim_vars = dim_vars
 
@@ -1076,11 +1065,10 @@ class PartitioningRule:
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
-shard_map_collective_rules: dict[
-    core.Primitive, Callable[..., PartitioningRule]] = {}
-shard_map_passthrough_primitives: set[core.Primitive] = {
-    core.call_p,
-    core.closed_call_p,
+
+shard_map_collective_rules: dict[core.Primitive, Callable[..., PartitioningRule | None]] = {
+    core.call_p: lambda *_, **__: None,
+    core.closed_call_p: lambda *_, **__: None,
 }
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
@@ -1088,8 +1076,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       inline: bool | core.Inline = True,
                       cacheable: bool = True,
                       *,
-                      shard_map_collective_rule: Callable | None = None,
-                      shard_map_passthrough: bool = False) -> None:
+                      shard_map_collective_rule: Callable | None = None) -> None:
   """Registers a lowering rule for a primitive.
 
   Args:
@@ -1108,12 +1095,9 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
     shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
-      raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
-      collectives via ``shard_map`` when ``jax_partitioning`` is
-      enabled.
-    shard_map_passthrough: If ``True``, lower this primitive directly without
-      wrapping it in ``shard_map`` (e.g. for identity primitives or primitives
-      whose lowering delegates to other JAX ops).
+      ``None`` to lower directly without ``shard_map``, or raising
+      ``NotImplementedError`` if unsupported) to lower explicit-mesh
+      collectives via ``shard_map`` when ``jax_partitioning`` is enabled.
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -1127,8 +1111,6 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
-  if shard_map_passthrough:
-    shard_map_passthrough_primitives.add(prim)
   if shard_map_collective_rule is not None:
     # TODO(rdyro): Support platform-specific shard_map_collective_rules.
     shard_map_collective_rules[prim] = shard_map_collective_rule
@@ -2579,31 +2561,41 @@ def _maybe_lower_with_shard_map(
     _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
   from jax._src import shard_map  # type: ignore
   from jax._src import pjit  # type: ignore
-  if (not config.jax_partitioning.value or
-      _prim in shard_map_passthrough_primitives):
+
+  if not config.jax_partitioning.value:
     return None
 
   mesh = get_abstract_mesh()
   if mesh.empty or mesh.are_all_axes_manual:
     return None
   if not mesh.are_all_axes_explicit_or_manual:
-    raise NotImplementedError(
+    raise ValueError(
         f'Cannot lower `{_prim}` with `jax_partitioning` when mesh has Auto'
-        f' axes: {mesh}'
-    )
-  assert mesh.explicit_axes
+        f' axes: {mesh}')
 
-  if (rule := shard_map_collective_rules.get(_prim)) is None:
-    raise NotImplementedError
+  assert mesh.explicit_axes
+  rule = shard_map_collective_rules.get(_prim, None)
+  if rule is None:
+    raise NotImplementedError(
+        f'Partitioning rule for {_prim} is not implemented.')
 
   assert ctx.avals_out is not None
-  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_out)
 
   partitioning_rule = rule(ctx.avals_in, ctx.avals_out, **params)
+  if partitioning_rule is None:
+    return None
   assert isinstance(partitioning_rule, PartitioningRule)
+
+  assert all(isinstance(a, (core.ShapedArray, core.AbstractToken))
+             for a in ctx.avals_in)
+  assert all(isinstance(a, (core.ShapedArray, core.AbstractToken))
+             for a in ctx.avals_out)
+
   if partitioning_rule.per_shard_params:
     params = params | partitioning_rule.per_shard_params
-  out_specs = [a.sharding.spec for a in ctx.avals_out]
+
+  out_specs = [PartitionSpec() if isinstance(a, core.AbstractToken)
+               else a.sharding.spec for a in ctx.avals_out]
   if not _prim.multiple_results:
     out_specs, = out_specs
 
@@ -2770,8 +2762,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
   assert len(ctx.dim_var_values) >= 1, "Must have a platform_index variable"
+  module_platforms = ctx.module_context.shape_poly_state.lowering_platforms
+  assert module_platforms is not None and len(module_platforms) > 1
 
-  # The first dim_var_values is the platform index
+  # The first dim_var_values is the platform index into module_platforms.
   current_platform_idx = ctx.dim_var_values[0]
   # Compute the rule index based on the current platform
   i32_type = aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype=np.int32))
@@ -2779,11 +2773,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
     current_platform_idx = hlo.convert(i32_type, current_platform_idx)
   rule_idx_op = hlo.CaseOp([i32_type],
                            index=current_platform_idx,
-                           num_branches=len(platforms))
-  for i, p in enumerate(platforms):
+                           num_branches=len(module_platforms))
+  for i, p in enumerate(module_platforms):
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx[p]))])
+      hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx.get(p, 0)))])
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = [_aval_to_ir_types(ctx.module_context, a) for a in rule_out_avals]
@@ -2886,7 +2880,7 @@ def _lower_jaxpr_to_fun_cached(
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if arg_names is result_names is None:
     # Cacheable.
-    key = (fn_name, call_jaxpr, tuple(effects), detached)
+    key = (fn_name, call_jaxpr, tuple(effects), tuple(ctx.platforms), detached)
     try:
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
@@ -3251,8 +3245,8 @@ register_lowering(
     shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
 register_lowering(
-    ad_util.stop_gradient_p, lambda ctx, x: [x], shard_map_passthrough=True
-)
+    ad_util.stop_gradient_p, lambda ctx, x: [x],
+    shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
 
 def compare_hlo(x, y, direction: str, comparison_type: str | None = None):

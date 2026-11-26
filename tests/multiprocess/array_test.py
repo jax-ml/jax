@@ -487,8 +487,8 @@ class ArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     expected_pids = {d.process_index for d in s.device_set}
-    self.assertEqual(s._internal_device_list.process_indices, expected_pids)
-    self.assertLen(s._internal_device_list.process_indices, jax.process_count())
+    self.assertEqual(s._device_assignment.process_indices, expected_pids)
+    self.assertLen(s._device_assignment.process_indices, jax.process_count())
 
 
 class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
@@ -496,14 +496,14 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
   def test_create_nonaddressable_array(self):
     y, x = create_nonaddressable_array((8, 8))
     # The array is non-addressable in at least one process.
-    self.assertLess(len(y.sharding._internal_device_list.process_indices),
+    self.assertLess(len(y.sharding._device_assignment.process_indices),
                     jax.process_count())
     for a in y.addressable_shards:
       np.testing.assert_array_equal(a.data, x[a.index])
 
     fr, x = create_nonaddressable_array((8, 8), spec=P())
     self.assertTrue(fr.sharding.is_fully_replicated)
-    self.assertLess(len(fr.sharding._internal_device_list.process_indices),
+    self.assertLess(len(fr.sharding._device_assignment.process_indices),
                     jax.process_count())
     if fr.sharding.has_addressable_devices:
       np.testing.assert_array_equal(x, fr)
@@ -657,8 +657,8 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
     s = jax.sharding.NamedSharding(mesh, P("x",))
 
     expected_pids = {d.process_index for d in s.device_set}
-    self.assertEqual(s._internal_device_list.process_indices, expected_pids)
-    self.assertLen(s._internal_device_list.process_indices,
+    self.assertEqual(s._device_assignment.process_indices, expected_pids)
+    self.assertLen(s._device_assignment.process_indices,
                    jax.process_count() // 2)
 
   def test_jit_no_local_devices_named_sharding(self):
@@ -782,7 +782,7 @@ class NonaddressableArrayTestMultiHost(jt_multiprocess.MultiProcessTest):
         out_specs=P())
     y = shard_map_f(x)
     expected_y = sum(np.split(x_np, len(x.sharding.device_set)))
-    sharding_process_indices = x.sharding._internal_device_list.process_indices
+    sharding_process_indices = x.sharding._device_assignment.process_indices
     expected_num_shards = (jax.local_device_count()
                            if jax.process_index() in sharding_process_indices
                            else 0)

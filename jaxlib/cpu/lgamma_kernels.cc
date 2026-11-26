@@ -714,8 +714,9 @@ static xla::ffi::Error LgammaDispatch(xla::ffi::AnyBuffer x,
         "Input and output buffer element counts must match.");
   }
   static constexpr int64_t kChunkElements = 2048;
+  using enum xla::ffi::DataType;
   switch (x.element_type()) {
-    case xla::ffi::DataType::BF16: {
+    case BF16: {
       const auto* in_ptr = x.reinterpret_data<hwy::bfloat16_t>();
       auto* out_ptr = out->reinterpret_data<hwy::bfloat16_t>();
       const auto fn = HWY_DYNAMIC_POINTER(LgammaBF16Impl);
@@ -724,7 +725,7 @@ static xla::ffi::Error LgammaDispatch(xla::ffi::AnyBuffer x,
                            fn(in_ptr + start, out_ptr + start, count);
                          });
     }
-    case xla::ffi::DataType::F16: {
+    case F16: {
       const auto* in_ptr = x.reinterpret_data<hwy::float16_t>();
       auto* out_ptr = out->reinterpret_data<hwy::float16_t>();
       const auto fn = HWY_DYNAMIC_POINTER(LgammaF16Impl);
@@ -733,7 +734,7 @@ static xla::ffi::Error LgammaDispatch(xla::ffi::AnyBuffer x,
                            fn(in_ptr + start, out_ptr + start, count);
                          });
     }
-    case xla::ffi::DataType::F32: {
+    case F32: {
       const auto* in_ptr = x.reinterpret_data<float>();
       auto* out_ptr = out->reinterpret_data<float>();
       const auto fn = HWY_DYNAMIC_POINTER(LgammaF32Impl);
@@ -742,7 +743,7 @@ static xla::ffi::Error LgammaDispatch(xla::ffi::AnyBuffer x,
                            fn(in_ptr + start, out_ptr + start, count);
                          });
     }
-    case xla::ffi::DataType::F64: {
+    case F64: {
       const auto* in_ptr = x.reinterpret_data<double>();
       auto* out_ptr = out->reinterpret_data<double>();
       const auto fn = HWY_DYNAMIC_POINTER(LgammaF64Impl);

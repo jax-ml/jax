@@ -387,6 +387,22 @@ def _is_namedtuple(nodetype: type) -> bool:
           isinstance(nodetype._fields, Sequence) and
           all(isinstance(f, str) for f in nodetype._fields))
 
+
+def _is_custom_registered_pytree_node(nodetype: type[Any]) -> bool:
+  if not tree_util.is_tree_node(nodetype):
+    return False
+  if not _is_namedtuple(nodetype):
+    return True
+  sentinel = object()
+  try:
+    td = cast(Any, tree_util.PyTreeDef).from_node_data_and_children(
+        tree_util.default_registry, (nodetype, sentinel), ()
+    )
+  except (TypeError, ValueError):
+    return True
+  node_data = td.node_data()
+  return node_data is not None and node_data[1] is sentinel
+
 def register_pytree_node_serialization[T](
     nodetype: type[T],
     *,
@@ -444,11 +460,37 @@ def register_pytree_node_serialization[T](
         "Previous registration was for type "
         f"`{deserialization_registry[serialized_name][0]}`.")
   if from_children is None:
-    if nodetype not in tree_util._registry:
+    if not _is_custom_registered_pytree_node(nodetype):
       raise ValueError(
           f"If `from_children` is not present, you must call first"
           f"`jax.tree_util.register_pytree_node` for `{nodetype}`")
-    from_children = tree_util._registry[nodetype].from_iter
+    leaf_td = tree_util.tree_structure(0)
+    def _from_children(aux_data: PyTreeAuxData, children: Sequence[Any]) -> Any:
+      # TODO(b/499100223): Drop cast once minimum jaxlib includes fixed pytree.pyi.
+      leaf_children = [leaf_td] * len(children)
+      try:
+        td = cast(Any, tree_util.PyTreeDef).from_node_data_and_children(
+            tree_util.default_registry,
+            (nodetype, aux_data),
+            leaf_children,
+        )
+      except ValueError as err:
+        # `register_dataclass` previously accepted any iterable `aux_data` via
+        # `zip(meta_fields, aux_data)`, while `from_node_data_and_children`
+        # requires a tuple or list for dataclass metadata.
+        if isinstance(aux_data, (tuple, list)):
+          raise
+        try:
+          aux_tuple = tuple(aux_data)
+        except TypeError:
+          raise err from None
+        td = cast(Any, tree_util.PyTreeDef).from_node_data_and_children(
+            tree_util.default_registry,
+            (nodetype, aux_tuple),
+            leaf_children,
+        )
+      return td.unflatten(children)
+    from_children = _from_children
 
   serialization_registry[nodetype] = (
       serialized_name, serialize_auxdata)
@@ -1589,15 +1631,14 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   submodule_args: list[ir.Value] = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
-  lowering_platforms = ctx.module_context.platforms
+  lowering_platforms = mlir._platforms_for_eqn(ctx)
 
-  callee_lowering_platform_index: list[int] = []
+  platform_to_callee_idx: dict[str, int] = {}
   for platform in lowering_platforms:
     if platform in exported.platforms:
-      callee_lowering_platform_index.append(
-        exported.platforms.index(platform))
+      platform_to_callee_idx[platform] = exported.platforms.index(platform)
     elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
-      callee_lowering_platform_index.append(0)
+      platform_to_callee_idx[platform] = 0
     else:
       raise ValueError(
           f"Function '{exported.fun_name}' was exported for "
@@ -1607,21 +1648,27 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   if len(exported.platforms) > 1:
     # The exported module takes a platform index argument
     if len(lowering_platforms) > 1:
+      module_platforms = (
+          ctx.module_context.shape_poly_state.lowering_platforms
+      )
+      assert module_platforms is not None and len(module_platforms) > 1
       current_platform_idx = ctx.dim_var_values[0]
+      case_platforms: Sequence[str] = module_platforms
     else:
       current_platform_idx = cast(ir.Value, mlir.ir_constant(np.int32(0)))
+      case_platforms = lowering_platforms
     # Compute the rule index based on the current platform
     i32_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
       current_platform_idx = hlo.convert(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
                                      index=current_platform_idx,
-                                     num_branches=len(lowering_platforms))
-    for i in range(len(lowering_platforms)):
+                                     num_branches=len(case_platforms))
+    for i, p in enumerate(case_platforms):
       branch = callee_platform_idx.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
         hlo.return_([mlir.ir_constant(
-          np.int32(callee_lowering_platform_index[i]))])
+          np.int32(platform_to_callee_idx.get(p, 0)))])
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
                                           callee_platform_idx.result)
@@ -1666,7 +1713,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   return results
 
 mlir.register_lowering(
-    call_exported_p, _call_exported_lowering, shard_map_passthrough=True)
+    call_exported_p, _call_exported_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def _ensure_backends_initialized(platforms: tuple[str,...]):
   """Ensure FFI handlers are initialized for the given platforms"""

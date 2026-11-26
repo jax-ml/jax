@@ -2289,10 +2289,11 @@ def _gamma_grad_lowering(ctx, a, x, *, use_map=False):
 _gamma_grad_p = lax.standard_naryop([lax._float, lax._float],
                                     'random_gamma_grad')
 mlir.register_lowering(
-    _gamma_grad_p, _gamma_grad_lowering, shard_map_passthrough=True)
+    _gamma_grad_p, _gamma_grad_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 mlir.register_lowering(
     _gamma_grad_p, partial(_gamma_grad_lowering, use_map=True),
-    platform='cpu', shard_map_passthrough=True)
+    platform='cpu', shard_map_collective_rule=lambda *_, **__: None)
 ad.primitive_jvps[_gamma_grad_p] = lambda primals, tangents: jvp(
     lax_special.random_gamma_grad, primals,
     tuple(map(ad.instantiate_zeros, tangents)))
@@ -2474,7 +2475,8 @@ def _random_gamma_lowering(ctx, key, a, *, log_space, out_sharding):
 
 
 mlir.register_lowering(
-    random_gamma_p, _random_gamma_lowering, shard_map_passthrough=True)
+    random_gamma_p, _random_gamma_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 batching.fancy_primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -2987,7 +2989,8 @@ def _random_poisson_lowering(ctx, key, lam, *, dtype, out_sharding):
 
 
 mlir.register_lowering(
-    _random_poisson_p, _random_poisson_lowering, shard_map_passthrough=True)
+    _random_poisson_p, _random_poisson_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 batching.fancy_primitive_batchers[_random_poisson_p] = _poisson_batching_rule
 
 
@@ -3314,10 +3317,15 @@ def _gumbel(key: Key, shape, dtype, mode, out_sharding=None) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
-    bits = _random_bits(
-        key, info.bits, shape=(2,) + shape,
-        out_sharding=_prepend_none_sharding(out_sharding))
-    hi, lo = bits[0], bits[1]
+    if _key_impl(key).num_streams >= 2:
+      hi, lo = prng.random_bits(
+          key, info.bits, shape=shape, num_streams=2,
+          out_sharding=out_sharding)
+    else:
+      bits = _random_bits(
+          key, info.bits, shape=(2,) + shape,
+          out_sharding=_prepend_none_sharding(out_sharding))
+      hi, lo = bits[0], bits[1]
     neg_hi = lax.bitwise_not(hi)
     neg_lo = lax.bitwise_not(lo)
     # 1 - bits in u64 fixed point.
@@ -3330,8 +3338,8 @@ def _gumbel(key: Key, shape, dtype, mode, out_sharding=None) -> Array:
     sel_lo = jnp.where(flip_mask, lo, neg_lo)
     x = _safe_int_to_float((sel_hi, sel_lo), dtype=np.float32)
     # use log1p for (0,0.5) and log for [0.5, 1).
-    return jnp.where(flip_mask,
-        -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))
+    inner = jnp.where(flip_mask, -jnp.log1p(-x), -jnp.log(x))
+    return -jnp.log(inner)
   elif mode == "high" or mode == "highest":
     high, low = lax.unstack(_uniform(
         key, minval=0., maxval=1., shape=(2,) + shape, dtype=dtype,
@@ -4766,7 +4774,8 @@ dispatch.simple_impl(random_clone_p)
 random_clone_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(random_clone_p)
 mlir.register_lowering(
-    random_clone_p, lambda _, k: [k], shard_map_passthrough=True
+    random_clone_p, lambda _, k: [k],
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule()
 )
 
 

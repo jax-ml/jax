@@ -1,7 +1,7 @@
-``jax.experimental.pallas.tpu_sc`` module
-=========================================
+``jax.pallas.tpu_sc`` module
+============================
 
-.. automodule:: jax.experimental.pallas.tpu_sc
+.. automodule:: jax.pallas.tpu_sc
 
 Classes
 -------

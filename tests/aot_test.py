@@ -24,7 +24,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import monitoring
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
@@ -52,10 +51,11 @@ class JaxAotTest(jtu.JaxTestCase):
     def fun(x):
       return x * x
 
+    n = jax.device_count()
     with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
       lowered = jax.jit(
           fun, in_shardings=P('data'), out_shardings=P(None, 'data')
-      ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
+      ).lower(core.ShapedArray(shape=(n, n), dtype=np.float32))
 
     def verify_serialization(lowered):
       serialized, in_tree, out_tree = serialize(lowered.compile())
@@ -133,11 +133,10 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
     self.assertEqual(topo.platform_version, ref_topo.platform_version)
-    if jax.devices()[0].platform != 'gpu' or jaxlib_extension_version >= 512:
-      self.assertEqual(
-          aot_topo.devices[0].client.platform_version,
-          jax.devices()[0].client.platform_version,
-      )
+    self.assertEqual(
+        aot_topo.devices[0].client.platform_version,
+        jax.devices()[0].client.platform_version,
+    )
     self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
 
   @jtu.run_on_devices('tpu')

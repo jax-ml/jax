@@ -16,10 +16,17 @@
 
 import types
 
-def register_xla_transform(name: str, stage: int, callback: object) -> None: ...
+def register_xla_transform(
+    name: str, stage: int, callback: object, *, pass_module_config: bool = ...
+) -> None: ...
 def clear_xla_transform(name: str, stage: int) -> bool: ...
 def register_xla_transform_c_api(
-    c_api: types.CapsuleType, name: str, stage: int, callback: object
+    c_api: types.CapsuleType,
+    name: str,
+    stage: int,
+    callback: object,
+    *,
+    pass_module_config: bool = ...,
 ) -> None: ...
 def clear_xla_transform_c_api(
     c_api: types.CapsuleType, name: str, stage: int

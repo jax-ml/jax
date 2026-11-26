@@ -209,8 +209,8 @@ class PinnedBufferTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Only supported on TPU v4+")
+    if not jtu.is_device_tpu():
+      self.skipTest("Only supported on TPU")
 
   def test_basic(self):
 
@@ -250,8 +250,6 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest("Only supported on TPU v5+")
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')
@@ -471,8 +469,6 @@ class KernelTest(jtu.JaxTestCase):
       ("SEMAPHORE", pltpu.SEMAPHORE, 2),
   )
   def test_kernel_with_output_memory_space(self, memory_space, color):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest("Only supported on TPU v5+")
     mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)

@@ -445,7 +445,16 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
-    shard_count = 8,
+    shard_count = {
+        "cpu": if_oss(
+            8,
+            google_value = select({
+                "//tools/cpp:msan_build": 24,  # Too slow under msan.
+                "//conditions:default": 8,
+            }),
+        ),
+        "tpu": 8,
+    },
     tags = [
         "noasan",
         "notsan",  # Times out.
@@ -1241,6 +1250,7 @@ jax_multiplatform_test(
         "notsan",
     ],
     deps = [
+        "//jax/_src:source_info_util",
         "//jax/_src/pallas/fuser",
         "//jax/experimental:checkify",
         "//jax/experimental:pallas",

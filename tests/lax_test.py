@@ -43,7 +43,6 @@ from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
@@ -250,8 +249,6 @@ class LaxTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testLogPow(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41261
-    if jaxlib_extension_version < 510:
-      self.skipTest("Requires jaxlib_extension_version >= 510")
     a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
     b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
     args_maker = lambda: [a, b]
@@ -350,8 +347,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertAllClose(dc2, jnp.sum(ct))
 
   def testFmuladdPlatformLowering(self):
-    if jaxlib_extension_version < 515:
-      self.skipTest("Requires jaxlib_extension_version >= 515")
     if not jtu.stablehlo_version_at_least("1.24.0"):
       self.skipTest("Requires StableHLO >= 1.24.0")
     f = jax.jit(lax.fmuladd)
@@ -410,6 +405,29 @@ class LaxTest(jtu.JaxTestCase):
         const_lowering={},
     )
     self.assertTrue(proxy_rule_ctx.is_forward_compat())
+
+  @jtu.sample_product(dtype=lax_test_util.int_dtypes + lax_test_util.uint_dtypes)
+  @jtu.thread_unsafe_test()  # mock.patch mutates module-global lax_internal.xla_version
+  def testMulhiForwardCompatLowering(self, dtype):
+    info = dtypes.iinfo(dtype)
+    if not config.enable_x64.value and info.bits == 64:
+      self.skipTest("64-bit mode disabled")
+    half = 1 << (info.bits // 2)
+    if dtypes.issubdtype(dtype, np.signedinteger):
+      edge_vals = [info.min, info.min + 1, -half, -1, 0, 1, half, info.max - 1, info.max]
+    else:
+      edge_vals = [0, 1, half - 1, half, info.max - 1, info.max]
+    edge = np.array(edge_vals, dtype=dtype)
+    x_edge, y_edge = edge[:, None], edge[None, :]
+    rng = jtu.rand_fullrange(self.rng())
+    x_rand, y_rand = rng((3, 4), dtype), rng((3, 4), dtype)
+
+    for x, y in [(x_edge, y_edge), (x_rand, y_rand)]:
+      expected = lax_reference.mulhi(x, y)
+
+      exported = export.export(jax.jit(lax.mulhi))(x, y)
+      self.assertNotIn("chlo.mulhi", exported.mlir_module())
+      self.assertArraysEqual(exported.call(x, y), expected)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
@@ -1507,11 +1525,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def _skipIfF8E4M3FNDotAlgorithmUnsupported(self, algorithm):
-    if jaxlib_extension_version < 514:
-      raise SkipTest(
-          f"The dot algorithm '{algorithm}' requires jaxlib_extension_version "
-          ">= 514."
-      )
     if not jtu.stablehlo_version_at_least("1.21.0"):
       raise SkipTest(
           f"The dot algorithm '{algorithm}' requires StableHLO >= 1.21.0."
@@ -1523,13 +1536,10 @@ class LaxTest(jtu.JaxTestCase):
             "capability >= 8.9."
         )
     elif jtu.test_device_matches(["tpu"]):
-      # float8_e4m3fn dots require TPU v5+ and libtpu >= 0.0.52.
-      if not (
-          jtu.is_device_tpu_at_least(5) and jtu.is_libtpu_at_least("0.0.52")
-      ):
+      # float8_e4m3fn dots require TPU v5+.
+      if not jtu.is_device_tpu_at_least(5):
         raise SkipTest(
-            f"The dot algorithm '{algorithm}' requires TPU v5+ and libtpu >= "
-            "0.0.52."
+            f"The dot algorithm '{algorithm}' requires TPU v5+."
         )
     else:
       raise SkipTest(
@@ -1673,55 +1683,54 @@ class LaxTest(jtu.JaxTestCase):
       hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
       self.assertRegex(hlo, expected)
 
-    if jaxlib_extension_version >= 514:
-      lhs_f16 = rng(lhs_shape, np.float16)
-      rhs_f16 = rng(rhs_shape, np.float16)
-      for num_ops in (3, 4):
-        preset = f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"
-        expected = (
-            "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
-            "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
-            f"rhs_component_count = 1, num_primitive_operations = {num_ops}"
-        )
-        with jax.default_matmul_precision(preset):
-          # CPU rejects these presets, so lower for TPU.
-          hlo = (
-              jax.jit(lax.dot)
-              .trace(lhs, rhs)
-              .lower(lowering_platforms=("tpu",))
-              .as_text()
-          )
-          self.assertIn(expected, hlo)
-          hlo_outer = (
-              jax.jit(lambda x, y: jnp.einsum("i,j->ij", x, y))
-              .trace(lhs[0], rhs[0])
-              .lower(lowering_platforms=("tpu",))
-              .as_text()
-          )
-          self.assertNotIn("algorithm =", hlo_outer)
-        hlo_bf16_out = (
-            jax.jit(
-                partial(
-                    lax.dot,
-                    precision=preset,
-                    preferred_element_type=dtypes.bfloat16,
-                )
-            )
+    lhs_f16 = rng(lhs_shape, np.float16)
+    rhs_f16 = rng(rhs_shape, np.float16)
+    for num_ops in (3, 4):
+      preset = f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"
+      expected = (
+          "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
+          "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
+          f"rhs_component_count = 1, num_primitive_operations = {num_ops}"
+      )
+      with jax.default_matmul_precision(preset):
+        # CPU rejects these presets, so lower for TPU.
+        hlo = (
+            jax.jit(lax.dot)
             .trace(lhs, rhs)
             .lower(lowering_platforms=("tpu",))
             .as_text()
         )
-        self.assertIn(expected, hlo_bf16_out)
-        self.assertNotIn("convert", hlo_bf16_out)
-        hlo_f16 = (
-            jax.jit(partial(lax.dot, precision=preset))
-            .trace(lhs_f16, rhs_f16)
+        self.assertIn(expected, hlo)
+        hlo_outer = (
+            jax.jit(lambda x, y: jnp.einsum("i,j->ij", x, y))
+            .trace(lhs[0], rhs[0])
             .lower(lowering_platforms=("tpu",))
             .as_text()
         )
-        self.assertIn(
-            "(tensor<3x4xf32>, tensor<4x3xf32>) -> tensor<3x3xf32>", hlo_f16
-        )
+        self.assertNotIn("algorithm =", hlo_outer)
+      hlo_bf16_out = (
+          jax.jit(
+              partial(
+                  lax.dot,
+                  precision=preset,
+                  preferred_element_type=dtypes.bfloat16,
+              )
+          )
+          .trace(lhs, rhs)
+          .lower(lowering_platforms=("tpu",))
+          .as_text()
+      )
+      self.assertIn(expected, hlo_bf16_out)
+      self.assertNotIn("convert", hlo_bf16_out)
+      hlo_f16 = (
+          jax.jit(partial(lax.dot, precision=preset))
+          .trace(lhs_f16, rhs_f16)
+          .lower(lowering_platforms=("tpu",))
+          .as_text()
+      )
+      self.assertIn(
+          "(tensor<3x4xf32>, tensor<4x3xf32>) -> tensor<3x3xf32>", hlo_f16
+      )
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -2553,6 +2562,25 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(lax_fun, args_maker)
     self._CheckAgainstNumpy(reference_fun, lax_fun, args_maker)
+
+  def testUnaryReduceSqueezesSizeOneAxes(self):
+    x = np.arange(4, dtype=np.float32).reshape(1, 4)
+
+    def reduce_empty(a):
+      return lax.reduce_sum(a, ())
+
+    def reduce_unit(a):
+      return lax.reduce_sum(a, (0,))
+
+    hlo_empty = jax.jit(reduce_empty).lower(x).as_text("stablehlo")
+    self.assertNotIn("stablehlo.reduce(", hlo_empty)
+    self.assertNotIn("stablehlo.reshape", hlo_empty)
+    self.assertArraysEqual(jax.jit(reduce_empty)(x), x)
+
+    hlo_unit = jax.jit(reduce_unit).lower(x).as_text("stablehlo")
+    self.assertNotIn("stablehlo.reduce(", hlo_unit)
+    self.assertIn("stablehlo.reshape", hlo_unit)
+    self.assertArraysEqual(jax.jit(reduce_unit)(x), np.sum(x, axis=0))
 
   @jtu.sample_product(
     op=["add", "mul"],
@@ -4502,12 +4530,12 @@ class LaxTest(jtu.JaxTestCase):
 
     for fn in (unrolled_fn, scan_fn):
       cpu_hlo = fn.trace(x).lower(lowering_platforms=("cpu",)).as_text()
-      if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+      if jtu.stablehlo_version_at_least("1.24.0"):
         self.assertIn("stablehlo.fma", cpu_hlo)
       tpu_hlo = fn.trace(x).lower(lowering_platforms=("tpu",)).as_text()
       self.assertNotIn("stablehlo.fma", tpu_hlo)
 
-    if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+    if jtu.stablehlo_version_at_least("1.24.0"):
       polyval_cpu_hlo = (
           polyval_fn.trace(jnp.array([c1, c0]), x)
           .lower(lowering_platforms=("cpu",))
@@ -5357,7 +5385,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
     elif name == 'exp':
-      regions_with_inaccuracies_keep('pos.imag', 'pinf.imag', 'mpos.imag')
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
+      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name == 'exp2':
       # TODO: Remove 'ninfj' and 'pinfj' from the list once all supported XLA
@@ -5375,17 +5404,19 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
                                      'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'sinh':
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
       if is_cuda:
         regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg', 'pos',
-                                       'ninf.imag', 'pinf.imag', 'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
+                                       'ninf', 'pinf', 'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
                                        'ninfj.real', 'pinfj.real')
       if is_cpu:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj.imag', 'posj.imag', 'ninf.imag', 'pinf.imag',
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj.imag', 'posj.imag', 'ninf', 'pinf',
                                        'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
                                        'ninfj.real', 'pinfj.real')
     elif name == 'cosh':
-      regions_with_inaccuracies_keep('neg.imag', 'pos.imag', 'ninf.imag', 'pinf.imag', 'mneg.imag', 'mpos.imag',
-                                     'ninfj.imag', 'pinfj.imag')
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
+      regions_with_inaccuracies_keep('neg.imag', 'pos.imag', 'ninf', 'pinf', 'mneg.imag', 'mpos.imag',
+                                     'ninfj', 'pinfj')
 
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')

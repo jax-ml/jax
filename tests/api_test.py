@@ -4877,9 +4877,7 @@ class APITest(jtu.JaxTestCase):
     self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
     # For xla_late, we expect XLA to preserve the call on CPU, but it
     # will be inlined/flattened on TPU and GPU.
-    if jtu.device_under_test() == 'tpu' or (
-        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 513
-    ):
+    if jtu.device_under_test() in ('tpu', 'gpu'):
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
@@ -4915,9 +4913,7 @@ class APITest(jtu.JaxTestCase):
     mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
     self.assertIn("func.func private @inline_mode_test", mlir_text)
     self.assertIn('inlineable = "xla_late"', mlir_text)
-    if jtu.device_under_test() == 'tpu' or (
-        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 512
-    ):
+    if jtu.device_under_test() in ('tpu', 'gpu'):
       self.assertNotIn("call(", hlo_text)
     else:
       self.assertIn("call(", hlo_text)
@@ -8347,6 +8343,116 @@ class RematTest(jtu.JaxTestCase):
     y_, = vjp(jnp.ones_like(y))
     self.assertAllClose(y, y_, atol=0, rtol=0)
 
+  def test_excess_precision_hell_narrow_float(self):
+    # Like test_excess_precision_hell, with a saved float8_e4m3fn product read
+    # through a float16 convert: unless remat pins the saved residual, XLA:CPU
+    # computes the product in float16 and hands the reader its unrounded value.
+    @jax.custom_vjp
+    def square(x):
+      return x * x
+
+    square.defvjp(lambda x: (square(x), None), lambda _, g: (g,))
+
+    @jax.custom_vjp
+    def foo(x):
+      return jnp.float32(1.0) * x.astype('float16').astype('float32')
+
+    def foo_fwd(x):
+      return foo(x), x
+
+    def foo_bwd(x, _):
+      return (
+          (jnp.float32(1.0) * x.astype('float16').astype('float32')).astype(
+              x.dtype
+          ),
+      )
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    @jax.jit
+    @partial(
+        jax.remat, policy=jax.checkpoint_policies.save_only_these_names('y')
+    )
+    def f(x):
+      return foo(checkpoint_name(square(x), 'y'))
+
+    x = jnp.array([1.125, 3.0], jnp.float8_e4m3fn)  # 1.125**2 rounds to 1.25
+    y, vjp = jax.vjp(f, x)
+    (y_,) = vjp(jnp.ones_like(y))
+    self.assertArraysEqual(y, y_.astype(y.dtype))
+
+  def test_saved_narrow_float_residual(self):
+    # Remat pins saved residuals with reduce_precision(x, finfo.nexp,
+    # finfo.nmant). If XLA lowers an identity reduce_precision as an IEEE-style
+    # bit-fiddle in a wider type (with infinities and without subnormals), for
+    # float8_e4m3fn it turns the saved values 256..448 into NaN, in the forward
+    # value and in the gradient.
+    def f(x):
+      c = checkpoint_name(x.astype(jnp.float8_e4m3fn), 'c')
+      return jnp.sum(c.astype(jnp.float32) * x)
+
+    policy = jax.checkpoint_policies.save_only_these_names('c')
+    g = jax.checkpoint(f, policy=policy)
+    x = jnp.array([448.0, 1.0], jnp.float32)
+    for g_ in [g, jax.jit(g)]:
+      y, dx = jax.value_and_grad(g_)(x)
+      self.assertArraysEqual(y, np.float32(200705.0))
+      self.assertArraysEqual(dx, np.array([896.0, 2.0], np.float32))
+
+  @parameterized.named_parameters(
+      {'testcase_name': f'_{np.dtype(dtype).name}', 'dtype': dtype}
+      for dtype in [
+          dtypes.float8_e3m4,
+          dtypes.float8_e4m3,
+          dtypes.float8_e4m3b11fnuz,
+          dtypes.float8_e4m3fn,
+          dtypes.float8_e4m3fnuz,
+          dtypes.float8_e5m2,
+          dtypes.float8_e5m2fnuz,
+          dtypes.float8_e8m0fnu,
+          dtypes.float4_e2m1fn,
+      ]
+  )
+  def test_saved_narrow_float_residual_all_values(self, dtype):
+    # XLA:CPU computes all of these types, other backends only some of them.
+    if (
+        not jtu.test_device_matches(['cpu'])
+        and dtype not in jtu.supported_dtypes()
+    ):
+      self.skipTest(f'{np.dtype(dtype).name} is not supported on this backend')
+    # Every finite value of dtype (sub-byte floats take a byte each), except
+    # float8_e8m0fnu's 2**-127, a float32 denormal that XLA may flush.
+    x = np.arange(2 ** dtypes.finfo(dtype).bits, dtype=np.uint8).view(dtype)
+    x = x[np.isfinite(x)].astype(np.float32)
+    x = x[(x == 0) | (np.abs(x) >= np.finfo(np.float32).tiny)]
+
+    def f(x, w):
+      c = checkpoint_name(x.astype(dtype), 'c')
+      return c.astype(jnp.float32) * w
+
+    @partial(jax.jit, static_argnums=0)
+    def value_and_cotangent(f, x, w):
+      y, f_vjp = jax.vjp(partial(f, x), w)
+      return y, *f_vjp(jnp.ones_like(y))
+
+    # The casts are exact, so both the value and its cotangent are x.
+    policy = jax.checkpoint_policies.save_only_these_names('c')
+    for f_ in [f, jax.checkpoint(f, policy=policy)]:
+      y, dw = value_and_cotangent(f_, x, np.ones_like(x))
+      self.assertArraysEqual(y, x)
+      self.assertArraysEqual(dw, x)
+
+  def test_saved_residuals_narrow_float(self):
+    def f(x):
+      c = checkpoint_name(x.astype(jnp.float8_e4m3fn), 'c')
+      return jnp.sum(c.astype(jnp.float32) * x)
+
+    policy = jax.checkpoint_policies.save_only_these_names('c')
+    res = saved_residuals(
+        jax.checkpoint(f, policy=policy), np.ones(3, np.float32)
+    )
+    self.assertTrue(any(src.startswith("named 'c'") for _, src in res), res)
+
   def test_concreteness_error_includes_user_code(self):
     @jax.remat
     def f(x):
@@ -8499,7 +8605,7 @@ class RematTest(jtu.JaxTestCase):
   def test_remat_grad_accum_refs(self):
     @jax.remat
     def f(param: jax.Array) -> jax.Array:
-        return jnp.sin(param)
+      return jnp.sin(param)
 
 
     param = jnp.array(2.0, dtype=jnp.float32)

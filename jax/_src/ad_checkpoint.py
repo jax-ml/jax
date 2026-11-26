@@ -39,7 +39,6 @@ from jax._src.interpreters.remat import remat_transform, reduce_precision as rem
 from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
-from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -832,13 +831,11 @@ def _remat_lowering(
   if differentiated and any(prevent_cse):
     _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)
     other_args, barrier_args = partition_list(prevent_cse, args)
-    flat_barrier_args, _ = mlir.ir_tree_registry.flatten(barrier_args)
-    barrier_op = hlo.OptimizationBarrierOp(flat_barrier_args)
-    _, barrier_treedef = mlir.ir_tree_registry.flatten(
-        [mlir._aval_to_ir_types(ctx.module_context, a) for a in barrier_avals])
-    res = [mlir.lower_with_sharding_in_types(ctx, op, aval)
-           for op, aval in zip(barrier_op.results, barrier_avals)]
-    barrier_results = barrier_treedef.unflatten(res)
+    barrier_lowering = mlir.lower_fun(
+        lax_internal.optimization_barrier_p.bind, multiple_results=True)
+    barrier_results = barrier_lowering(
+        ctx.replace(avals_in=barrier_avals, avals_out=barrier_avals),
+        *barrier_args)
     args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
@@ -847,7 +844,8 @@ def _remat_lowering(
   ctx.set_tokens_out(tokens_out)
   return outs
 
-mlir.register_lowering(remat_p, _remat_lowering, shard_map_passthrough=True)
+mlir.register_lowering(
+    remat_p, _remat_lowering, shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
@@ -928,8 +926,8 @@ def name_jvp(primals, tangents, *, name):
 ad.primitive_jvps[name_p] = name_jvp
 
 mlir.register_lowering(
-    name_p, lambda ctx, x, *, name: [x], shard_map_passthrough=True
-)
+    name_p, lambda ctx, x, *, name: [x],
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims

@@ -3659,6 +3659,22 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jax.lax.iota(jnp.float32, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters(jnp.bfloat16, jnp.int16, jnp.float8_e4m3fn)
+  def test_optimization_barrier_sub_32_bit(self, dtype):
+    # Large enough for several vector registers per thread, each holding
+    # several 32-bit words.
+    shape = (8, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.optimization_barrier(x_ref[...])
+
+    x = (jnp.arange(math.prod(shape)) % 100).astype(dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_optimization_barrier_constant(self):
     @functools.partial(
         self.kernel,
@@ -4390,6 +4406,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     for op in (plgpu.sum, plgpu.max, plgpu.min, plgpu.prod):
       with self.assertRaises(expected_error):
         make_kernel(op)(x)
+
+  @parameterized.product(
+      dtype=(jnp.float16, jnp.bfloat16),
+      op=("plgpu.sum", "lax.reduce_sum"),
+  )
+  def test_f16_reductions_disallowed(self, dtype, op):
+    reduce_fn = {
+        "plgpu.sum": lambda x: plgpu.sum(x, axis=-1),
+        "lax.reduce_sum": lambda x: lax.reduce_sum(x, axes=(1,)),
+    }[op]
+
+    x_shape = jax.ShapeDtypeStruct((128, 128,), dtype)
+    @self.kernel(out_type=jax.ShapeDtypeStruct((128,), dtype))
+    def kernel(x_ref, y_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      plgpu.store(y_ref, reduce_fn(x_val), optimized=False)
+
+    with config.allow_f16_reductions(False):
+      with self.assertRaisesRegex(ValueError, "is not allowed"):
+        jax.eval_shape(kernel, x_shape)
 
   @parameterized.product(
       op_info=(
@@ -7204,6 +7240,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       ab_type=[
           jnp.float16,
           jnp.bfloat16,
+          jnp.float32,
           (jnp.float8_e5m2, jnp.float8_e5m2),
           (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
           (jnp.float8_e5m2, jnp.float8_e4m3fn),
@@ -7228,6 +7265,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         self.skipTest("Skipping FP8 transpose tests in simple sweep")
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
+    if a_type == jnp.float32 and (transpose_lhs or not transpose_rhs):
+      self.skipTest("MMA only supports K-fastest f32 operands")
     if n * jnp.dtype(b_type).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:
@@ -7280,6 +7319,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     rhs_shape = (n, k) if transpose_rhs else (k, n)
     x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=a_type)
     y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=b_type)
+    if a_type == jnp.float32:
+      # The MMA computes with TF32, so the inputs are exact in TF32.
+      x, y = (jax.lax.reduce_precision(a, 8, 10) for a in (x, y))
     result = f(x, y)
     if transpose_lhs:
       x = jnp.transpose(x, (1, 0))
@@ -7288,6 +7330,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     if is_fp8:
       expected = x.astype(jnp.float32) @ y.astype(jnp.float32)
       atol, rtol = 1e-2, 1e-2
+    elif a_type == jnp.float32:
+      expected = jnp.matmul(x, y, precision="highest")
+      atol, rtol = 0, 1e-3
     else:
       expected = x @ y
       atol, rtol = 0, 1e-3
@@ -11380,6 +11425,59 @@ class HelpersTest(PallasTest):
                     plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
                   )()
     self.assertEqual(result[0], blocks_to_steal + 1)
+
+  @parameterized.parameters(2, 3, 4)
+  def test_dynamic_work_scheduling_per_warpgroup(self, num_wgs):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+
+    num_sms = jax.devices()[0].core_count
+    grid = (num_sms * 2,)  # grid > SM count, so blocks get stolen.
+
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index("x")
+      wg_idx = lax.axis_index("wg")
+      loop = functools.partial(
+          plgpu.dynamic_scheduling_loop, ("x",), thread_axis="wg"
+      )
+
+      @functools.partial(
+          pl.run_scoped,
+          allocs=loop().get_allocations(),
+          collective_axes="wg",
+      )
+      def _(allocs):
+        for i in range(num_wgs):
+
+          @pl.when(wg_idx == i)
+          def _per_wg_loop():
+            @loop(allocations=allocs)
+            def loop_body(loop_info: plgpu.NDLoopInfo):
+              out_gmem[*loop_info.index, i] = sm_idx
+
+    max_shared_memory = jax.local_devices()[0].shared_memory_per_block_optin
+    # Mosaic GPU uses some shared memory implicitly, so we can't
+    # explicitly request the full amount.
+    large_amount_of_shared_memory = int(0.9 * max_shared_memory)
+    with mgpu.core.artificial_shared_memory_limit(None):
+      result = self.kernel(
+          body,
+          out_type=jax.ShapeDtypeStruct((*grid, num_wgs), jnp.int32),
+          grid=grid,
+          grid_names=("x",),
+          num_threads=num_wgs,
+          thread_name="wg",
+          # Allocate a large amount of SMEM to prevent multiple blocks
+          # being scheduled on the same SM.
+          scratch_types=[
+              plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)
+          ],
+      )()
+
+    # Every warpgroup must have processed each work item on the same SM.
+    for i in range(1, num_wgs):
+      np.testing.assert_array_equal(result[:, i], result[:, 0])
+    self.assertEqual(np.max(result), num_sms - 1)
 
 
 class HelpersWGTest(

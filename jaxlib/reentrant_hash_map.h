@@ -33,7 +33,7 @@ template <typename Key, typename Value, typename Hash = absl::Hash<Key>,
 class ReentrantHashMap {
  private:
   struct PairEq {
-    Eq eq_;
+    [[no_unique_address]] Eq eq_;
     PairEq(Eq eq = Eq()) : eq_(eq) {}
     bool operator()(const std::pair<Key, Value>& a,
                     const std::pair<Key, Value>& b) const {
@@ -46,7 +46,7 @@ class ReentrantHashMap {
   };
 
   struct PairHash {
-    Hash hasher_;
+    [[no_unique_address]] Hash hasher_;
     PairHash(Hash hasher = Hash()) : hasher_(hasher) {}
     size_t operator()(const std::pair<Key, Value>& pair) const {
       return hasher_(pair.first);
@@ -78,6 +78,11 @@ class ReentrantHashMap {
   template <typename K>
   const_iterator find(const K& key) const {
     return set_.find(key);
+  }
+
+  template <typename K>
+  bool contains(const K& key) const {
+    return set_.contains(key);
   }
 
   iterator begin() { return set_.begin(); }

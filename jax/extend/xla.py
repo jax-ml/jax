@@ -21,4 +21,5 @@ from jax._src.xla_transform import (
     PipelineStage as PipelineStage,
     clear_hlo_module_transformation as clear_hlo_module_transformation,
     register_hlo_module_transformation as register_hlo_module_transformation,
+    register_hlo_module_transformation2 as register_hlo_module_transformation2,
 )

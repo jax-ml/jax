@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
@@ -33,7 +32,6 @@ import numpy as np
 Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
-XLADeviceAssignment = Sequence[Device]
 
 
 class UnspecifiedValue:
@@ -177,19 +175,12 @@ class NamedSharding(jsharding.Sharding):
     return self.mesh._flat_devices_set
 
   @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    if isinstance(self.mesh, mesh_lib.AbstractMesh):
-      raise ValueError('_device_assignment is not implemented for'
-                       ' `jax.sharding.AbstractMesh`.')
-    return self.mesh._flat_devices_tuple
-
-  @property
   def is_fully_addressable(self) -> bool:
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('is_fully_addressable is not implemented for '
                        '`jax.sharding.AbstractMesh`.')
     # return False if addressable_device_list is empty.
-    return self._internal_device_list.is_fully_addressable
+    return self._device_assignment.is_fully_addressable
 
   @property
   def _is_concrete(self) -> bool:

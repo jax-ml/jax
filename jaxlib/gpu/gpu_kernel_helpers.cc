@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
-#include "absl/base/optimization.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"

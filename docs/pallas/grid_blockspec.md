@@ -7,7 +7,7 @@
 (pallas_grid)=
 ## `grid`, a.k.a. kernels in a loop
 
-When using {func}`jax.experimental.pallas.pallas_call` the kernel function
+When using {func}`jax.pallas.pallas_call` the kernel function
 is executed multiple times on different inputs, as specified via the `grid`
 argument to `pallas_call`. Conceptually:
 ```python
@@ -38,10 +38,10 @@ The default grid value `()` results in one
 kernel invocation.
 Each of these invocations is referred to as a "program".
 To access which program (i.e. which element of the grid) the kernel is currently
-executing, we use {func}`jax.experimental.pallas.program_id`.
+executing, we use {func}`jax.pallas.program_id`.
 For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
 `program_id(axis=1)` returns `2`.
-You can also use {func}`jax.experimental.pallas.num_programs` to get the
+You can also use {func}`jax.pallas.num_programs` to get the
 grid size for a given axis.
 
 <center>
@@ -59,7 +59,7 @@ In conjunction with the `grid` argument, we need to provide Pallas
 the information on how to slice up the input for each invocation.
 Specifically, we need to provide a mapping between *the iteration of the loop*
 to *which block of our inputs and outputs to be operated on*.
-This is provided via {class}`jax.experimental.pallas.BlockSpec` objects.
+This is provided via {class}`jax.pallas.BlockSpec` objects.
 
 <center>
 
@@ -112,7 +112,7 @@ below:
 
 ```python
 >>> import jax
->>> from jax.experimental import pallas as pl
+>>> from jax import pallas as pl
 >>> def slices_for_invocation(x_shape: tuple[int, ...],
 ...                           x_spec: pl.BlockSpec,
 ...                           grid: tuple[int, ...],

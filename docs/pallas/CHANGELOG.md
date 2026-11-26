@@ -4,7 +4,7 @@
 
 <!--* freshness: { reviewed: '2026-06-23' } *-->
 
-This is the list of changes specific to {class}`jax.experimental.pallas`.
+This is the list of changes specific to {mod}`jax.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
 
 <!--
@@ -12,6 +12,17 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## Unreleased
+
+### TPU
+
+* Deprecations
+
+  * Implicit indices in {func}`jax.pallas.tpu.emit_pipeline` are deprecated.
+    Pass the temporary `_explicit_indices=True` parameter (to be removed after
+    migration) and accept {class}`jax.pallas.tpu.PipelineStep` as the first
+    body argument instead of calling `program_id`.
+
+## Release with JAX 0.12.1 (November 18, 2026)
 
 * Deprecations
 
@@ -45,6 +56,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
+  * {func}`jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop` now
+    accepts an `allocations` argument, and the returned decorator has a
+    `get_allocations` method. Allocating the scheduling state once with
+    `pl.run_scoped` lets each thread (e.g. each warpgroup, under `pl.when` on
+    the `thread_axis` index) run its own loop over the same dynamic schedule.
+    Each thread must run exactly one such loop; the allocations cannot be
+    reused by sequential loops.
   * {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive` now accepts
     a keyword-only `commit_a_read_only` boolean flag (defaulting to `False`) to
     track completion of SMEM reads of the `a` operand of preceding

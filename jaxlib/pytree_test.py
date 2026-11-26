@@ -200,6 +200,171 @@ class PyTreeTest(parameterized.TestCase):
     self.assertEqual(c_tree2.unflatten(c_leafs), c)
     self.assertEqual(str(c_tree2), str(c_tree))
 
+    if xla_client._version < 528:
+      self.skipTest("Requires jaxlib_extension_version >= 528")
+
+    leaf_td = registry.flatten(0)[1]
+
+    # JSON-deserialized metadata arrives as a list rather than a tuple.
+    c_tree_from_list = pytree.PyTreeDef.from_node_data_and_children(
+        registry, (Custom, ["a"]), c_tree.children()
+    )
+    self.assertEqual(c_tree_from_list, c_tree)
+    self.assertEqual(c_tree_from_list.node_data(), (Custom, ("a",)))
+    self.assertEqual(c_tree_from_list.unflatten(c_leafs), c)
+    self.assertEqual(str(c_tree_from_list), str(c_tree))
+
+    # Dataclass meta_fields and data_fields arity mismatches (too few & too many).
+    for bad_meta in ([], (), ["a", "extra"], ("a", "extra")):
+      with self.assertRaisesRegex(ValueError, "Dataclass meta_fields arity"):
+        pytree.PyTreeDef.from_node_data_and_children(
+            registry, (Custom, bad_meta), c_tree.children()
+        )
+    for bad_children in ([], [leaf_td, leaf_td]):
+      with self.assertRaisesRegex(ValueError, "Dataclass data_fields arity"):
+        pytree.PyTreeDef.from_node_data_and_children(
+            registry, (Custom, ("a",)), bad_children
+        )
+
+    # Non-tuple/list aux_data must be rejected (not coerced via PySequence_Tuple).
+    for bad_aux in ("a", b"a", {"a"}, {"a": 1}, None, (x for x in ("a",))):
+      with self.assertRaisesRegex(ValueError, "must be a tuple or list"):
+        pytree.PyTreeDef.from_node_data_and_children(
+            registry, (Custom, bad_aux), c_tree.children()
+        )
+
+    # Dataclass with 0 meta_fields.
+    @dataclasses.dataclass
+    class NoMeta:
+      x: int
+
+    local_reg = pytree.PyTreeRegistry()
+    local_reg.register_dataclass_node(NoMeta, ["x"], [])
+    local_leaf = local_reg.flatten(0)[1]
+    nm = NoMeta(7)
+    nm_leaves, nm_tree = local_reg.flatten(nm)
+    for valid_meta in ((), []):
+      restored = pytree.PyTreeDef.from_node_data_and_children(
+          local_reg, (NoMeta, valid_meta), [local_leaf]
+      )
+      self.assertEqual(restored, nm_tree)
+      self.assertEqual(restored.node_data(), (NoMeta, ()))
+      self.assertEqual(restored.unflatten(nm_leaves), nm)
+    with self.assertRaisesRegex(ValueError, "Dataclass meta_fields arity"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          local_reg, (NoMeta, ("extra",)), [local_leaf]
+      )
+    for bad_empty_aux in ("", b"", set(), {}, None, (x for x in ())):
+      with self.assertRaisesRegex(ValueError, "must be a tuple or list"):
+        pytree.PyTreeDef.from_node_data_and_children(
+            local_reg, (NoMeta, bad_empty_aux), [local_leaf]
+        )
+
+  def testRegisteredNamedTupleAndEnableNamedTuple(self):
+    if xla_client._version < 528:
+      self.skipTest("Requires jaxlib_extension_version >= 528")
+
+    RegisteredNT = collections.namedtuple("RegisteredNT", ["x", "meta"])
+    enabled_reg = pytree.PyTreeRegistry(enable_namedtuple=True)
+    disabled_reg = pytree.PyTreeRegistry(enable_namedtuple=False)
+    self.assertFalse(disabled_reg.is_node(ExampleType))
+    nt_example = ExampleType(1, 2)
+    self.assertIsNone(disabled_reg.flatten_one_level(nt_example))
+    leaves_disabled, td_disabled = disabled_reg.flatten(nt_example)
+    self.assertEqual(leaves_disabled, [nt_example])
+    self.assertEqual(
+        pytree.PyTreeDef.from_node_data_and_children(
+            disabled_reg, td_disabled.node_data(), td_disabled.children()
+        ),
+        td_disabled,
+    )
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          disabled_reg, (ExampleType, None), []
+      )
+
+    for reg in (enabled_reg, disabled_reg):
+      reg.register_node(
+          RegisteredNT,
+          lambda o: ([o.x], o.meta),
+          lambda meta, children: RegisteredNT(children[0], meta),
+      )
+      self.assertTrue(reg.is_node(RegisteredNT))
+      nt = RegisteredNT(42, "tag")
+      leaves, td = reg.flatten(nt)
+      self.assertEqual(leaves, [42])
+      restored = pytree.PyTreeDef.from_node_data_and_children(
+          reg, td.node_data(), td.children()
+      )
+      self.assertEqual(restored, td)
+      self.assertEqual(restored.unflatten(leaves), nt)
+
+  def testFromNodeDataValidation(self):
+    if xla_client._version < 528:
+      self.skipTest("Requires jaxlib_extension_version >= 528")
+
+    class Unregistered:
+      pass
+
+    leaf_td = registry.flatten(0)[1]
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (Unregistered, None), []
+      )
+    # Non-type object in node_data[0] raises ValueError (not TypeError).
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      pytree.PyTreeDef.from_node_data_and_children(registry, (123, None), [])
+    with self.assertRaisesRegex(ValueError, "Leaf PyTreeDef cannot have"):
+      pytree.PyTreeDef.from_node_data_and_children(registry, None, [leaf_td])
+    with self.assertRaisesRegex(ValueError, "None PyTreeDef cannot have"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (type(None), None), [leaf_td]
+      )
+    # Dict arity mismatch: both more keys than children and fewer keys than children.
+    with self.assertRaisesRegex(ValueError, "Dict keys and values"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (dict, ["a", "b"]), [leaf_td]
+      )
+    with self.assertRaisesRegex(ValueError, "Dict keys and values"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (dict, ["a"]), [leaf_td, leaf_td]
+      )
+    # Non-list/tuple aux_data for dict must be rejected.
+    for bad_keys in (
+        "ab",
+        b"ab",
+        {"a", "b"},
+        {"a": 1, "b": 2},
+        None,
+        (k for k in ("a", "b")),
+    ):
+      with self.assertRaises(RuntimeError):
+        pytree.PyTreeDef.from_node_data_and_children(
+            registry, (dict, bad_keys), [leaf_td, leaf_td]
+        )
+    dict_td = pytree.PyTreeDef.from_node_data_and_children(
+        registry, (dict, ("a", "b")), [leaf_td, leaf_td]
+    )
+    self.assertEqual(dict_td.unflatten([1, 2]), {"a": 1, "b": 2})
+
+    # Cross-registry child PyTreeDef must be rejected.
+    other_reg = pytree.PyTreeRegistry()
+    other_leaf = other_reg.flatten(0)[1]
+    with self.assertRaisesRegex(
+        ValueError, "PyTree registries of PyTreeDefs.*must match"
+    ):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (tuple, None), [other_leaf]
+      )
+
+    # Empty child PyTreeDef traversal must be rejected.
+    empty_td = pytree.PyTreeDef.__new__(pytree.PyTreeDef)
+    empty_td.__setstate__((registry, []))
+    with self.assertRaisesRegex(ValueError, "Malformed child PyTreeDef"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (tuple, None), [empty_td]
+      )
+
   def testTpTraverse(self):
     self.assertContainsSubset(
         [
@@ -303,8 +468,6 @@ class PyTreeTest(parameterized.TestCase):
       ("dict_key", pytree.DictKey),
   )
   def testUninitializedGcTraverseAndClear(self, cls):
-    if xla_client._version < 517:
-      self.skipTest("Requires jaxlib_extension_version >= 517")
     obj = cls.__new__(cls)
     cycle = [obj]
     cycle.append(cycle)

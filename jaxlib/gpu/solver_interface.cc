@@ -408,7 +408,7 @@ rocblas_svect JobToRocblasSvect(signed char job) {
 
 absl::Status RocblasStatusToStatus(rocblas_status status, const char* file,
                                   int line, const char* expr) {
-  if (ABSL_PREDICT_FALSE(status != rocblas_status_success)) {
+  if (status != rocblas_status_success) [[unlikely]] {
     return absl::InternalError(
         absl::StrFormat("%s:%d: %s failed: rocblas_status %d", file, line, expr,
                         static_cast<int>(status)));

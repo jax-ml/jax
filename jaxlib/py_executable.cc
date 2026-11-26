@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,7 +29,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/casts.h"
 #include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/absl_check.h"
@@ -49,6 +49,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
+#include "jaxlib/donation_recovery.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -73,6 +74,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -440,6 +442,15 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
   int num_computations =
       devices.has_value() ? (*devices)->AddressableDeviceList()->size() : 0;
   xla::Future<> result_status;
+  DonationRecoveryScope* recovery_scope = DonationRecoveryScope::Current();
+  if (recovery_scope != nullptr && recovery_scope->has_executed()) {
+    throw nb::value_error(
+        "A DonationRecovery scope can only wrap at most one JIT execution.");
+  }
+  ifrt::LoadedExecutable::ExecuteResult result;
+#if defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 91
+  std::vector<const ifrt::Array*> input_ifrt_arrays;
+#endif
   {
     nb::gil_scoped_release gil_release;
     for (const auto& arg : args) {
@@ -457,19 +468,40 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::c_transform(
         args, arg_arrays.begin(),
         [&](const PyArray& arg) mutable { return arg.ifrt_array_ref(); });
-    ABSL_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
-                                           absl::MakeSpan(arg_arrays), options,
-                                           /*devices=*/std::nullopt));
+    ifrt::ExecuteOptions execute_options = options;
+#if defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 91
+    if (recovery_scope != nullptr) {
+      execute_options.fill_recovery_future = true;
+      input_ifrt_arrays.reserve(arg_arrays.size());
+      for (const ifrt::ArrayRef& arr : arg_arrays) {
+        input_ifrt_arrays.push_back(arr.get());
+      }
+    }
+#endif
+    ABSL_ASSIGN_OR_RETURN(
+        result, ifrt_loaded_executable->Execute(absl::MakeSpan(arg_arrays),
+                                                execute_options,
+                                                /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
-    // options.fill_status is only supposed to be true when the computation has
-    // tokens.
-    if (options.fill_status) {
+    if (execute_options.fill_status) {
       result_status = result.status;
       if (returned_futures.has_value()) {
         returned_futures->resize(num_computations, std::move(result.status));
       }
     }
   }
+
+#if defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 91
+  if (recovery_scope != nullptr) {
+    nb::tuple_builder py_args(args.size());
+    for (const PyArray& arg : args) {
+      py_args.put(arg);
+    }
+    recovery_scope->RecordExecution(
+        std::move(result.recovery_future), client, std::move(input_ifrt_arrays),
+        nb::make_tuple(py_args.commit(), nb::dict()));
+  }
+#endif
 
   // TODO(b/240696624): Although the PjRt interface require `returned_futures`
   // to be resized correctly if it is not nullopt, some implementation does not
@@ -566,7 +598,7 @@ int32_t PyLoadedExecutable::GetNextLaunchId() {
       uint32_t initial_value = static_cast<uint32_t>(launch_id_key_);
       it = next_launch_id_->emplace(launch_id_key_, initial_value).first;
     }
-    launch_id = absl::bit_cast<int32_t>(it->second++);
+    launch_id = std::bit_cast<int32_t>(it->second++);
   }
   VLOG(1) << "Launching executable " << ifrt_loaded_executable_->name()
           << " with launch ID: " << launch_id << " key: " << launch_id_key_;

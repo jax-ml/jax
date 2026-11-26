@@ -26,8 +26,8 @@ import functools
 from typing import Callable
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
 from jax import random
 import jax.numpy as jnp
 import numpy as np

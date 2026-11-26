@@ -26,9 +26,9 @@ write Pallas kernels that runs on TPU SparseCores.
 ```python
 from functools import partial
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
-from jax.experimental.pallas import tpu_sc as plsc
+from jax import pallas as pl
+from jax.pallas import tpu as pltpu
+from jax.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
 

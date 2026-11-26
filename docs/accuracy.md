@@ -215,8 +215,8 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.erfc` (`highest`) | 1.5 | 2.0 | 2.0 | 2.0 | 2.0 | 2.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
-| {func}`~jax.lax.exp2` | 0.5 | 2.5 | 61.0 | 65.5 | 1.5 | 1.5 | |
-| {func}`~jax.lax.exp2` (`highest`) | 0.5 | 2.5 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
+| {func}`~jax.lax.exp2` | 1.0 | 2.5 | 61.0 | 65.5 | 1.5 | 1.5 | |
+| {func}`~jax.lax.exp2` (`highest`) | 1.0 | 2.5 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2m1` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 | 1772.0 | 1357.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.expm1` (`highest`) | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
@@ -288,7 +288,7 @@ these are empirical bounds.
 | {func}`~jax.lax.erfc` (`jax_accurate_default_erfc`) | 10.0 | 10.0 |
 | {func}`~jax.lax.erfc` (`highest`) | 2.0 | 2.0 |
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
-| {func}`~jax.lax.exp2` | 0.5 | 1.0 |
+| {func}`~jax.lax.exp2` | 1.0 | 1.0 |
 | {func}`~jax.lax.exp2m1` | 1.0 | 1.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 |
 | {func}`~jax.lax.lgamma` | 1.0 | 1.0 |

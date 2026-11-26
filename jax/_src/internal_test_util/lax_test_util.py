@@ -27,7 +27,6 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import test_util
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_map, safe_zip
 
 import numpy as np
@@ -415,11 +414,7 @@ def lax_ops():
 
 
 def backend_supports_fma(dtype) -> bool:
-  if (
-      jaxlib_extension_version < 515
-      or not test_util.is_libtpu_at_least("0.0.52")
-      or not test_util.stablehlo_version_at_least("1.24.0")
-  ):
+  if not test_util.stablehlo_version_at_least("1.24.0"):
     return False
   dtype = np.dtype(dtype)
   if dtype in (np.dtype(np.float32), np.dtype(np.float64)):

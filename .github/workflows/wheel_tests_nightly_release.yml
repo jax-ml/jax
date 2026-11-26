@@ -65,7 +65,7 @@ jobs:
   preflight-gcs-wheels:
     if: github.repository_owner == 'jax-ml'
     name: "Preflight GCS wheels check"
-    runs-on: linux-x86-n4-4
+    runs-on: linux-x86-n4-16
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     timeout-minutes: 10
     defaults:
@@ -160,7 +160,7 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
+          runner: ["linux-x86-n4-64", "linux-arm64-c4a-48", "windows-x86-n2-64"]
           python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           enable-x64: [0]
           exclude:
@@ -190,7 +190,7 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-n4-64", "linux-arm64-t2a-48"]
+          runner: ["linux-x86-n4-64", "linux-arm64-c4a-48"]
           python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           enable-x64: [0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
@@ -332,7 +332,7 @@ jobs:
           artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest"},
           ]
           exclude:
@@ -388,7 +388,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0", tag: "therock-10.2"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           exclude:
@@ -428,10 +428,10 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+          runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock 10.2.0", wheel-version: "10", release-version: "10.2.0", tag: "therock-10.2"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]

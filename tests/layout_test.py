@@ -22,6 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.layout import LayoutMode, use_layout_mode
+from jax._src.lib import xla_version
 from jax._src.pjit import relayout
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
@@ -578,7 +579,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   @jtu.skip_on_devices('cpu', 'gpu')
-  def test_layout_donation_mismatching_in_and_out_fails(self):
+  def test_layout_donation_mismatching_in_and_out(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16*2, 32016*2)
@@ -595,7 +596,10 @@ class LayoutTest(jtu.JaxTestCase):
 
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     f.lower(sds).compile()(arr)
-    self.assertFalse(arr.is_deleted())
+    if xla_version >= 94:
+      self.assertTrue(arr.is_deleted())
+    else:
+      self.assertFalse(arr.is_deleted())
 
   def test_donation_error_on_auto(self):
     @jax.jit(donate_argnums=0, in_shardings=Format(Layout.AUTO))
@@ -2033,6 +2037,50 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     y, x_bar = f(arr)
     self.assertEqual(y.shape, (16, 2, 16, 128))
     self.assertArraysEqual(x_bar, arr)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_explicit_layout_jax_partitioning(self, mesh):
+    np_inp = np.arange(256 * 256, dtype=np.float32).reshape(256, 256)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, Format(Layout((1, 0)), s))
+    l = arr.format.layout
+    l_transposed = Layout(l.major_to_minor[::-1], l.tiling)
+
+    @jax.jit
+    def f(x):
+      @explicit_layout(in_layouts=l)
+      def impl(x):
+        y = relayout(x, l_transposed)
+        return y * 2
+
+      y, vjp_fn = jax.vjp(impl, x)
+      return y, vjp_fn(y)[0]
+
+    with mesh.jax_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
+      expected_y, expected_x_bar = f(arr)
+
+    with mesh.jax_partitioning(True):
+      hlo = f.lower(arr).as_text()
+      self.assertIn('sdy.manual_computation', hlo)
+      self.assertIn('LayoutConstraint', hlo)
+      y, x_bar = f(arr)
+
+    self.assertEqual(y.format, expected_y.format)
+    self.assertEqual(x_bar.format, expected_x_bar.format)
+    self.assertArraysEqual(y, expected_y)
+    self.assertArraysEqual(x_bar, expected_x_bar)
+
+    f_relayout = jax.jit(
+        explicit_layout(lambda x: relayout(x, l_transposed), in_layouts=l)
+    )
+    with mesh.jax_partitioning(True):
+      relayout_hlo = f_relayout.lower(arr).as_text()
+      self.assertIn('sdy.manual_computation', relayout_hlo)
+      self.assertIn('LayoutConstraint', relayout_hlo)
+      out_relayout = f_relayout(arr)
+    self.assertEqual(out_relayout.sharding, s)
+    self.assertArraysEqual(out_relayout, arr)
 
 
 if __name__ == '__main__':

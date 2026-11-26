@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/attributes.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -74,6 +75,11 @@ namespace {
 
 const char* const kDlTensorCapsuleName = "dltensor";
 const char* const kDlTensorVersionedCapsuleName = "dltensor_versioned";
+
+template <typename ManagedTensor>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void CallDLPackDeleter(ManagedTensor* dlmt) {
+  dlmt->deleter(dlmt);
+}
 
 template <typename ManagedTensor>
 struct DLPackTensor {
@@ -426,14 +432,14 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     }
     dl_tensor = &dlmt->dl_tensor;
     if (dlmt->deleter) {
-      on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
+      on_delete_callback = [dlmt]() { CallDLPackDeleter(dlmt); };
     }
     used_capsule_name = "used_dltensor_versioned";
   } else if (capsule_name == kDlTensorCapsuleName) {
     DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
     dl_tensor = &dlmt->dl_tensor;
     if (dlmt->deleter) {
-      on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
+      on_delete_callback = [dlmt]() { CallDLPackDeleter(dlmt); };
     }
     used_capsule_name = "used_dltensor";
   } else {

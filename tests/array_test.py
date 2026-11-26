@@ -26,8 +26,6 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _jax
-from jax._src.lib import xla_version
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.layout import Layout
 from jax._src.mesh import AbstractMesh, AxisType, Mesh
@@ -1070,8 +1068,6 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters(jnp.float32, jnp.bfloat16)
   def test_donate_after_host_read(self, dtype):
-    if xla_version < 78:
-      self.skipTest('Requires xla_version >= 78')
     f = jax.jit(lambda x: x + 1, donate_argnums=0)
 
     for read_fn in [
@@ -1109,8 +1105,6 @@ class JaxArrayTest(jtu.JaxTestCase):
           self.assertArraysEqual(y, jnp.full((2,), 2, dtype=dtype))
 
   def test_donate_with_live_host_view(self):
-    if xla_version < 78:
-      self.skipTest('Requires xla_version >= 78')
     f = jax.jit(lambda x: x + 1, donate_argnums=0)
 
     x = jnp.ones((4,), dtype=jnp.float32)
@@ -1137,8 +1131,6 @@ class JaxArrayTest(jtu.JaxTestCase):
       ('sharded', P('x')),
   )
   def test_donate_non_first_shard_marks_array_deleted(self, pspec):
-    if xla_version < 78:
-      self.skipTest('Requires xla_version >= 78')
     if len(jax.devices()) < 2:
       self.skipTest('Requires at least 2 devices')
     mesh = jtu.create_mesh((2,), ('x',))
@@ -1897,8 +1889,6 @@ class ShardingTest(jtu.JaxTestCase):
       message='nanobind: attempted to access an uninitialized instance',
   )
   def test_uninitialized_sharding_rewrap(self, cls):
-    if jaxlib_extension_version < 517:
-      self.skipTest('Requires jaxlib_extension_version >= 517')
     x = jnp.ones(1)
     with self.assertRaises((TypeError, RuntimeError)):
       x._rewrap_with_aval_and_sharding(x.aval, cls.__new__(cls))
@@ -2052,6 +2042,22 @@ class RngShardingTest(jtu.JaxTestCase):
       jax.make_array_from_single_device_arrays(
           arr.shape, arr.sharding, [arr]
       )
+
+  def test_batched_device_put_deduplicated_shards_force_copy(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires at least 4 devices')
+    devices = jax.devices()[:4]
+    mesh = Mesh(np.array(devices).reshape(2, 2), ('x', 'y'))
+    sharding = NamedSharding(mesh, P('x', None))
+    s0 = np.arange(4, dtype=np.int32).reshape(1, 4)
+    s1 = np.arange(4, 8, dtype=np.int32).reshape(1, 4)
+    aval = core.ShapedArray((2, 4), np.dtype(np.int32))
+    out = xc.batched_device_put(
+        aval, sharding, [s0, s0, s1, s1], list(devices), force_copy=True
+    )
+    np.testing.assert_array_equal(
+        np.asarray(out), np.arange(8, dtype=np.int32).reshape(2, 4)
+    )
 
 
 if __name__ == '__main__':

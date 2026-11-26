@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_NB_CLASS_PTR_H_
 #define JAXLIB_NB_CLASS_PTR_H_
 
-#include <type_traits>
+#include <concepts>
 
 #include "nanobind/nanobind.h"
 
@@ -41,8 +41,8 @@ class nb_class_ptr : public nanobind::object {
     return nanobind::isinstance(h, type) && nanobind::inst_ready(h);
   };
 
-  template <typename U,
-            typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+  template <typename U>
+    requires std::convertible_to<U*, T*>
   inline nb_class_ptr(nb_class_ptr<U>&& other)
       : nanobind::object(other.release(), ::nanobind::detail::steal_t{}) {}
 

@@ -67,9 +67,6 @@ struct ArgumentSignature {
   std::vector<nanobind::str> static_arg_names;
 
   bool operator==(const ArgumentSignature& other) const;
-  bool operator!=(const ArgumentSignature& other) const {
-    return !(*this == other);
-  }
 
   std::string DebugString() const;
 };
@@ -169,9 +166,6 @@ struct CallSignature {
   size_t cached_hash;
 
   bool operator==(const CallSignature& other) const;
-  bool operator!=(const CallSignature& other) const {
-    return !(*this == other);
-  }
 
   std::string DebugString() const;
 

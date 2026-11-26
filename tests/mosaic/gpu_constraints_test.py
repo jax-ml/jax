@@ -144,6 +144,17 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_not_of_type_constraint_is_unknown_for_unreduced_expression(self):
     self.assertIsNone(cs.NotOfType(V(0), mgpu.WGSplatFragLayout).holds())
 
+  @parameterized.named_parameters(
+      ("smem", cs.SMEMTransforms(lc.TileTransform((2, 2)), None)),
+      ("tmem", cs.TMEMLayout(tcgen05.tmem_default_layout(packing=1))),
+  )
+  def test_not_of_type_constraint_raises_for_non_register_constants(
+      self, constant
+  ):
+    constraint = cs.NotOfType(constant, mgpu.WGSplatFragLayout)
+    with self.assertRaisesRegex(ValueError, "only be applied to registers"):
+      constraint.holds()
+
   def test_reduce_constraint_system_removes_tautological_constraints_and_constraints(
       self,
   ):

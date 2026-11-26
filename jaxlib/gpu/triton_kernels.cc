@@ -45,7 +45,6 @@ limitations under the License.
 // Required for absl::c_find_if.
 // NOLINTNEXTLINE(misc-include-cleaner)
 #include "absl/algorithm/container.h"
-#include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -421,7 +420,7 @@ class ModuleImage {
     {
       absl::ReaderMutexLock reader_lock(mutex_);
       auto it = functions_.find(context);
-      if (ABSL_PREDICT_TRUE(it != functions_.end())) {
+      if (it != functions_.end()) [[likely]] {
         return it->second;
       }
     }
@@ -476,7 +475,7 @@ class ModuleImage {
         &shared_optin, GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
         device));
 
-    if (shared_mem_bytes_ > shared_optin) {
+    if (std::cmp_greater(shared_mem_bytes_, shared_optin)) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Shared memory requested (%d b) exceeds device resources (%d b).",
           shared_mem_bytes_, shared_optin));
@@ -583,7 +582,7 @@ Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
       module_image_(module_image) {}
 
 absl::StatusOr<gpuFunction_t> Kernel::GetFunction(gpuStream_t stream) {
-  if (ABSL_PREDICT_FALSE(module_image_ == nullptr)) {
+  if (module_image_ == nullptr) [[unlikely]] {
     JAX_ASSIGN_OR_RETURN(module_image_,
                          GetModuleImage(kernel_name_, shared_mem_bytes_, ptx_,
                                         compute_capability_));
@@ -620,16 +619,16 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
   launch_attrs[1].value.clusterSchedulingPolicyPreference =
       CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
   CUlaunchConfig launch_config = {
-      /*gridDimX=*/grid[0] * num_ctas_,
-      /*gridDimY=*/grid[1],
-      /*gridDimZ=*/grid[2],
-      /*blockDimX=*/block_dim_x_,
-      /*blockDimY=*/1,
-      /*blockDimZ=*/1,
-      /*sharedMemBytes=*/shared_mem_bytes_,
-      /*hStream=*/stream,
-      /**attrs=*/launch_attrs,
-      /*numAttrs=*/2,
+      .gridDimX = grid[0] * num_ctas_,
+      .gridDimY = grid[1],
+      .gridDimZ = grid[2],
+      .blockDimX = block_dim_x_,
+      .blockDimY = 1,
+      .blockDimZ = 1,
+      .sharedMemBytes = shared_mem_bytes_,
+      .hStream = stream,
+      .attrs = launch_attrs,
+      .numAttrs = 2,
   };
   return JAX_AS_STATUS(
       cuLaunchKernelEx(&launch_config, kernel, params, /*extra=*/nullptr));
@@ -951,8 +950,8 @@ absl::Status PackParameters(absl::Span<const KernelCall::Parameter> parameters,
       void*& ptr = *(buffers++);
       auto cu_ptr = reinterpret_cast<gpuDevicePtr_t>(ptr);
 
-      if (ABSL_PREDICT_FALSE((array.ptr_divisibility != 0) &&
-                             ((size_t)cu_ptr % array.ptr_divisibility != 0))) {
+      if ((array.ptr_divisibility != 0) &&
+          ((size_t)cu_ptr % array.ptr_divisibility != 0)) [[unlikely]] {
         return absl::InvalidArgumentError(
             absl::StrFormat("Parameter %zu (%zu) is not divisible by %d.", i,
                             (size_t)ptr, array.ptr_divisibility));
@@ -1009,10 +1008,9 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
     const uint64_t grid_size =
         static_cast<uint64_t>(grid_[0]) * grid_[1] * grid_[2];
     const uint64_t num_ctas = kernel_.num_ctas();
-    if (ABSL_PREDICT_FALSE(grid_size != 0 && num_ctas != 0 &&
-                           per_cta_scratch >
-                               std::numeric_limits<uint64_t>::max() /
-                                   grid_size / num_ctas)) {
+    if (grid_size != 0 && num_ctas != 0 &&
+        per_cta_scratch > std::numeric_limits<uint64_t>::max() / grid_size /
+                              num_ctas) [[unlikely]] {
       return absl::InvalidArgumentError(
           "Triton global scratch buffer size overflow.");
     }
@@ -1031,8 +1029,7 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   };
   if (global_scratch != 0 && kernel_.global_scratch_align().has_value()) {
     const uint32_t align = *kernel_.global_scratch_align();
-    if (ABSL_PREDICT_FALSE(align > 1 &&
-                           ((uintptr_t)global_scratch % align != 0))) {
+    if (align > 1 && ((uintptr_t)global_scratch % align != 0)) [[unlikely]] {
       return absl::InternalError(absl::StrFormat(
           "Triton global scratch buffer (%p) is not aligned to %u bytes.",
           (void*)global_scratch, align));
@@ -1082,13 +1079,13 @@ absl::Status KernelCall::Record(gpuStream_t stream, void** buffers,
       JAX_ASSIGN_OR_RETURN(gpuFunction_t fn, kernel_.GetFunction(stream));
       uint32_t num_ctas = kernel_.num_ctas();
       XLA_FFI_LaunchDims dims{
-          /*grid=*/{static_cast<int32_t>(grid_[0] * num_ctas),
-                    static_cast<int32_t>(grid_[1]),
-                    static_cast<int32_t>(grid_[2])},
-          /*block=*/{static_cast<int32_t>(kernel_.block_dim_x()), 1, 1},
-          /*cluster=*/num_ctas > 1
-              ? XLA_FFI_Dim3{static_cast<int32_t>(num_ctas), 1, 1}
-              : XLA_FFI_Dim3{0, 0, 0},
+          .grid = {static_cast<int32_t>(grid_[0] * num_ctas),
+                   static_cast<int32_t>(grid_[1]),
+                   static_cast<int32_t>(grid_[2])},
+          .block = {static_cast<int32_t>(kernel_.block_dim_x()), 1, 1},
+          .cluster = num_ctas > 1
+                         ? XLA_FFI_Dim3{static_cast<int32_t>(num_ctas), 1, 1}
+                         : XLA_FFI_Dim3{0, 0, 0},
       };
       return record_ctx
           .CreateLaunch(
@@ -1330,7 +1327,7 @@ static absl::StatusOr<KernelCall*> ResolveKernelCall(
   KernelCall* kernel_call =
       instantiate_result->cached_kernel_call.load(std::memory_order_acquire);
 
-  if (ABSL_PREDICT_FALSE(kernel_call == nullptr)) {
+  if (kernel_call == nullptr) [[unlikely]] {
     // Creates the KernelCall using GetOrCreateKernelCall so that results are
     // cached.
     auto create_kernel_call = [&]() -> absl::StatusOr<KernelCall> {

@@ -202,11 +202,13 @@ from jax._src.numpy.indexing import (
 )
 
 from jax._src.numpy.scalar_types import (
+    bcomplex32 as bcomplex32,
     bfloat16 as bfloat16,
     bool_ as bool,  # Array API alias for bool_  # noqa: F401
     bool_ as bool_,
     cdouble as cdouble,
     csingle as csingle,
+    complex32 as complex32,
     complex128 as complex128,
     complex64 as complex64,
     complex_ as complex_,
@@ -224,8 +226,10 @@ from jax._src.numpy.scalar_types import (
     float8_e4m3fnuz as float8_e4m3fnuz,
     float8_e5m2 as float8_e5m2,
     float8_e5m2fnuz as float8_e5m2fnuz,
+    float8_e5m3fnu as float8_e5m3fnu,
     float8_e8m0fnu as float8_e8m0fnu,
     float_ as float_,
+    int1 as int1,
     int2 as int2,
     int4 as int4,
     int8 as int8,
@@ -235,6 +239,7 @@ from jax._src.numpy.scalar_types import (
     int_ as int_,
     single as single,
     uint as uint,
+    uint1 as uint1,
     uint2 as uint2,
     uint4 as uint4,
     uint8 as uint8,
@@ -242,30 +247,6 @@ from jax._src.numpy.scalar_types import (
     uint32 as uint32,
     uint64 as uint64,
 )
-
-# TODO(twsung): Remove try-except once we upgrade to ml_dtypes > 0.5.4
-try:
-  from jax._src.numpy.scalar_types import (
-      int1 as int1,
-      uint1 as uint1,
-  )
-except ImportError:
-  pass
-
-try:
-  from jax._src.numpy.scalar_types import (
-      float8_e5m3fnu as float8_e5m3fnu,
-  )
-except ImportError:
-  pass
-
-try:
-  from jax._src.numpy.scalar_types import (
-      bcomplex32 as bcomplex32,
-      complex32 as complex32,
-  )
-except ImportError:
-  pass
 
 from jax._src.numpy.sorting import (
     argpartition as argpartition,

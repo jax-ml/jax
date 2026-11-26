@@ -36,12 +36,7 @@ struct TracebackEntry {
   PyCodeObject* code;
   int lasti;
 
-  bool operator==(const TracebackEntry& other) const {
-    return code == other.code && lasti == other.lasti;
-  }
-  bool operator!=(const TracebackEntry& other) const {
-    return !operator==(other);
-  }
+  bool operator==(const TracebackEntry&) const = default;
 };
 static_assert(std::is_trivial_v<TracebackEntry> == true);
 

@@ -18,9 +18,8 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <bit>
 #include <cstddef>
-
-#include "absl/base/casts.h"
 
 namespace jax {
 
@@ -29,7 +28,7 @@ namespace jax {
 // of a fast path:
 // https://github.com/python/cpython/blob/dd88e77fad887aaf00ead1a3ba655fc00fd1dc25/Objects/typeobject.c#L10799
 inline Py_hash_t AbslHashToPythonHash(size_t h) {
-  return absl::bit_cast<Py_hash_t>(h);
+  return std::bit_cast<Py_hash_t>(h);
 }
 
 }  // namespace jax

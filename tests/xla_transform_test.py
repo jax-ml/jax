@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
@@ -95,6 +96,44 @@ class XlaTransformTest(jtu.JaxTestCase):
     result = f(x)
     expected = jnp.cos(x)
     self.assertAllClose(result, expected, atol=1e-5)
+
+  @parameterized.parameters(
+      jex_xla.PipelineStage.PRE_SCHEDULER,
+      jex_xla.PipelineStage.POST_SCHEDULER,
+  )
+  def test_callback_receives_module_config(self, stage):
+    if jaxlib_extension_version < 530:
+      self.skipTest("Requires jaxlib with module_config support")
+    seen = []
+
+    def record(serialized_hlo: bytes, module_config: bytes) -> None:
+      del serialized_hlo
+      seen.append(module_config)
+
+    name = f"record_module_config_{stage.name}_test"
+    jex_xla.register_hlo_module_transformation2(
+        record, name=name, stage=stage)
+    self._registered_transforms.append((name, stage))
+
+    jax.clear_caches()
+    x = jnp.arange(3.0)
+    jax.jit(jnp.sin)(x)
+    self.assertNotEmpty(seen)
+    self.assertTrue(all(b"fdo-profile-bytes" not in c for c in seen), seen)
+
+    seen.clear()
+    profile = b"fdo-profile-bytes"
+    jax.jit(lambda x: jnp.cos(x) + 1, compiler_options={
+        "fdo_profile": profile})(x)
+    # HloModuleConfigProto.fdo_profile is a bytes field, so it appears verbatim.
+    self.assertTrue(any(profile in c for c in seen), seen)
+
+  def test_register2_requires_new_jaxlib(self):
+    if jaxlib_extension_version >= 530:
+      self.skipTest("Only applies to jaxlib without module_config support")
+    with self.assertRaises(NotImplementedError):
+      jex_xla.register_hlo_module_transformation2(
+          lambda hlo_module, module_config: None, name="unsupported_test")
 
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):

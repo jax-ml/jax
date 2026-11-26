@@ -30,7 +30,7 @@ This tutorial only covers the conceptual foundations of pipelining. For platform
 ```python id="YkOjspo5BKPD"
 import jax
 from jax import numpy as jnp
-from jax.experimental import pallas as pl
+from jax import pallas as pl
 import numpy as np
 ```
 

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import os
 import unittest
 
 from absl.testing import absltest
@@ -40,6 +41,20 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     if jtu.test_device_matches(['tpu']) and jtu.get_tpu_version() < 4:
       self.skipTest('UNSUPPORTED: HLO opcode `ragged-all-to-all` is not '
                     f'supported by TPU v{jtu.get_tpu_version()}')
+    allocator = os.environ.get('XLA_PYTHON_CLIENT_ALLOCATOR', '').lower()
+    if (
+        jtu.test_device_matches(['cuda'])
+        and allocator in ('platform', 'address')
+        and jax.device_count() > 1
+    ):
+      # TODO(b/576523277): Re-enable once XLA:GPU moves NCCL symmetric memory
+      # registration to the communicator with free-visitor eviction and both
+      # pinned OpenXLA and minimum supported jaxlib include the fix.
+      self.skipTest(
+          'TODO(b/576523277): XLA:GPU CollectiveMemoryCache retains stale'
+          ' ncclWindow_t handles under passthrough GPU allocators'
+          ' (platform/address) when executables are reused.'
+      )
 
   @parameterized.product(axis_name=['x'], mesh_axes=[dict(x=2)],
                          check_vma=[True, False])

@@ -59,9 +59,9 @@ import functools
 from typing import Any
 
 import jax
-from jax.experimental import pallas as pl
-from jax.experimental.pallas import fuser
-from jax.experimental.pallas import tpu as pltpu
+from jax import pallas as pl
+from jax.pallas import fuser
+from jax.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
 ```

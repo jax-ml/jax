@@ -24,6 +24,7 @@ Subpackages
    jax.image
    jax.nn
    jax.ops
+   jax.pallas
    jax.profiler
    jax.ref
    jax.stages

@@ -187,15 +187,16 @@ absl::Status RegisterCustomType(const PJRT_Api* c_api,
   }
 
   PJRT_FFI_Type_Info pjrt_type_info{
-      /*deleter=*/type_info ? type_info->deleter : nullptr,
+      .deleter = type_info ? type_info->deleter : nullptr,
   };
 
-  PJRT_FFI_Type_Register_Args args;
-  args.struct_size = PJRT_FFI_Type_Register_Args_STRUCT_SIZE;
-  args.type_name = type_name_c_str;
-  args.type_name_size = type_name_size;
-  args.type_id = type_id->type_id;
-  args.type_info = &pjrt_type_info;
+  PJRT_FFI_Type_Register_Args args{
+      .struct_size = PJRT_FFI_Type_Register_Args_STRUCT_SIZE,
+      .type_name = type_name_c_str,
+      .type_name_size = type_name_size,
+      .type_id = type_id->type_id,
+      .type_info = &pjrt_type_info,
+  };
   RETURN_STATUS_IF_PJRT_ERROR(ffi_ext->type_register(&args), c_api);
 
   // Return registered type id to the caller.

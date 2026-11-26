@@ -1046,8 +1046,6 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
     # Test DMAs where destination slices are not the same.
     if jax.local_device_count() <= 1:
       self.skipTest('Test requires multiple devices.')
-    if not jtu.is_device_tpu(5, 'e'):
-      self.skipTest('Only works with TPU v5e.')
     num_devices = jax.local_device_count()
 
     def test_kernel(x_ref,

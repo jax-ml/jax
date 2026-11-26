@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -127,6 +128,22 @@ TEST(ReentrantHashSetTest, TryEmplace) {
   EXPECT_EQ(set.size(), 1);
 }
 
+TEST(ReentrantHashSetTest, Contains) {
+  ReentrantHashSet<int> set;
+  const auto& const_set = set;
+  EXPECT_FALSE(set.contains(42));
+  EXPECT_FALSE(const_set.contains(42));
+
+  set.insert(42);
+  EXPECT_TRUE(set.contains(42));
+  EXPECT_TRUE(const_set.contains(42));
+  EXPECT_FALSE(set.contains(99));
+
+  set.erase(set.find(42));
+  EXPECT_FALSE(set.contains(42));
+  EXPECT_FALSE(const_set.contains(42));
+}
+
 TEST(ReentrantHashMapTest, Basic) {
   ReentrantHashMap<int, int> map;
   EXPECT_EQ(map.find(42), map.end());
@@ -149,6 +166,22 @@ TEST(ReentrantHashMapTest, TryEmplace) {
   ASSERT_NE(map.find(42), map.end());
   EXPECT_EQ(map.find(42)->second, 100);
   EXPECT_EQ(map.size(), 1);
+}
+
+TEST(ReentrantHashMapTest, Contains) {
+  ReentrantHashMap<int, int> map;
+  const auto& const_map = map;
+  EXPECT_FALSE(map.contains(42));
+  EXPECT_FALSE(const_map.contains(42));
+
+  map.insert(42, 100);
+  EXPECT_TRUE(map.contains(42));
+  EXPECT_TRUE(const_map.contains(42));
+  EXPECT_FALSE(map.contains(99));
+
+  map.erase(map.find(42));
+  EXPECT_FALSE(map.contains(42));
+  EXPECT_FALSE(const_map.contains(42));
 }
 
 struct StringHash {
@@ -176,18 +209,23 @@ TEST(ReentrantHashMapTest, HeterogeneousLookup) {
   // Heterogeneous find
   ASSERT_NE(map.find("hello"), map.end());  // const char* lookup
   EXPECT_EQ(map.find("hello")->second, 42);
+  EXPECT_TRUE(map.contains("hello"));
+  EXPECT_FALSE(map.contains("world"));
 
   // Heterogeneous erase
   auto it1 = map.find("hello");
   ASSERT_NE(it1, map.end());
   map.erase(it1);
   EXPECT_EQ(map.size(), 0);
+  EXPECT_FALSE(map.contains("hello"));
 }
 
 TEST(ReentrantHashSetTest, TryEmplaceHeterogeneous) {
   ReentrantHashSet<std::string, StringHash, StringEq> set;
   EXPECT_TRUE(set.try_emplace("hello", "hello").second);
   EXPECT_FALSE(set.try_emplace("hello", "hello").second);
+  EXPECT_TRUE(set.contains("hello"));
+  EXPECT_FALSE(set.contains("world"));
   ASSERT_NE(set.find("hello"), set.end());
   EXPECT_EQ(*set.find("hello"), "hello");
 }
@@ -306,6 +344,48 @@ TEST(ReentrantHashSetTest, ExceptionSafety) {
 
   EXPECT_TRUE(set.insert(3).second);
   EXPECT_EQ(set.size(), 3);
+}
+
+TEST(ReentrantHashSetTest, EmptyFunctorsTakeNoSpace) {
+  struct EmptyHash {
+    size_t operator()(int x) const { return static_cast<size_t>(x); }
+  };
+  struct EmptyEq {
+    bool operator()(int a, int b) const { return a == b; }
+  };
+  struct NonEmptyHash {
+    char salt = 0;
+    size_t operator()(int x) const { return static_cast<size_t>(x) ^ salt; }
+  };
+  struct NonEmptyEq {
+    char tag = 0;
+    bool operator()(int a, int b) const { return tag == 0 && a == b; }
+  };
+  struct ExpectedSetLayout {
+    std::unique_ptr<int8_t[]> ctrl;
+    std::unique_ptr<int[]> slots;
+    size_t size;
+    size_t num_deleted;
+    size_t capacity;
+    float max_load_factor;
+    size_t version;
+  };
+
+  static_assert(sizeof(ReentrantHashSet<int>) == sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashMap<int, int>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) ==
+                sizeof(ExpectedSetLayout));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashSet<int, NonEmptyHash, EmptyEq>));
+  static_assert(sizeof(ReentrantHashSet<int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashSet<int, EmptyHash, NonEmptyEq>));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashMap<int, int, NonEmptyHash, EmptyEq>));
+  static_assert(sizeof(ReentrantHashMap<int, int, EmptyHash, EmptyEq>) <
+                sizeof(ReentrantHashMap<int, int, EmptyHash, NonEmptyEq>));
 }
 
 TEST(ReentrantHashSetTest, RandomizedCorrectnessTest) {

@@ -85,6 +85,9 @@ def create_instr_descriptor(
     elif ty == ir.BF16Type.get():
       assert acc_dtype == f32
       return 1
+    elif ty == ir.FloatTF32Type.get():
+      assert acc_dtype == f32
+      return 2
     elif ty == ir.Float8E4M3FNType.get():
       assert acc_dtype in {f16, f32}
       return 0
@@ -136,6 +139,7 @@ def sparse_group_elems(element_type: ir.Type) -> int:
 def _create_scaled_instr_descriptor(
     m: int,
     n: int,
+    k: int,
     a_type: ir.Type,
     b_type: ir.Type,
     a_scale_idx: int,
@@ -171,8 +175,7 @@ def _create_scaled_instr_descriptor(
   desc = 0
   # Bits 0, 1 are reserved and must be 0
   desc |= sparse << 2  # Sparsity, bit 2
-  # Bit 3 is the upper bit of the encoded K dimension .kind::mxf4 and
-  # .kind::mxf4nvf4
+  # Bit 3 is the upper bit of the encoded K dimension (set below with bit 31).
   assert 0 <= b_scale_idx < 4
   desc |= b_scale_idx << 4  # B scale factor data ID, bits 4-5
   # Bit 6 is reserved
@@ -206,10 +209,17 @@ def _create_scaled_instr_descriptor(
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
   assert 0 <= a_scale_idx < 4
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
-  # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
-  # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
-  # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
-  # for .kind::mxf8f6f4.
+  # The K dimension is encoded as a 2-bit value, with bit 3 as the upper bit
+  # and bit 31 as the lower bit. Zero is the default K: dense K=64 / sparse
+  # K=128 for .kind::mxf4 and .kind::mxf4nvf4, and dense K=32 / sparse K=64 for
+  # .kind::mxf8f6f4. For dense .kind::mxf4 and .kind::mxf4nvf4, one means K=96
+  # (sm_103a and sm_107a) and two means K=128 (sm_107f).
+  if is_fp4 and not sparse:
+    k_encoding = {64: 0, 96: 1, 128: 2}[k]
+    upper_k_bit = k_encoding >> 1
+    lower_k_bit = k_encoding & 1
+    desc |= upper_k_bit << 3
+    desc |= lower_k_bit << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -448,6 +458,9 @@ def mma(
   if n % n_group_elems:
     raise ValueError(f"N must be a multiple of {n_group_elems}, got: {n}")
   n_groups = n // n_group_elems
+  # On sm_100, the MMA truncates the mantissas of f32 operands to the 10 bits of
+  # TF32 instead of rounding them. Callers that want round-to-nearest TF32
+  # inputs must round the operands first, e.g. with `jax.lax.reduce_precision`.
   # TODO(apaszke): Require users to bitcast input refs to tf32 before MMA.
   mma_b_element_type = (
       ir.FloatTF32Type.get() if b_element_type == ir.F32Type.get() else b_element_type
@@ -602,6 +615,18 @@ def mma(
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
       )
+  if isinstance(mma_a_element_type, ir.FloatTF32Type):
+    # M- or N-fastest TF32 operands need the 128B swizzle with 32B atoms.
+    if a_fastest != mma_utils.Dim.K:
+      raise NotImplementedError(
+          "MMA with f32 inputs only supports K-fastest operands, but A is"
+          " M-fastest"
+      )
+    if b_desc.fastest_dim != mma_utils.Dim.K:
+      raise NotImplementedError(
+          "MMA with f32 inputs only supports K-fastest operands, but B is"
+          " N-fastest"
+      )
   if is_sparse and b_swizzle == 32 and b_desc.fastest_dim == mma_utils.Dim.K:
     raise NotImplementedError(
         "B tiling too small. Increase swizzle or transpose the input."
@@ -624,6 +649,32 @@ def mma(
   else:
     a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
+  # By default, every instruction consumes 32B of A and B along K (twice as
+  # many K elements if sparse).
+  # TODO(allanrenucci): Support larger K values on newer hardware
+  supported_instr_ks = {
+      (1 + is_sparse) * 8 * 32 // utils.bitwidth(mma_a_element_type)
+  }
+  # Dense 4-bit block-scaled MMA can issue larger steps than K=64 (32B).
+  if (
+      a_scale is not None and b_scale is not None
+      and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
+      and not is_sparse
+      # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
+      and not isinstance(a, TMEMRef)
+      # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
+      and a_swizzle == b_swizzle == 128
+      and b_scale.layout == scales_layout()
+      # Because of how `scales_layout()` lays out scales in TMEM, larger steps
+      # only work if B scales are padded along N to exactly 128 rows (for an
+      # instruction N of at most 128) or 256 rows (otherwise).
+      and b_scale.shape[0] == (256 if n_collective_group_elems > 128 else 128)
+  ):
+    arch = utils.get_arch()
+    if arch in (utils.Arch(10, 3), utils.RUBIN):
+      supported_instr_ks.add(96)
+    if arch.is_sm107f and collective and m == 128:
+      supported_instr_ks.add(128)
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -659,6 +710,7 @@ def mma(
         scale_element_type=scale_element_type,
         scale_block=scale_block,
         a_scale_128_lane=a_scale_128_lane,
+        supported_instr_ks=supported_instr_ks,
     )
 
 
@@ -682,12 +734,13 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    supported_instr_ks: set[int],
     a_scale_128_lane: bool = False,
 ) -> None:
   """Issues the MMA instructions covering the full K extent of the operands.
 
   Every instruction has shape `instr_m x instr_n x instr_k`, where `instr_k` is
-  derived from the element type, and the instructions step through all `k`
+  one of `supported_instr_ks`, and the instructions step through all `k`
   elements of the K dimension. `n_start` is the N offset of this instruction
   group in B.
 
@@ -702,6 +755,7 @@ def _do_mma(
   num_cta = 2 if collective else 1
   if isinstance(a_desc_or_addr, ir.Value):
     assert a_desc_or_addr.type == i32
+    assert len(supported_instr_ks) == 1
     a_in_tmem = True
     a_transpose = False
     a_addr_base = a_desc_or_addr
@@ -712,8 +766,6 @@ def _do_mma(
   b_transpose = b_desc.fastest_dim != mma_utils.Dim.K
   b_addr_base = b_desc.addr_base
   elem_bitwidth = utils.bitwidth(a_element_type)
-  # TODO: support larger K values on newer hardware
-  instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
   if is_scaled:
@@ -729,7 +781,13 @@ def _do_mma(
           scale_element_type,
           (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
-      scale_vec = "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+      # .blockN is an alias for .scale_vec::NX available on sm_103 or later.
+      if utils.get_arch() >= utils.Arch(10, 3):
+        scale_vec = f"block{base_scale_block}"
+      else:
+        scale_vec = (
+            "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+        )
       kind = f"mxf4nvf4.block_scale.{scale_vec}"
     else:
       raise NotImplementedError(
@@ -739,6 +797,8 @@ def _do_mma(
   else:
     if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
       kind = "f16"
+    elif isinstance(a_element_type, ir.FloatTF32Type):
+      kind = "tf32"
     elif isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       kind = "f8f6f4"
     elif (
@@ -760,8 +820,24 @@ def _do_mma(
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
 
-  assert k % instr_k == 0
-  for k_elem_offset in range(0, k, instr_k):
+  if 128 in supported_instr_ks:
+    # K=128 steps (64B) evenly divide 128B swizzle atoms.
+    assert k % 128 == 0
+    instr_ks = [128] * (k // 128)
+  elif {64, 96}.issubset(supported_instr_ks):
+    assert k % 64 == 0
+    # Every 192 elems are covered by 2 K=96 steps instead of 3 K=64 steps; any
+    # remaining 1 or 2 K=64 steps go at the end so they stay within the last
+    # 128B swizzle atom.
+    q, r = divmod(k, 192)
+    instr_ks = [96] * (2 * q) + [64] * (r // 64)
+  else:
+    instr_k = min(supported_instr_ks)
+    assert k % instr_k == 0
+    instr_ks = [instr_k] * (k // instr_k)
+
+  k_elem_offset = 0
+  for instr_k in instr_ks:
     if is_sparse:
       assert a_sparse_addr is not None
       # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM
@@ -787,6 +863,7 @@ def _do_mma(
       i_desc = _create_scaled_instr_descriptor(
           instr_m * num_cta,
           instr_n * num_cta,
+          instr_k,
           a_element_type,
           b_element_type,
           scale_id,
@@ -825,13 +902,19 @@ def _do_mma(
       )
     assert k_elem_offset % (1 + is_sparse) == 0
     a_k_offset = k_elem_offset // (1 + is_sparse)
+    a_instr_k = instr_k // (1 + is_sparse)
     if a_in_tmem:
       assert a_k_offset % packing == 0
-      a_offset = a_k_offset // packing
+      a_base_scale, a_offset = 1, a_k_offset // packing
     else:
       assert isinstance(a_desc_or_addr, mma_utils.SmemDescriptor)
-      a_offset = a_desc_or_addr.encoded_offset(0, a_k_offset)
-    b_offset = b_desc.encoded_offset(n_start, k_elem_offset)
+      a_base_scale, a_offset = a_desc_or_addr.encoded_offset(
+          0, a_k_offset, a_instr_k
+      )
+    b_base_scale, b_offset = b_desc.encoded_offset(
+        n_start, k_elem_offset, instr_k
+    )
+    k_elem_offset += instr_k
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     utils.inline_ptx(
@@ -839,8 +922,8 @@ def _do_mma(
             .reg .b32 a_desc_low, b_desc_low;
             .reg {".b32" if a_in_tmem else ".b64"} a_desc;
             .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
-            add.s32 b_desc_low, $2, {b_offset_low};
+            mad.lo.u32 a_desc_low, $1, {a_base_scale}, {a_offset_low};
+            mad.lo.u32 b_desc_low, $2, {b_base_scale}, {b_offset_low};
             mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
@@ -1263,8 +1346,7 @@ def scales_128_lane_layout() -> TMEMLayout:
   ``scales_layout()``, nothing is replicated across the four 32-lane TMEM
   sub-partitions, so it uses 4x fewer columns.
 
-  ``async_copy_scales_smem_to_tmem`` rejects this layout. Instead, copy the
-  scales from SMEM with ``async_copy_smem_to_tmem(..., swizzle=16)``, laid out
+  Copy the scales from SMEM with ``async_copy_scales_smem_to_tmem``, laid out
   in unswizzled ``(8, 16)`` tiles like any other 8-bit operand, which requires
   ``K // block_size`` to be a multiple of 16. Alternatively, fill it from
   registers with ``TMEMRef.store`` (``tcgen05.st``) of an array in
@@ -1951,7 +2033,7 @@ def async_copy_scales_smem_to_tmem(
   on the chosen ``Barrier``. However, if TMEM reference is to be consumed by a
   MMA issued in the same thread, no additional synchronization is needed.
 
-  Two TMEM layouts are supported:
+  Three TMEM layouts are supported:
 
   **scales_layout()**: The standard layout for A and B scales. The ``smem_ref``
   must be contiguous with shape ``(MN // 128, K // 4, 32, 16)`` for 8-bit
@@ -1984,6 +2066,15 @@ def async_copy_scales_smem_to_tmem(
           .reshape(1, k // 4, 64, columns_per_cta * 4),
           ((0, 0), (0, 0), (0, 0), (0, 16 - columns_per_cta * 4)),
       )
+
+  **scales_128_lane_layout()**: Used for A scales in the 128-lane configuration
+  (sm_107f only). This is the standard fully packed TMEM layout, so the scales
+  are copied like any other 8-bit operand: the TMEM ref is expected to have
+  shape ``(128, K // block_size)`` and the ``smem_ref`` must have shape
+  ``(16, (K // block_size) // 16, 8, 16)``, i.e. the array of scales in
+  unswizzled ``(8, 16)`` tiles, which requires ``K // block_size`` to be a
+  multiple of 16. No host-side formatting is needed if the scales are loaded
+  into SMEM with ``gmem_transform=TileTransform((8, 16))``.
   """
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
@@ -1998,6 +2089,11 @@ def async_copy_scales_smem_to_tmem(
         f"Unsupported dtype: {dtype}, only f8e8m0fnu, f8e4m3fn, and f8e5m3fnu"
         " are supported"
     )
+  if tmem_ref.layout == scales_128_lane_layout():
+    # The 128-lane layout is the standard fully packed TMEM layout, so this is
+    # a regular unswizzled operand copy.
+    async_copy_smem_to_tmem(smem_ref, tmem_ref, swizzle=16, collective=collective)
+    return
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:
@@ -2034,7 +2130,8 @@ def async_copy_scales_smem_to_tmem(
   if tmem_ref.layout != scales_layout():
     raise ValueError(
         f"TMEM layout {tmem_ref.layout} is not supported for scale copies. Only"
-        " scales_layout() and b_scales_m64_collective_layout() are supported."
+        " scales_layout(), b_scales_m64_collective_layout() and"
+        " scales_128_lane_layout() are supported."
     )
 
   expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, tmem_ref.shape[1] // 4, 32, 16)

@@ -300,9 +300,6 @@ def _mosaic_gpu_lowering_rule(
           launch_context.uses_collective_metadata(module)
       ),
   )
-  # TODO(patrios): Remove once the minimum jaxlib version is >= 0.12.1.
-  if lib.version < (0, 12, 1):
-    backend_config["use_custom_barrier"] = ir.BoolAttr.get(False)
   if cost_estimate is not None:
     backend_config["cost_estimate_json"] = ir.StringAttr.get(
         json.dumps(dataclasses.asdict(cost_estimate))
@@ -1172,7 +1169,9 @@ def lower_mgpu_module(
           dump_options.dump_path
       )
 
-    layout_inference.infer_layout(module, arch=utils._infer_arch())
+    with ir.InsertionPoint(module.body):
+      arch = utils.get_arch()
+    layout_inference.infer_layout(module, arch=arch)
 
     if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(

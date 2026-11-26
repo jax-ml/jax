@@ -19,6 +19,7 @@ import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
+import logging
 import math
 import weakref
 from typing import NamedTuple, Any
@@ -93,6 +94,8 @@ traceback_util.register_exclusion(__file__)
 
 PjitSharding = GSPMDSharding | UnspecifiedValue
 P = PartitionSpec
+
+logger = logging.getLogger(__name__)
 
 
 class PjitInfo(NamedTuple):
@@ -1291,15 +1294,11 @@ def _pjit_lower(
 
 
 def pjit_staging_rule(trace, source_info, *args, **params):
-  if params["compiler_options_kvs"]:
-    raise ValueError(
-        '`compiler_options` can only be passed to top-level `jax.jit`. Got'
-        f' compiler_options={dict(params["compiler_options_kvs"])} specified on'
-        f' a nested jit with name: {params["name"]} and source info:'
-        f' {source_info_util.summarize(source_info)}')
   # If we're inlining, no need to compute forwarding information; the inlined
-  # computation will in effect forward things.
+  # computation will in effect forward things. Don't inline jits with
+  # compiler_options, so top-level transformations (e.g. linearize) keep them.
   if (params["inline"] is api.Inline.JAX_EARLY and
+      not params["compiler_options_kvs"] and
       all(isinstance(i, UnspecifiedValue) for i in params["in_shardings"]) and
       all(isinstance(o, UnspecifiedValue) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
@@ -1405,6 +1404,19 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
                    jaxpr: core.Jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, donated_invars,
                    ctx_mesh, keep_unused, inline, compiler_options_kvs):
+  if compiler_options_kvs:
+    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
+    if logger.isEnabledFor(log_priority):
+      source_info = source_info_util.summarize(
+          source_info_util.SourceInfo(ctx.traceback, ctx.name_stack)
+      )
+      loc = f" ({source_info})" if source_info else ""
+      logger.log(
+          log_priority,
+          "Ignoring compiler_options=%s specified on nested jit '%s'%s; only"
+          " top-level jit compiler_options take effect.",
+          dict(compiler_options_kvs), name, loc,
+      )
   mod_ctx = ctx.module_context
   axis_ctx = ctx.module_context.axis_context
   num_devices = None
@@ -1416,7 +1428,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts, is_jax_late)
+         in_layouts, out_layouts, tuple(mod_ctx.platforms), is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
@@ -1444,7 +1456,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
     else:
       call = func_dialect.CallOp(
           result.flat_output_types, result.symbol_ref, flat_args)
-      if inline is not api.Inline.AUTO:
+      if inline in (api.Inline.XLA_EARLY, api.Inline.XLA_LATE):
         dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
         call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
       mlir.wrap_compute_type_in_place(ctx, call.operation)
@@ -1463,7 +1475,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(
-    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
+    jit_p, _pjit_lowering, cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],
@@ -1550,7 +1563,7 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    new_gs = GSPMDSharding(s._internal_device_list, new_op)
+    new_gs = GSPMDSharding(s._device_assignment, new_op)
     return pxla._get_out_sharding_from_orig_sharding(
         [new_gs], [None], s, None, None)[0]
   else:
@@ -3228,7 +3241,11 @@ relayout_p.def_impl(_relayout_impl)
 def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
-mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
+mlir.register_lowering(
+    relayout_p,
+    _relayout_hlo_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule(),
+)
 
 def _relayout_jvp_rule(primals, tangents, *, dst_layout):
   (p,), (t,) = primals, tangents

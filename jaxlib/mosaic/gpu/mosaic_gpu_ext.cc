@@ -19,7 +19,6 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -96,18 +95,13 @@ constexpr size_t kCuptiSubscriberParamsStructSize =
     sizeof(CuptiSubscriberParamsAbi);
 #endif
 
-template <typename Params, typename = void>
-struct HasAllowMultipleSubscribers : std::false_type {};
-
 template <typename Params>
-struct HasAllowMultipleSubscribers<
-    Params,
-    std::void_t<decltype(std::declval<Params&>().allowMultipleSubscribers)>>
-    : std::true_type {};
+constexpr bool kHasAllowMultipleSubscribers =
+    requires(Params& p) { p.allowMultipleSubscribers; };
 
 template <typename Params>
 bool SetAllowMultipleSubscribersIfSupported(Params* params) {
-  if constexpr (HasAllowMultipleSubscribers<Params>::value) {
+  if constexpr (kHasAllowMultipleSubscribers<Params>) {
     params->allowMultipleSubscribers = 1;
     return true;
   }
@@ -184,7 +178,7 @@ bool IsRecoverableV2PreflightFailure(CUptiResult result) {
 
 // These V2 APIs require CUDA 13.3; CUDA 13.2 stays on V1.
 bool HasCuptiV2Symbols() {
-  return HasAllowMultipleSubscribers<CuptiSubscriberParamsAbi>::value &&
+  return kHasAllowMultipleSubscribers<CuptiSubscriberParamsAbi> &&
          cuptiSubscribe_v2 != nullptr && cuptiGetTimestamp_v2 != nullptr &&
          cuptiActivityRegisterCallbacks_v2 != nullptr &&
          cuptiActivityEnable_v2 != nullptr &&

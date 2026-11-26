@@ -264,14 +264,6 @@ class NamedLocationsTest(PallasSCTest):
     jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), dtype)).compile()
 
 
-def _sc_log_recorder_options() -> dict[str, str]:
-  # On new libtpu the log recorder is enabled automatically when a kernel emits
-  # log ops, so the flag is only needed for backwards compatibility.
-  if jtu.is_libtpu_at_least("0.0.52"):
-    return {}
-  return {"xla_tpu_enable_sc_log_recorder": "true"}
-
-
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
 )
@@ -305,10 +297,7 @@ class DebugPrintTest(PallasSCTest):
       pl.debug_print("Single float", debug_float)
       pl.debug_print("No values")
 
-    compiled_kernel = jax.jit(
-        kernel,
-        compiler_options=_sc_log_recorder_options(),
-    )
+    compiled_kernel = jax.jit(kernel)
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn("Memref", get_output())
@@ -365,7 +354,6 @@ class DebugPrintTest(PallasSCTest):
         compiler_options={
             # TODO(slebedev): This should not be necessary.
             "xla_sc_force_aligned_buffers": "false",
-            **_sc_log_recorder_options(),
         },
     )
     with jtu.capture_stderr() as get_output:
@@ -417,10 +405,7 @@ class DebugPrintTest(PallasSCTest):
           out_types=jax.ShapeDtypeStruct.like(x),
       )(x)
 
-    compiled_kernel = jax.jit(
-        kernel,
-        compiler_options=_sc_log_recorder_options(),
-    )
+    compiled_kernel = jax.jit(kernel)
 
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
@@ -435,10 +420,7 @@ class DebugPrintTest(PallasSCTest):
     nl = self.num_lanes
     x = jnp.arange(num_subcores * nl, dtype=jnp.int32).reshape(-1, nl)
 
-    @functools.partial(
-        jax.jit,
-        compiler_options=_sc_log_recorder_options(),
-    )
+    @jax.jit
     @self.vector_subcore_kernel(
         out_shape=x,
         mesh=plsc.VectorSubcoreMesh(
@@ -682,21 +664,24 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
     )
 
-  def test_scatter_1d_array(self):
+  @parameterized.parameters(0, -3, 3)
+  def test_scatter_1d_array(self, delta):
+    if delta and not jtu.is_libtpu_at_least("0.0.54"):
+      self.skipTest("Requires libtpu >= 0.0.54")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("HBM4B is not supported on TPU v8i.")
-    x = jnp.arange(self.num_lanes)
-    indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
+    nl = self.num_lanes
+    n = nl + delta
+    x = jnp.arange(2 * nl if delta else nl, dtype=jnp.int32)
+    indices = jax.random.permutation(jax.random.key(42), x)
 
     @self.vector_subcore_kernel(
         out_shape=x, out_specs=pl.BlockSpec(memory_space=pltpu.HBM)
     )
     def kernel(x_ref, indices_ref, o_hbm_ref):
-      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref[...]])
+      pltpu.sync_copy(x_ref.at[:n], o_hbm_ref.at[indices_ref[:n]])
 
-    np.testing.assert_array_equal(
-        kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
-    )
+    np.testing.assert_array_equal(kernel(x, indices)[indices[:n]], x[:n])
 
   def test_addupdate_scatter_core_memory_space(self):
 
@@ -738,11 +723,17 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x[0]).at[indices].set(x[0])
     )
 
-  @parameterized.product(kind=["ref", "array"])
-  def test_gather_1d(self, kind):
+  @parameterized.parameters(
+      ("ref", 0), ("array", 0), ("array", -3), ("array", 3)
+  )
+  def test_gather_1d(self, kind, delta):
+    if delta and not jtu.is_libtpu_at_least("0.0.54"):
+      self.skipTest("Requires libtpu >= 0.0.54")
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("HBM4B is not supported on TPU v8i.")
-    x = jnp.arange(self.num_lanes)
+    nl = self.num_lanes
+    n = nl + delta
+    x = jnp.arange(2 * nl if delta else nl, dtype=jnp.int32)
     indices = jax.random.permutation(jax.random.key(42), x)
 
     @self.vector_subcore_kernel(
@@ -753,10 +744,10 @@ class VectorSubcoreTest(PallasSCTest):
         ),
     )
     def kernel(x_hbm_ref, indices_ref, o_ref):
-      indices = indices_ref if kind == "ref" else indices_ref[...]
-      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref)
+      indices = indices_ref if kind == "ref" else indices_ref[:n]
+      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref.at[:n])
 
-    np.testing.assert_array_equal(kernel(x, indices), x[indices])
+    np.testing.assert_array_equal(kernel(x, indices)[:n], x[indices[:n]])
 
   def test_gather_1d_with_filter(self):
     if jtu.is_device_tpu(8, "i"):
@@ -1523,9 +1514,14 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(
       pack_format=[*plsc.PackFormat],
-      dtype=[jnp.float32, jnp.int32],
+      dtypes=[
+          (jnp.float32, None),
+          (jnp.int32, None),
+          (jnp.uint32, jnp.uint16),
+      ],
   )
-  def test_pack_unpack(self, pack_format, dtype):
+  def test_pack_unpack(self, pack_format, dtypes):
+    dtype, packed_dtype = dtypes
     shape = (self.num_lanes,)
 
     @self.vector_subcore_kernel(
@@ -1533,12 +1529,24 @@ class VectorSubcoreTest(PallasSCTest):
         compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
-      ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
-      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=pack_format)
+      ab = plsc.pack(
+          a_ref[...],
+          b_ref[...],
+          format=pack_format,
+          preferred_element_type=packed_dtype,
+      )
+      oa_ref[...], ob_ref[...] = plsc.unpack(
+          ab,
+          format=pack_format,
+          preferred_element_type=dtype if packed_dtype is not None else None,
+      )
 
     a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     b = -a
     out_a, out_b = kernel(a, b)
+    if packed_dtype is not None:
+      a = a.astype(packed_dtype).astype(dtype)
+      b = b.astype(packed_dtype).astype(dtype)
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
 
@@ -2049,8 +2057,6 @@ class VectorSubcoreTest(PallasSCTest):
       ("hbm_and_hbm_no_wait_between", "hbm", False),
   )
   def test_concurrent_push_streams(self, first_dst, wait_between):
-    if not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Requires libtpu >= 0.0.52")
     # Regression test for b/575914970: each vector subcore starts two push
     # streams out of its tile memory back to back, the first one to
     # ``first_dst`` (VMEM_SHARED or HBM) and the second one to HBM, each with
@@ -2482,6 +2488,7 @@ class VectorSubcoreTest(PallasSCTest):
       plsc.subcore_barrier()
       pltpu.sync_copy(o_ref.at[(subcore_id + 1) % mesh.num_subcores],
                       vmem_ref.at[subcore_id])
+      plsc.subcore_barrier()
       pltpu.sync_copy(vmem_ref.at[subcore_id], o_ref.at[subcore_id])
     expected = 2 * jnp.roll(jnp.arange(mesh.num_subcores), -1)
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))

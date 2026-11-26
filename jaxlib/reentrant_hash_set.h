@@ -47,6 +47,7 @@ limitations under the License.
 #ifndef JAXLIB_REENTRANT_HASH_SET_H_
 #define JAXLIB_REENTRANT_HASH_SET_H_
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -55,7 +56,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "absl/base/optimization.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 
@@ -89,7 +89,7 @@ class BitMask {
   class Iterator {
    public:
     explicit Iterator(uint32_t mask) : mask_(mask) {}
-    int operator*() const { return __builtin_ctz(mask_); }
+    int operator*() const { return std::countr_zero(mask_); }
     Iterator& operator++() {
       // mask_ - 1 flips all bits up to and including the lowest set bit.
       // E.g. 0b101100 - 1 = 0b101011
@@ -98,12 +98,7 @@ class BitMask {
       mask_ &= (mask_ - 1);
       return *this;
     }
-    bool operator!=(const Iterator& other) const {
-      return mask_ != other.mask_;
-    }
-    bool operator==(const Iterator& other) const {
-      return mask_ == other.mask_;
-    }
+    bool operator==(const Iterator&) const = default;
 
    private:
     uint32_t mask_;
@@ -114,7 +109,7 @@ class BitMask {
   Iterator end() const { return Iterator(0); }
   bool operator!() const { return mask_ == 0; }
   explicit operator bool() const { return mask_ != 0; }
-  int LowestBitSet() const { return __builtin_ctz(mask_); }
+  int LowestBitSet() const { return std::countr_zero(mask_); }
 
  private:
   uint32_t mask_;
@@ -287,12 +282,7 @@ class ReentrantHashSet {
       return tmp;
     }
 
-    friend bool operator==(const iterator& a, const iterator& b) {
-      return a.idx_ == b.idx_ && a.set_ == b.set_;
-    }
-    friend bool operator!=(const iterator& a, const iterator& b) {
-      return !(a == b);
-    }
+    friend bool operator==(const iterator&, const iterator&) = default;
 
    private:
     friend class ReentrantHashSet;
@@ -337,12 +327,8 @@ class ReentrantHashSet {
       return tmp;
     }
 
-    friend bool operator==(const const_iterator& a, const const_iterator& b) {
-      return a.idx_ == b.idx_ && a.set_ == b.set_;
-    }
-    friend bool operator!=(const const_iterator& a, const const_iterator& b) {
-      return !(a == b);
-    }
+    friend bool operator==(const const_iterator&,
+                           const const_iterator&) = default;
 
    private:
     friend class ReentrantHashSet;
@@ -379,7 +365,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -399,7 +385,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -407,6 +393,13 @@ class ReentrantHashSet {
       }
       return end();
     }
+  }
+
+  // Returns true if the key is present in the set.
+  template <typename K>
+  bool contains(const K& key) const {
+    const_iterator it = find(key);
+    return it != end();
   }
 
   // Returns a pair of the inserted (or existing) key pointer, and a boolean
@@ -424,7 +417,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -466,7 +459,7 @@ class ReentrantHashSet {
       }
 
       FindResult res = FindInternal(key, hash);
-      if (ABSL_PREDICT_FALSE(res.needs_restart)) {
+      if (res.needs_restart) [[unlikely]] {
         continue;
       }
       if (res.found) {
@@ -537,11 +530,11 @@ class ReentrantHashSet {
         const Key& slot = slots_[idx];
         bool is_match = eq_(slot, key);
 
-        if (ABSL_PREDICT_FALSE(version_ != current_version)) {
+        if (version_ != current_version) [[unlikely]] {
           return {true, false, ~size_t{0}};
         }
 
-        if (ABSL_PREDICT_TRUE(is_match)) {
+        if (is_match) [[likely]] {
           return {false, true, idx};
         }
       }
@@ -567,12 +560,13 @@ class ReentrantHashSet {
     num_deleted_ = 0;
     capacity_ = capacity;
     if (capacity_ == 0) {
-      ctrl_.reset(new int8_t[Group::kWidth + 1]);
+      ctrl_ = std::make_unique_for_overwrite<int8_t[]>(Group::kWidth + 1);
       std::memset(ctrl_.get(), kEmpty, Group::kWidth + 1);
       ctrl_[Group::kWidth] = kSentinel;
       slots_.reset();
     } else {
-      ctrl_.reset(new int8_t[capacity_ + Group::kWidth + 1]);
+      ctrl_ = std::make_unique_for_overwrite<int8_t[]>(capacity_ +
+                                                       Group::kWidth + 1);
       std::memset(ctrl_.get(), kEmpty, capacity_ + Group::kWidth + 1);
       ctrl_[capacity_ + Group::kWidth] = kSentinel;
       slots_.reset(static_cast<Key*>(::operator new(capacity_ * sizeof(Key))));
@@ -659,8 +653,8 @@ class ReentrantHashSet {
   // and Use-After-Free problems.
   size_t version_ = 0;
 
-  Hash hasher_;
-  Eq eq_;
+  [[no_unique_address]] Hash hasher_;
+  [[no_unique_address]] Eq eq_;
 };
 
 }  // namespace jax

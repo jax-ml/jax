@@ -28,7 +28,6 @@ import jax
 from jax import numpy as jnp
 from jax._src import literals
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 
@@ -78,8 +77,6 @@ class CloudpickleTest(jtu.JaxTestCase):
     self.assertEqual(expected, actual)
 
   def test_uninitialized_pjit_function(self):
-    if jaxlib_extension_version < 519:
-      self.skipTest("Requires jaxlib_extension_version >= 519")
     valid = jax.jit(lambda x: x)
     valid(1)
     pjit_cls = type(valid)
@@ -242,8 +239,6 @@ class PickleTest(jtu.JaxTestCase):
       self.assertEqual(l.dtype, n.dtype)
 
   def test_pickle_compile_options(self):
-    if jaxlib_extension_version < 521:
-      self.skipTest("Requires jaxlib_extension_version >= 521")
     opts = xc.CompileOptions()
     opts.num_replicas = 2
     restored = pickle.loads(pickle.dumps(opts))

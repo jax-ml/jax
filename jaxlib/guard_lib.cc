@@ -25,7 +25,6 @@ limitations under the License.
 #include <thread>  // NOLINT
 #include <utility>
 
-#include "absl/base/attributes.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -49,7 +48,7 @@ namespace {
 ft_mutex global_state_mu;
 GuardState global_state ABSL_GUARDED_BY(global_state_mu);
 
-ABSL_CONST_INIT thread_local GuardState thread_local_state;
+constinit thread_local GuardState thread_local_state;
 
 // The default transfer guard level.
 constexpr TransferGuardLevel kDefaultGuardLevel = TransferGuardLevel::kAllow;
@@ -61,24 +60,25 @@ constexpr GarbageCollectionGuardLevel kDefaultGarbageCollectionGuardLevel =
 // Returns the transfer guard action for a transfer.
 TransferGuardAction GetTransferGuardAction(TransferGuardLevel guard_level,
                                            bool explicit_transfer) {
+  using enum TransferGuardLevel;
   switch (guard_level) {
-    case TransferGuardLevel::kAllow:
+    case kAllow:
       return TransferGuardAction::kAllow;
-    case TransferGuardLevel::kLog:
+    case kLog:
       if (explicit_transfer) {
         return TransferGuardAction::kAllow;
       } else {
         return TransferGuardAction::kLog;
       }
-    case TransferGuardLevel::kDisallow:
+    case kDisallow:
       if (explicit_transfer) {
         return TransferGuardAction::kAllow;
       } else {
         return TransferGuardAction::kDisallow;
       }
-    case TransferGuardLevel::kLogExplicit:
+    case kLogExplicit:
       return TransferGuardAction::kLog;
-    case TransferGuardLevel::kDisallowExplicit:
+    case kDisallowExplicit:
       return TransferGuardAction::kDisallow;
     default:
       // Unreachable; gracefully handle the unexpected guard level and prevent a

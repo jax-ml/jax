@@ -49,8 +49,6 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_fsdp_pipeline_grad(self, mesh):
-    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least('0.0.52'):
-      self.skipTest('Fails on TPU v7+ with libtpu < 0.0.52')
     def ag(x):
       return jax.reshard(x, P(reduced={'x'}))
 
@@ -350,6 +348,290 @@ class OverlapTest(jtu.JaxTestCase):
       return fsdp_pipe(f, x, w1s, w2s)
 
     jax.block_until_ready(g(x, w1s, w2s))
+
+  @parameterized.named_parameters(
+      ('shmap_ag', True),
+      ('reshard_ag', False),
+  )
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_compute_on_async_lowering_and_eager(self, use_shmap_ag, mesh):
+    del mesh
+    out_spec = P(None, None, reduced={'x'})
+    if use_shmap_ag:
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device, is_async=True)
+      @jax.shard_map(out_specs=out_spec)
+      def ag_start(w):
+        return jax.lax.all_gather(w, 'x', axis=0, tiled=True, to='reduced')
+    else:
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device, is_async=True)
+      def ag_start(w):
+        return jax.reshard(w, out_spec)
+
+    w = jax.device_put(jnp.ones((16, 8), dtype=jnp.float32), P('x', None))
+    a = jnp.ones((16, 8), dtype=jnp.float32, out_sharding=P('x', None))
+    a_rhs = jnp.ones((8, 16), dtype=jnp.float32, out_sharding=P(None, None))
+
+    with self.assertRaisesRegex(NotImplementedError, 'jax.jit'):
+      ag_start(w)
+
+    @jax.jit
+    @program_order(enforce=True)
+    def run_overlap(a, a_rhs, w):
+      fut = ag_start(w)
+      c = a @ a_rhs
+      return fut.done(), c
+
+    lowered_text = run_overlap.lower(a, a_rhs, w).as_text()
+    self.assertIn('@"compute-on-start"', lowered_text)
+    self.assertIn('@"compute-on-done"', lowered_text)
+    self.assertIn('sparseoffload', lowered_text)
+    self.assertIn('sparse_core_config', lowered_text)
+    self.assertGreaterEqual(lowered_text.count('sdy.sharding_constraint'), 2)
+
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device, is_async=True,
+                compiler_options={})
+    def ag_start_empty_opts(x):
+      return jax.reshard(x, out_spec)
+
+    empty_opts_text = jax.jit(
+        lambda x: ag_start_empty_opts(x).done()).lower(w).as_text()
+    self.assertIn('sparse_core_config', empty_opts_text)
+
+    @jax.jit
+    def dce_unused_future(w):
+      _ = ag_start(w)
+      return w
+
+    dce_text = dce_unused_future.lower(w).as_text()
+    self.assertNotIn('compute-on-start', dce_text)
+    self.assertNotIn('compute-on-done', dce_text)
+
+  def test_compute_on_async_mesh_modes_lowering(self):
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device, is_async=True,
+                compiler_options={'sparse_core_config': {'core_ids': [0]}})
+    def double_start(x):
+      return x + x
+
+    # Empty mesh / unsharded jit
+    x0 = jnp.arange(8, dtype=jnp.float32)
+    unsharded = jax.jit(lambda x: double_start(x).done()).lower(x0).as_text()
+    self.assertIn('@"compute-on-start"', unsharded)
+    self.assertIn('@"compute-on-done"', unsharded)
+    self.assertNotIn('sdy.sharding_constraint', unsharded)
+
+    # Auto mesh
+    auto_mesh = jtu.create_mesh((2,), ('x',))
+    with jax.set_mesh(auto_mesh):
+      xa = jax.device_put(x0, jax.NamedSharding(auto_mesh, P('x')))
+      auto_text = jax.jit(lambda x: double_start(x).done()).lower(xa).as_text()
+      self.assertIn('@"compute-on-start"', auto_text)
+      self.assertIn('@"compute-on-done"', auto_text)
+      self.assertNotIn('sdy.sharding_constraint', auto_text)
+
+    # Manual mode inside shard_map + Explicit mode with unreduced input
+    exp_mesh = jtu.create_mesh(
+        (2,), ('x',), axis_types=(jax.sharding.AxisType.Explicit,))
+    with jax.set_mesh(exp_mesh):
+      xm = jax.device_put(x0, jax.NamedSharding(exp_mesh, P('x')))
+      @jax.shard_map(out_specs=P('x'))
+      def run_manual(x):
+        return double_start(x).done()
+      manual_text = jax.jit(run_manual).lower(xm).as_text()
+      self.assertIn('@"compute-on-start"', manual_text)
+      self.assertIn('@"compute-on-done"', manual_text)
+
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device, is_async=True)
+      def ar_start(z):
+        return jax.reshard(z, P(None, None))
+
+      u = jax.device_put(jnp.ones((2, 4, 4), dtype=jnp.float32),
+                         P('x', None, None))
+      def run_unreduced(u):
+        z = jax.lax.reduce_sum(
+            u, [0], out_sharding=P(None, None, unreduced={'x'}))
+        return ar_start(z).done()
+
+      unred_text = jax.jit(run_unreduced).lower(u).as_text()
+      self.assertIn('@"compute-on-start"', unred_text)
+      self.assertIn('@"compute-on-done"', unred_text)
+      self.assertGreaterEqual(unred_text.count('sdy.sharding_constraint'), 2)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_compute_on_async_unsupported_errors(self, mesh):
+    del mesh
+    x = jax.device_put(jnp.arange(8, dtype=jnp.float32), P('x'))
+
+    with self.assertRaisesRegex(NotImplementedError, 'tpu_sparsecore'):
+      compute_on(lambda z: z + 1, compute_type='device',
+                 out_memory_spaces=jax.memory.Space.Device, is_async=True)
+
+    host_fn = compute_on(lambda z: z + 1, compute_type='tpu_sparsecore',
+                         out_memory_spaces=jax.memory.Space.Host, is_async=True)
+    with self.assertRaisesRegex(NotImplementedError, 'Device'):
+      jax.jit(lambda z: host_fn(z).done()).lower(x)
+
+    pair_fn = compute_on(
+        lambda z: (z, z + 1), compute_type='tpu_sparsecore',
+        out_memory_spaces=(jax.memory.Space.Device, jax.memory.Space.Device),
+        is_async=True)
+    with self.assertRaisesRegex(NotImplementedError, 'single output'):
+      jax.jit(lambda z: pair_fn(z)[0].done()).lower(x)
+
+    nullary_out_fn = compute_on(
+        lambda z: (), compute_type='tpu_sparsecore',
+        out_memory_spaces=(), is_async=True)
+    with self.assertRaisesRegex(NotImplementedError, 'single output'):
+      jax.jit(nullary_out_fn).lower(x)
+
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device, is_async=True)
+    def ok_fn(z):
+      return jax.reshard(z, P(reduced={'x'}))
+
+    with self.assertRaisesRegex(NotImplementedError, 'vmap'):
+      jax.jit(jax.vmap(lambda z: ok_fn(z).done())).lower(
+          jax.device_put(jnp.ones((2, 8), dtype=jnp.float32), P(None, 'x')))
+
+    with self.assertRaisesRegex(NotImplementedError, 'jvp'):
+      jax.jit(lambda z: jax.jvp(lambda a: ok_fn(a).done(), (z,), (z,))).lower(x)
+
+    with self.assertRaisesRegex(NotImplementedError, 'linearize/vjp/grad'):
+      jax.jit(jax.grad(lambda z: ok_fn(z).done().sum())).lower(x)
+
+    with self.assertRaisesRegex(NotImplementedError, 'remat'):
+      jax.linear_transpose(
+          jax.remat(lambda z: ok_fn(z).done()), x)(x)
+
+    with self.assertRaisesRegex(NotImplementedError, 'partial evaluation'):
+      jax.linear_transpose(lambda z: ok_fn(z).done(), x)(x)
+
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device, is_async=True)
+    def high_out_fn(u):
+      return jax.lax.reduce_sum(u, [0], out_sharding=P(unreduced={'x'}))
+
+    u = jax.device_put(jnp.ones((2, 4), dtype=jnp.float32), P('x', None))
+    with self.assertRaisesRegex(NotImplementedError, 'high-level outputs'):
+      jax.jit(lambda z: high_out_fn(z).done()).lower(u)
+
+  @parameterized.named_parameters(
+      ('shmap_ag', True),
+      ('reshard_ag', False),
+  )
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_simple_compute_on_async_overlap(self, use_shmap_ag, mesh):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest('Requires TPU >= 7')
+
+    if use_shmap_ag:
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device, is_async=True,
+                  compiler_options={'sparse_core_config': {'core_ids': [0]}})
+      @jax.shard_map(out_specs=P(reduced={'x'}))
+      def ag_start(x):
+        return jax.lax.all_gather(x, 'x', axis=1, tiled=True, to='reduced')
+    else:
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device, is_async=True)
+      def ag_start(x):
+        return jax.reshard(x, P(reduced={'x'}))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, w1, w2):
+      fut_w2 = ag_start(w2)
+      x = x @ w1
+      w2_done = fut_w2.done()
+      return x @ w2_done
+
+    x_host = (jnp.arange(32 * 32 * 128, dtype=jnp.float32) % 5).reshape(
+        (32 * 32, 128))
+    w1_host = (jnp.arange(128 * 256, dtype=jnp.float32) % 7).reshape((128, 256))
+    w2_host = (jnp.arange(256 * 128, dtype=jnp.float32) % 11).reshape(
+        (256, 128))
+    x = jax.device_put(x_host, P('x', None))
+    # TODO(b/557336874): Also keep w1 sharded under default mutable core IDs
+    # once SparseCoreQueueAssignment handles LIFO nested async collectives.
+    w1 = jax.device_put(
+        w1_host, P('x', None) if use_shmap_ag else P(None, None))
+    w2 = jax.device_put(w2_host, P(None, 'x'))
+
+    out = f(x, w1, w2)
+    self.assertEqual(out.sharding, jax.NamedSharding(mesh, P('x', None)))
+    expected = (x_host @ w1_host) @ w2_host
+    self.assertAllClose(out, expected)
+
+  def test_compute_on_async_auto_mesh_and_empty_options(self):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest('Requires TPU >= 7')
+
+    auto_mesh = jtu.create_mesh((8,), ('x',))
+    with jax.set_mesh(auto_mesh):
+      @compute_on(compute_type='tpu_sparsecore',
+                  out_memory_spaces=jax.memory.Space.Device,
+                  is_async=True, compiler_options={})
+      def ag_start(a):
+        return jax.lax.with_sharding_constraint(a, P())
+
+      @jax.jit
+      @program_order(enforce=True)
+      def run_auto(x, w, a):
+        fa = ag_start(a)
+        y = x @ w
+        return y, fa.done()
+
+      x_host = (jnp.arange(256 * 128, dtype=jnp.float32) % 5).reshape(
+          (256, 128))
+      w_host = (jnp.arange(128 * 64, dtype=jnp.float32) % 7).reshape(
+          (128, 64))
+      a_host = (jnp.arange(256 * 128, dtype=jnp.float32) % 17).reshape(
+          (256, 128))
+      x = jax.device_put(x_host, jax.NamedSharding(auto_mesh, P('x', None)))
+      w = jax.device_put(w_host, jax.NamedSharding(auto_mesh, P()))
+      a = jax.device_put(a_host, jax.NamedSharding(auto_mesh, P(None, 'x')))
+      y, a_done = run_auto(x, w, a)
+      self.assertEqual(y.sharding, jax.NamedSharding(auto_mesh, P('x', None)))
+      self.assertEqual(a_done.sharding, jax.NamedSharding(auto_mesh, P()))
+      self.assertAllClose(y, x_host @ w_host)
+      self.assertAllClose(a_done, a_host)
+
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_compute_on_async_unreduced_reduce_scatter(self, mesh):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest('Requires TPU >= 7')
+
+    @compute_on(compute_type='tpu_sparsecore',
+                out_memory_spaces=jax.memory.Space.Device, is_async=True)
+    def rs_start(z):
+      return jax.reshard(z, P('x', None))
+
+    x_host = (jnp.arange(256 * 128, dtype=jnp.float32) % 5).reshape((256, 128))
+    w_host = (jnp.arange(128 * 128, dtype=jnp.float32) % 7).reshape((128, 128))
+    u_host = (jnp.arange(8 * 256 * 128, dtype=jnp.float32) % 13).reshape(
+        (8, 256, 128))
+    x = jax.device_put(x_host, P('x', None))
+    w = jax.device_put(w_host, P(None, None))
+    u = jax.device_put(u_host, P('x', None, None))
+
+    @partial(jax.jit, compiler_options=self.get_compiler_opts())
+    @program_order(enforce=True)
+    def run_rs(x, w, u):
+      z = jax.lax.reduce_sum(
+          u, [0], out_sharding=P(None, None, unreduced={'x'}))
+      fut = rs_start(z)
+      y = x @ w
+      return y, fut.done()
+
+    y, rs_out = run_rs(x, w, u)
+    self.assertEqual(y.sharding, jax.NamedSharding(mesh, P('x', None)))
+    self.assertEqual(rs_out.sharding, jax.NamedSharding(mesh, P('x', None)))
+    self.assertAllClose(y, x_host @ w_host)
+    self.assertAllClose(rs_out, jnp.sum(u_host, axis=0))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_simple_program_order(self, mesh):

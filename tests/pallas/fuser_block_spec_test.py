@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import einshape as einshape_lib
@@ -1466,6 +1467,54 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 3, 0), scalar_prefetch_values, ()), x + 128 * 3
     )
 
+  def test_iota_element_block_spec(self):
+    def f():
+      return jax.lax.broadcasted_iota(jnp.int32, (2, 2, 512, 512), 2)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    handler = block_spec_lib.make_scalar_prefetch_handler()
+    block_spec = pl.BlockSpec(
+        (None, pl.Squeezed(), pl.Element(64), 128),
+        lambda i, j, k, l: (i, j, k, l),
+    )
+    kernel_fn, ((),), _ = block_spec_lib.pull_block_spec(
+        f2, block_spec, grid_len=4, scalar_prefetch_handler=handler
+    )(new_values)
+
+    x = jax.lax.broadcasted_iota(jnp.int32, (64, 128), 0)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0, 0), scalar_prefetch_values, ()), x
+    )
+    np.testing.assert_array_equal(
+        kernel_fn((1, 1, 5, 1), scalar_prefetch_values, ()), x + 5
+    )
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 96, 0), scalar_prefetch_values, ()), x + 96
+    )
+    np.testing.assert_array_equal(
+        jax.jit(lambda k: kernel_fn((0, 0, k, 0), scalar_prefetch_values, ()))(
+            jnp.int32(133)
+        ),
+        x + 133,
+    )
+
+    for bad_dim in (
+        pl.Element(64, padding=(1, 0)),
+        pl.Element(64, padding=(0, 1)),
+        pl.BoundedSlice(64),
+    ):
+      with self.subTest(bad_dim=bad_dim):
+        bad_bs = pl.BlockSpec(
+            (None, None, bad_dim, 128), lambda i, j, k, l: (i, j, k, l)
+        )
+        with self.assertRaises(NotImplementedError):
+          block_spec_lib.pull_block_spec(
+              f2, bad_bs, grid_len=4, scalar_prefetch_handler=handler
+          )(new_values)
+
   @parameterized.parameters(None, pl.Squeezed())
   def test_broadcast_size_one_dim_to_squeezed_dim(self, squeezed):
     x = jnp.arange(512, dtype=jnp.float32).reshape((1, 512))
@@ -2710,6 +2759,92 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     out1, out2 = kernel_fn((2, 3), (), x)
     np.testing.assert_array_equal(out1, x + 1)
     np.testing.assert_array_equal(out2, x * 2)
+
+  def test_make_kernel_function_preserves_source_info(self):
+    def f(x):
+      with jax.named_scope('outer_fusion'):
+        with jax.named_scope('inner_add'):
+          y = x + 1.0
+        with jax.named_scope('inner_sin'):
+          return jnp.sin(y)
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(in_type)
+
+    def trace_kernel(x):
+      with jax.named_scope('kernel'):
+        return kernel_fn((0, 0), (), x)
+
+    x_block = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(trace_kernel)(x_block)
+    eqns_by_prim = {eqn.primitive: eqn for eqn in closed_jaxpr.jaxpr.eqns}
+    self.assertIn(lax.add_p, eqns_by_prim)
+    self.assertIn(lax.sin_p, eqns_by_prim)
+
+    add_eqn = eqns_by_prim[lax.add_p]
+    sin_eqn = eqns_by_prim[lax.sin_p]
+    self.assertEqual(
+        str(add_eqn.source_info.name_stack), 'kernel/outer_fusion/inner_add'
+    )
+    self.assertEqual(
+        str(sin_eqn.source_info.name_stack), 'kernel/outer_fusion/inner_sin'
+    )
+
+    add_frame = source_info_util.user_frame(add_eqn.source_info.traceback)
+    sin_frame = source_info_util.user_frame(sin_eqn.source_info.traceback)
+    self.assertIsNotNone(add_frame)
+    self.assertIsNotNone(sin_frame)
+    assert add_frame is not None and sin_frame is not None
+    self.assertTrue(add_frame.file_name.endswith('fuser_block_spec_test.py'))
+    self.assertTrue(sin_frame.file_name.endswith('fuser_block_spec_test.py'))
+    self.assertTrue(add_frame.function_name.endswith('.f'))
+    self.assertTrue(sin_frame.function_name.endswith('.f'))
+    self.assertLess(add_frame.start_line, sin_frame.start_line)
+
+  def test_make_kernel_function_preserves_source_info_nested_jit(self):
+    @jax.jit
+    def inner(x):
+      with jax.named_scope('inner_jit_op'):
+        return jnp.sin(x)
+
+    def f(x):
+      with jax.named_scope('outer_fusion'):
+        return inner(x)
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(in_type)
+
+    def trace_kernel(x):
+      with jax.named_scope('kernel'):
+        return kernel_fn((0, 0), (), x)
+
+    x_block = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(trace_kernel)(x_block)
+    sin_eqns = [
+        eqn for eqn in closed_jaxpr.jaxpr.eqns if eqn.primitive is lax.sin_p
+    ]
+    self.assertLen(sin_eqns, 1)
+    sin_eqn = sin_eqns[0]
+    self.assertEqual(
+        str(sin_eqn.source_info.name_stack),
+        'kernel/outer_fusion/inner_jit_op',
+    )
+    sin_frame = source_info_util.user_frame(sin_eqn.source_info.traceback)
+    self.assertIsNotNone(sin_frame)
+    assert sin_frame is not None
+    self.assertTrue(sin_frame.function_name.endswith('.inner'))
 
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):

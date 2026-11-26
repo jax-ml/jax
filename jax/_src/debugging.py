@@ -781,7 +781,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                            am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     mesh = axis_context.mesh
-    devices = axis_context.mesh._flat_devices_tuple
+    devices = axis_context.mesh._internal_device_list
   else:
     raise NotImplementedError(type(axis_context))
   assert devices is not None
