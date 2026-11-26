@@ -63,7 +63,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
+#include "xla/backends/gpu/target_lowering/nvptx_libdevice_path.h"
 
 namespace {
 
