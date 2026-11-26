@@ -195,8 +195,10 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/cpu_feature_guard.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu_feature_guard.pyi",
           f"{source_file_prefix}jaxlib/cpu_sparse.py",
           f"{source_file_prefix}jaxlib/utils.{pyext}",
+          f"{source_file_prefix}jaxlib/utils.pyi",
           f"{source_file_prefix}jaxlib/jax_common.dll"
           if build_utils.is_windows()
           else f"{source_file_prefix}jaxlib/libjax_common.{soext}",
@@ -210,18 +212,44 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/gpu_sparse.py",
           f"{source_file_prefix}jaxlib/plugin_support.py",
           f"{source_file_prefix}jaxlib/_pretty_printer.{pyext}",
+          f"{source_file_prefix}jaxlib/_pretty_printer.pyi",
           f"{source_file_prefix}jaxlib/version.py",
           f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
+          f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
           f"{source_file_prefix}jaxlib/_gpu_spec.{pyext}",
+          "xla/python/_gpu_spec.pyi",
           f"{source_file_prefix}jaxlib/_hlo.{pyext}",
+          "xla/python/_hlo.pyi",
           f"{source_file_prefix}jaxlib/_ifrt_proxy.{pyext}",
+          f"{source_file_prefix}jaxlib/_ifrt_proxy.pyi",
           f"{source_file_prefix}jaxlib/_jax.{pyext}",
           f"{source_file_prefix}jaxlib/_sdy_mpmd.{pyext}",
+          f"{source_file_prefix}jaxlib/_sdy_mpmd.pyi",
           f"{source_file_prefix}jaxlib/_pathways.{pyext}",
+          f"{source_file_prefix}jaxlib/_pathways.pyi",
           f"{source_file_prefix}jaxlib/_profiler.{pyext}",
+          "xla/python/_profiler.pyi",
           f"{source_file_prefix}jaxlib/_profile_data.{pyext}",
+          "xla/python/_profile_data.pyi",
           f"{source_file_prefix}jaxlib/_xla.{pyext}",
+          f"{source_file_prefix}jaxlib/_xla.pyi",
+      ],
+  )
+  copy_files(
+      dst_dir=jaxlib_dir / "_jax",
+      src_files=[
+          f"{source_file_prefix}jaxlib/_jax/__init__.pyi",
+          f"{source_file_prefix}jaxlib/_jax/config.pyi",
+          f"{source_file_prefix}jaxlib/_jax/donation_recovery.pyi",
+          f"{source_file_prefix}jaxlib/_jax/ffi.pyi",
+          f"{source_file_prefix}jaxlib/_jax/guard_lib.pyi",
+          f"{source_file_prefix}jaxlib/_jax/hlo_sharding_util.pyi",
+          f"{source_file_prefix}jaxlib/_jax/ifrt_programs.pyi",
+          f"{source_file_prefix}jaxlib/_jax/jax_jit.pyi",
+          f"{source_file_prefix}jaxlib/_jax/mlir.pyi",
+          f"{source_file_prefix}jaxlib/_jax/pytree.pyi",
+          f"{source_file_prefix}jaxlib/_jax/transfer_guard_lib.pyi",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing
@@ -235,6 +263,27 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/cpu/_lapack.{pyext}",
           f"{source_file_prefix}jaxlib/cpu/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cpu/_sparse.{pyext}",
+      ],
+  )
+  copy_files(
+      dst_dir=jaxlib_dir / "cpu" / "_lapack",
+      src_files=[
+          f"{source_file_prefix}jaxlib/cpu/_lapack/__init__.pyi",
+          f"{source_file_prefix}jaxlib/cpu/_lapack/eig.pyi",
+          f"{source_file_prefix}jaxlib/cpu/_lapack/schur.pyi",
+          f"{source_file_prefix}jaxlib/cpu/_lapack/svd.pyi",
+      ],
+  )
+  copy_files(
+      dst_dir=jaxlib_dir / "cpu" / "_math",
+      src_files=[
+          f"{source_file_prefix}jaxlib/cpu/_math/__init__.pyi",
+      ],
+  )
+  copy_files(
+      dst_dir=jaxlib_dir / "cpu" / "_sparse",
+      src_files=[
+          f"{source_file_prefix}jaxlib/cpu/_sparse/__init__.pyi",
       ],
   )
 
