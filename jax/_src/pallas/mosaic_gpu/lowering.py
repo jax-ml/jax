@@ -1353,11 +1353,6 @@ def _extract_aliased_ref(
             state_types.AbstractRef,
             state_types.transform_type(scratch_transforms, ref_aval),
         ).shape
-        if ref.shape[0] != physical_shape[0]:
-          raise ValueError(
-              "TMEM aliasing only supported for Refs with the same first"
-              f" dimension, got {ref.shape[0]} != {physical_shape[0]}."
-          )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
         ref = tcgen05.TMEMRef(
             address=address,
