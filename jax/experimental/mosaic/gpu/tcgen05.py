@@ -52,6 +52,7 @@ TMEM_NATIVE_LAYOUT = fa.TMEM_NATIVE_LAYOUT
 def create_instr_descriptor(
     m: int,
     n: int,
+    k: int,
     acc_dtype,
     a_dtype,
     b_dtype,
@@ -113,7 +114,12 @@ def create_instr_descriptor(
   if m % 16 or m > 256:
     raise ValueError(f"M must be a multiple of 16 and <= 256, got: {m}")
   desc |= (m >> 4) << 24  # M >> 4, bits 24-28
-  # Bit 29 is reserved
+  # Bit 29 encodes the K dimension for dense .kind::f8f6f4: zero means K=32 and
+  # one means K=64 (sm_107f).
+  is_f8 = isinstance(a_dtype, (ir.Float8E5M2Type, ir.Float8E4M3FNType))
+  if is_f8 and sparsity_selector is None:
+    assert isinstance(b_dtype, (ir.Float8E5M2Type, ir.Float8E4M3FNType))
+    desc |= {32: 0, 64: 1}[k] << 29
   # We ignore max shift under .ws, bits 30-31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
@@ -655,6 +661,7 @@ def mma(
   supported_instr_ks = {
       (1 + is_sparse) * 8 * 32 // utils.bitwidth(mma_a_element_type)
   }
+  arch = utils.get_arch()
   # Dense 4-bit block-scaled MMA can issue larger steps than K=64 (32B).
   if (
       a_scale is not None and b_scale is not None
@@ -670,11 +677,29 @@ def mma(
       # instruction N of at most 128) or 256 rows (otherwise).
       and b_scale.shape[0] == (256 if n_collective_group_elems > 128 else 128)
   ):
-    arch = utils.get_arch()
     if arch in (utils.Arch(10, 3), utils.RUBIN):
       supported_instr_ks.add(96)
     if arch.is_sm107f and collective and m == 128:
       supported_instr_ks.add(128)
+  # On sm_107f, dense 8-bit floating-point MMA can issue K=64 (64B) steps in
+  # addition to K=32 (32B) steps.
+  if (
+      not is_scaled
+      and isinstance(
+          mma_a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)
+      )
+      and not is_sparse
+      and arch.is_sm107f
+      # K=64 is only available for full-M instructions.
+      and m == 128
+      # TODO(allanrenucci): Support A in TMEM if the hardware supports it.
+      and not isinstance(a, TMEMRef)
+      # A K=64 (64B) step must not cross a swizzle atom of a K-fastest operand.
+      # TODO(allanrenucci): Relax this for M/N-fastest operands, whose K
+      # dimension is tiled in 8-row atoms regardless of the swizzle.
+      and a_swizzle >= 64 and b_swizzle >= 64
+  ):
+    supported_instr_ks.add(64)
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -831,6 +856,12 @@ def _do_mma(
     # 128B swizzle atom.
     q, r = divmod(k, 192)
     instr_ks = [96] * (2 * q) + [64] * (r // 64)
+  elif {32, 64}.issubset(supported_instr_ks):
+    assert k % 32 == 0
+    # Every 64 elems are covered by a K=64 step instead of 2 K=32 steps; any
+    # remaining K=32 step goes at the end.
+    q, r = divmod(k, 64)
+    instr_ks = [64] * q + [32] * (r // 32)
   else:
     instr_k = min(supported_instr_ks)
     assert k % instr_k == 0
@@ -893,6 +924,7 @@ def _do_mma(
       i_desc = create_instr_descriptor(
           instr_m * num_cta,
           instr_n * num_cta,
+          instr_k,
           d_type,
           a_element_type,
           b_element_type,

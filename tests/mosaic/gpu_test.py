@@ -2188,6 +2188,19 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         **kwargs,
     )
 
+  @parameterized.product(n=(8, 24, 40), swizzle=(64, 128))
+  def test_mma_fp8_n_multiple_of_8(self, n, swizzle):
+    self._basic_mma_test(
+        m=128,
+        n=n,
+        k_steps=2,
+        swizzle=swizzle,
+        lhs_transpose=False,
+        rhs_transpose=True,
+        in_jax_dtype=jnp.float8_e4m3fn,
+        out_jax_dtype=jnp.float32,
+    )
+
   def _basic_mma_test(
       self,
       m,
@@ -3953,7 +3966,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16,),
+      in_jax_dtype=(jnp.float16, jnp.float8_e5m2, jnp.float8_e4m3fn),
       out_jax_dtype=(jnp.float32,),
       m=(128, 256),  # TODO(apaszke): 192, 256
       n=(128, 160, 256),

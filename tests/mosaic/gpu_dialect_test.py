@@ -3425,6 +3425,53 @@ class DialectLoweringTest(MosaicGpuTest):
       # steps are issued last.
       self.assertEqual(instr_ks, [96] * num_k96 + [64] * num_k64)
 
+  @parameterized.product(
+      swizzle=(64, 128),
+      k=(128, 256, 384),
+      collective=(False, True),
+  )
+  def test_tcgen05_mma_f8_instr_k_decomposition(self, swizzle, k, collective):
+    m = n = 128
+    n_collective = n * (2 if collective else 1)
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 10)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, 7)
+    )
+    with self.kernel():
+      f8 = ir.Float8E4M3FNType.get()
+      smem = mgpu_utils.smem()
+
+      def tiled_ref(shape):
+        tiled_shape = mgpu_utils.tile_shape(shape, (8, swizzle))
+        (ref,) = undefs(ir.MemRefType.get(tiled_shape, f8, memory_space=smem))
+        return ref
+
+      tcgen05.mma(
+          tcgen05.TMEMRef(
+              arith.constant(i32, 0),
+              (m, n_collective),
+              ir.F32Type.get(),
+              tcgen05.tmem_default_layout(packing=1),
+          ),
+          tiled_ref((m, k)),
+          mgpu_utils.memref_transpose(tiled_ref((n, k)), (1, 0, 3, 2)),
+          a_swizzle=swizzle,
+          b_swizzle=swizzle,
+          collective=collective,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+    # Bit 29 of the instruction descriptor selects K=64 (instead of K=32).
+    instr_ks = []
+    for op in self.find_ops(llvm.InlineAsmOp):
+      if "tcgen05.mma" in op.asm_string.value:
+        idesc = op.operands[3].owner.literal_value & 0xFFFFFFFF
+        instr_ks.append(64 if (idesc >> 29) & 1 else 32)
+    self.assertEqual(instr_ks, [64] * (k // 64))
+
 
 if hp is not None:
   @hps.composite
