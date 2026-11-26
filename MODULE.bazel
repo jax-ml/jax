@@ -33,9 +33,9 @@ archive_override(
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-IOdoBCBV78YmK/fZ+KsczmO9ceMNXZpIFUJM38LEjaQ=",
-    strip_prefix = "xla-b1dbfed058ac85eafa848502c64e1c5384391a02",
-    urls = ["https://github.com/openxla/xla/archive/b1dbfed058ac85eafa848502c64e1c5384391a02.tar.gz"],
+    integrity = "sha256-w2XhJSKO7O3xV5ZLlU9kI8whbcyVT5+OL09Aw37jPhs=",
+    strip_prefix = "xla-24ffbf5f6801b3eb41bc1eafb83c97b04ec598cb",
+    urls = ["https://github.com/openxla/xla/archive/24ffbf5f6801b3eb41bc1eafb83c97b04ec598cb.tar.gz"],
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
