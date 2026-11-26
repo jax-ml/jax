@@ -3390,6 +3390,130 @@ class HijaxTest(jtu.JaxTestCase):
 
       self.assertAllClose(g(jnp.float32(2.0)), jnp.float32(2.0))
 
+  def test_jacfwd_jacrev_hitype(self):
+    @dataclass(frozen=True)
+    class Box:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class BoxTy(HiType):
+      shape: tuple[int, ...]
+      def lo_ty(self): return [ShapedArray(self.shape, jnp.dtype('float32'))]
+      def lower_val(self, b): return [b.a]
+      def raise_val(self, a): return Box(a)
+      def to_tangent_aval(self): return ShapedArray(self.shape, jnp.dtype('float32'))
+      def str_short(self, short_dtypes=False, **_): return f"box{list(self.shape)}"
+
+    register_hitype(Box, lambda b: BoxTy(b.a.shape))
+
+    class Wrap(HiPrim):
+      def __init__(self, av):
+        self.in_avals, self.out_aval, self.params = (av,), BoxTy(av.shape), {}
+        super().__init__()
+      def expand(self, a): return Box(a)
+      def jvp(self, primals, tangents):
+        (a,), (da,) = primals, tangents
+        return self(a), da
+      def vjp_fwd(self, nzs, a): return self(a), None
+      def vjp_bwd_retval(self, res, g): return (g,)
+      def batch(self, axis_data, args, dims):
+        return wrap(args[0]), None if dims[0] is None else 0
+
+    class Unwrap(HiPrim):
+      def __init__(self, av):
+        self.in_avals, self.out_aval, self.params = (
+            (av,), ShapedArray(av.shape, jnp.dtype('float32')), {})
+        super().__init__()
+      def expand(self, b): return b.a
+      def jvp(self, primals, tangents):
+        (b,), (db,) = primals, tangents
+        return self(b), db
+      def vjp_fwd(self, nzs, b): return self(b), None
+      def vjp_bwd_retval(self, res, g): return (g,)
+      def batch(self, axis_data, args, dims):
+        return unwrap(args[0]), None if dims[0] is None else 0
+
+    wrap = lambda a: Wrap(jax.typeof(a))(a)
+    unwrap = lambda b: Unwrap(jax.typeof(b))(b)
+
+    x = jnp.arange(3, dtype='float32')
+    b = wrap(x)
+    expected = jnp.diag(jnp.array([0., 2., 4.], dtype='float32'))
+
+    f_in = lambda b: unwrap(b) ** 2
+    f_out = lambda x: wrap(x ** 2)
+    f_both = lambda b: wrap(unwrap(b) ** 2)
+
+    for jac_fn in (jax.jacfwd, jax.jacrev):
+      self.assertAllClose(jac_fn(f_in)(b), expected)
+      self.assertAllClose(jax.jit(jac_fn(f_in))(b), expected)
+      self.assertAllClose(jac_fn(f_out)(x), expected)
+      self.assertAllClose(jac_fn(f_both)(b), expected)
+
+  def test_jacfwd_jacrev_hitype_different_tangent_shape(self):
+    @dataclass(frozen=True)
+    class ManifoldPt:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class ManifoldTy(HiType):
+      def lo_ty(self): return [ShapedArray((3,), jnp.dtype('float32'))]
+      def lower_val(self, p): return [p.a]
+      def raise_val(self, a): return ManifoldPt(a)
+      def to_tangent_aval(self): return ShapedArray((2,), jnp.dtype('float32'))
+      def str_short(self, short_dtypes=False, **_): return "manifold[3->2]"
+
+    register_hitype(ManifoldPt, lambda p: ManifoldTy())
+
+    proj = jnp.array([[1., 0.], [0., 1.], [1., -1.]], dtype='float32')
+
+    class Embed(HiPrim):
+      def __init__(self, av):
+        self.in_avals, self.out_aval, self.params = (
+            (av,), ShapedArray((3,), jnp.dtype('float32')), {})
+        super().__init__()
+      def expand(self, p): return p.a
+      def jvp(self, primals, tangents):
+        (p,), (dp,) = primals, tangents
+        return self(p), proj @ dp
+      def vjp_fwd(self, nzs, p): return self(p), None
+      def vjp_bwd_retval(self, res, g): return (proj.T @ g,)
+      def batch(self, axis_data, args, dims):
+        return embed(args[0]), None if dims[0] is None else 0
+
+    embed = lambda p: Embed(jax.typeof(p))(p)
+    pt = ManifoldPt(jnp.array([1., 2., 3.], dtype='float32'))
+    x = jnp.array([10., 20., 30.], dtype='float32')
+
+    for jac_fn in (jax.jacfwd, jax.jacrev):
+      jac_single = jac_fn(lambda p: 2.0 * embed(p))(pt)
+      self.assertEqual(jac_single.shape, (3, 2))
+      self.assertAllClose(jac_single, 2.0 * proj)
+
+      jac_p, jac_x = jac_fn(lambda pair: embed(pair[0]) + pair[1])((pt, x))
+      self.assertEqual(jac_p.shape, (3, 2))
+      self.assertEqual(jac_x.shape, (3, 3))
+      self.assertAllClose(jac_p, proj)
+      self.assertAllClose(jac_x, jnp.eye(3, dtype='float32'))
+
+  def test_jacfwd_jacrev_hitype_non_array_tangent_error(self):
+    @dataclass(frozen=True)
+    class NonArrayTanVal:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class NonArrayTanTy(HiType):
+      def lo_ty(self): return [ShapedArray((2,), jnp.dtype('float32'))]
+      def lower_val(self, v): return [v.a]
+      def raise_val(self, a): return NonArrayTanVal(a)
+      def to_tangent_aval(self): return self
+
+    register_hitype(NonArrayTanVal, lambda v: NonArrayTanTy())
+    v = NonArrayTanVal(jnp.zeros(2, dtype='float32'))
+    for jac_fn in (jax.jacfwd, jax.jacrev):
+      with self.assertRaisesRegex(TypeError, "array-valued tangent types"):
+        jac_fn(lambda _: jnp.zeros(2, dtype='float32'))(v)
+
 
 class RefTest(jtu.JaxTestCase):
 
