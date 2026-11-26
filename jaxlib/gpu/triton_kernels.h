@@ -26,12 +26,15 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
+#include "xla/ffi/api/kernel_c_api.h"
 #include "xla/ffi/ffi.h"
+#include "xla/ffi/kernel_registry_ffi.h"
 #include "xla/service/custom_call_status.h"
 
 namespace xla::ffi {
@@ -58,10 +61,31 @@ class KernelCall;
 //
 // This is the structure that is serialized during AOT compilation in XLA.
 struct TritonKernelInstantiateResult {
+  // An autotuning candidate registered with XLA's kernel registry during
+  // Initialize. `kernel` is stored before `image`.
+  struct Candidate {
+    std::atomic<const XLA_FFI_Kernel*> kernel{nullptr};
+    std::atomic<const ModuleImage*> image{nullptr};
+  };
+
   jax_triton::TritonCustomCallStateProto proto;
   std::atomic<KernelCall*> cached_kernel_call{nullptr};
+  // Registered handle of `cached_kernel_call`.
+  std::atomic<const XLA_FFI_Kernel*> registered_kernel{nullptr};
+  // One entry per autotuning candidate in `proto`, empty otherwise. Sized once
+  // by `InitCandidates` before the state is shared.
+  std::unique_ptr<Candidate[]> candidates;
+  int num_candidates = 0;
 
   TritonKernelInstantiateResult() { proto.set_version(2); }
+
+  void InitCandidates() {
+    if (proto.call_case() ==
+        jax_triton::TritonCustomCallStateProto::kAutotuningKernelCandidates) {
+      num_candidates = proto.autotuning_kernel_candidates().configs_size();
+      candidates = std::make_unique<Candidate[]>(num_candidates);
+    }
+  }
 
   static absl::StatusOr<std::string> Serialize(
       const TritonKernelInstantiateResult& instantiate_result) {
@@ -79,6 +103,7 @@ struct TritonKernelInstantiateResult {
       return absl::InvalidArgumentError(
           "Unsupported TritonCustomCallStateProto version");
     }
+    instantiate_result->InitCandidates();
     return instantiate_result;
   }
 };
@@ -92,7 +117,11 @@ class Kernel {
          std::optional<uint32_t> global_scratch_align = std::nullopt,
          ModuleImage* module_image = nullptr);
 
-  absl::Status Initialize(gpuStream_t stream);
+  // Registers the kernel's CUBIN with XLA's kernel registry for the current
+  // device. `existing_kernel` is a handle from an earlier call, or null.
+  absl::StatusOr<const XLA_FFI_Kernel*> Register(
+      ::xla::ffi::InitializeKernelRegistry& kernel_registry,
+      const XLA_FFI_Kernel* existing_kernel) const;
   absl::StatusOr<gpuFunction_t> GetFunction(gpuStream_t stream);
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
@@ -115,6 +144,7 @@ class Kernel {
   std::optional<uint32_t> global_scratch_align() const {
     return global_scratch_align_;
   }
+  const ModuleImage* module_image() const { return module_image_; }
 
  private:
   std::string kernel_name_;
@@ -159,9 +189,12 @@ class KernelCall {
   KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1, uint32_t grid_2,
              std::vector<Parameter> parameters);
 
-  absl::Status Initialize(gpuStream_t stream);
-  absl::Status Launch(gpuStream_t stream, void** buffers);
-  absl::Status Record(gpuStream_t stream, void** buffers,
+  // Launches `kernel` through `kernel_registry`. If `kernel_registry` is null,
+  // loads and launches the module without the registry (legacy custom call).
+  absl::Status Launch(gpuStream_t stream, void** buffers,
+                      ::xla::ffi::ExecuteKernelRegistry* kernel_registry,
+                      const XLA_FFI_Kernel* kernel);
+  absl::Status Record(void** buffers, const XLA_FFI_Kernel* kernel,
                       ::xla::ffi::RecordContext& record_ctx);
 
   static absl::StatusOr<KernelCall> FromProto(
@@ -190,9 +223,13 @@ class AutotunedKernelCall {
       std::string name, std::vector<Config> configs,
       std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
 
-  static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
-                                             gpuStream_t stream,
-                                             void** buffers);
+  // Benchmarks each launchable config by calling `launch` on it and returns the
+  // fastest one. `launch` must enqueue the kernel on `stream` using `buffers`:
+  // timing events are recorded on `stream`, and aliased inputs in `buffers` are
+  // restored after autotuning.
+  static absl::StatusOr<KernelCall> Autotune(
+      AutotunedKernelCall kernel_call, gpuStream_t stream, void** buffers,
+      absl::FunctionRef<absl::Status(KernelCall&)> launch);
 
   static absl::StatusOr<AutotunedKernelCall> FromProto(
       const jax_triton::TritonAutotunedKernelCall& proto);
