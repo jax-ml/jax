@@ -513,15 +513,15 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
       )
     if expected_out_ty.dtype != val_aval.dtype:
       raise ValueError("Invalid dtype for `addupdate`. "
-                       f"Ref dtype: {ref_aval.dtype}. "
-                       f"Value shape: {val_aval.dtype}. ")
+                       f"Ref dtype: {expected_out_ty.dtype}. "
+                       f"Value dtype: {val_aval.dtype}. ")
     _check_write_vma('addupdate', ref_aval.inner_aval, val_aval, args)
     out_sharding = expected_out_ty.sharding
     if ((out_sharding.mesh._any_axis_explicit or
          val_aval.sharding.mesh._any_axis_explicit) and
         out_sharding != val_aval.sharding):
       raise ValueError("Invalid sharding for `addupdate`. "
-                       f"Ref sharding: {ref_aval.sharding}. "
+                       f"Ref sharding: {out_sharding}. "
                        f"Value sharding: {val_aval.sharding}. ")
   else:
     # Check that the transforms are valid

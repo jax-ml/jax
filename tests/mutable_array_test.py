@@ -30,7 +30,12 @@ from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
 from jax._src.state import discharge as state_discharge
-from jax._src.state.types import (AbstractRef, RefEffect)
+from jax._src.state.types import (
+    AbstractRef,
+    BitcastTransform,
+    RefEffect,
+    TransformedRef,
+)
 
 config.parse_flags_with_absl()
 
@@ -2188,6 +2193,19 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
   def test_return_empty_ref_message(self):
     with self.assertRaisesRegex( ValueError, "was created on line"):
       jax.jit(lambda: jax.empty_ref(jax.typeof(3.)))()
+
+  def test_addupdate_bitcast_dtype_mismatch_message(self):
+    def f(x):
+      r = jax.new_ref(x)
+      view = TransformedRef(r, (BitcastTransform(np.dtype(jnp.float16)),))
+      jax.ref.addupdate(view, (), jnp.zeros((4, 4), jnp.bfloat16))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Invalid dtype for `addupdate`\. Ref dtype: float16\. Value dtype:"
+        r" bfloat16\.",
+    ):
+      jax.jit(f)(jnp.zeros((2, 4), jnp.int32))
 
 
 if __name__ == '__main__':
