@@ -246,14 +246,6 @@ def paged_flash_attention_kernel(
       async_copy_k.start()
       async_copy_v.start()
 
-    if not program_ids:
-
-      @pl.when(i == 0)
-      def init():
-        m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
-        l_ref[...] = jnp.zeros_like(l_ref)
-        o_ref[...] = jnp.zeros_like(o_ref)
-
     @pl.when(next_b < batch_size)
     def prefetch_next_block():
       next_buffer_index = jnp.where(buffer_index == 0, 1, 0)
@@ -298,6 +290,16 @@ def paged_flash_attention_kernel(
   if program_ids:
     flash_attention()
   else:
+    # Reset the accumulators for every (b, h), including sequences with
+    # length == 0: if this lived inside the `i * bk < length` guard below, an
+    # empty sequence would never write its output block and whatever the VMEM
+    # output buffer held from the previous grid step would be copied to HBM.
+    @pl.when(i == 0)
+    def init():
+      m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
+      l_ref[...] = jnp.zeros_like(l_ref)
+      o_ref[...] = jnp.zeros_like(o_ref)
+
     pl.when(i * bk < length)(flash_attention)
 
 
