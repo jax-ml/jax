@@ -69,12 +69,11 @@ bazel_packages = {
             "12abcedb177ca1bd293875dd7d5aa1ebf4336cf44d406b597907932251cf9714"
         ),
     ),
-
     ("Windows", "ARM64"): BazelPackage(
         base_uri=None,
-        file="bazel-8.7.0-windows-arm64.exe",
+        file="bazel-9.3.1-windows-arm64.exe",
         sha256=(
-            "de94507a266da65f60c1067a77717dbf39c77fd20ea8fd0a5de33d660e809f41"
+            "e1dbf01b19fda41a8aef99ada6023f1f4b42bb1d02ef59d42a9dd2286eb6d309"
         ),
     ),
 }

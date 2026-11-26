@@ -274,6 +274,9 @@ common:win_arm64_clang --define=ynn_enable_arm64_neonfp8=false
 # Unsupported SME/SME2 kernels produce incorrect SEH directives with clang-cl on Windows ARM64
 common:win_arm64_clang --define=ynn_enable_arm64_sme=false
 common:win_arm64_clang --define=ynn_enable_arm64_sme2=false
+# YNNPACK SVE kernels fail to compile with clang-cl under the Microsoft C++ ABI
+# ("cannot mangle this built-in __SVBool_t type yet").
+common:win_arm64_clang --define=ynn_enable_arm64_sve=false
 common:win_arm64_clang --define=no_cuda_support=true
 common:win_arm64_clang --define=no_rocm_support=true
 # Sanitizers (work only for Linux x86_64)
