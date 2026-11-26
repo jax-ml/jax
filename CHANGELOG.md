@@ -199,6 +199,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     only the single `n`-th Bessel function directly (note that `bessel_jn`
     returned all orders `0..v`, whereas `jn(n, z)` returns only order `n`).
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * On GPU, when neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
     `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, JAX now preallocates 75% of GPU
