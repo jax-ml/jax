@@ -338,7 +338,7 @@ def _is_trivial_indexer(indexer: indexing.NDIndexer):
       return False
     if idx.is_dynamic_start or idx.is_dynamic_size:
       return False
-    if idx.start != 0 or idx.size != s:
+    if idx.start != 0 or idx.size != s or idx.stride != 1:
       return False
   return True
 
@@ -350,6 +350,11 @@ def _maybe_convert_to_slice(
 
   for i in indexer.indices:
     if not isinstance(i, indexing.Slice):
+      return None
+
+    # A stride of 0 broadcasts a single element, which `lax.slice` cannot
+    # express; the gather path below handles it.
+    if i.stride == 0:
       return None
 
     start = i.start
@@ -377,9 +382,11 @@ def _maybe_convert_to_dynamic_slice(
              for i in indexer.indices):
     return None
 
-  # `lax.dynamic_slice` does not handle striding
+  # `lax.dynamic_slice` does not handle striding, and a stride of 0
+  # (broadcasting a single element) cannot be expressed with it either;
+  # both fall through to the gather path.
   for i in indexer.indices:
-    if isinstance(i, indexing.Slice) and i.stride > 1:
+    if isinstance(i, indexing.Slice) and i.stride != 1:
       return None
 
   _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
