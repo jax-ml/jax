@@ -1823,20 +1823,34 @@ class WGMMAAbstractAccumulatorRef(state.AbstractRef):
 
 
 class AbstractTMEMRef(state.AbstractRef):
-  __slots__ = ["inner_aval", "memory_space", "layout", "collective"]
+  __slots__ = ["layout", "collective"]
 
-  def __init__(self, inner_aval, memory_space, layout, collective):
-    super().__init__(inner_aval, memory_space)
+  def __init__(self, inner_aval, memory_space, layout, collective, kind=None):
+    super().__init__(inner_aval, memory_space, kind=kind)
     self.layout = layout
     self.collective = collective
 
   def __repr__(self) -> str:
     return f'TMEM({self.inner_aval.str_short()}, layout={self.layout}, collective={self.collective})'
 
+  def __eq__(self, other):
+    return (
+        super().__eq__(other)
+        and self.layout == other.layout
+        and self.collective == other.collective
+    )
+
+  def __hash__(self):
+    return hash((super().__hash__(), self.layout, self.collective))
+
   def update(self, inner_aval=None, memory_space=None, kind=None):
-    ref = super().update(inner_aval, memory_space, kind)
+    ref: state.AbstractRef = super().update(inner_aval, memory_space, kind)
     return AbstractTMEMRef(
-        ref.inner_aval, ref.memory_space, self.layout, self.collective
+        ref.inner_aval,
+        ref.memory_space,
+        self.layout,
+        self.collective,
+        ref.kind,
     )
 
 
