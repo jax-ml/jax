@@ -1430,7 +1430,7 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
             [6, 5]]], dtype=int32)
   """
   arr = util.ensure_arraylike("flip", m)
-  return _flip(arr, reductions._ensure_optional_axes(axis))
+  return _flip(arr, reductions._ensure_optional_axes(axis, "jnp.flip"))
 
 @api.jit(static_argnames=('axis',))
 def _flip(m: Array, axis: Axis = None) -> Array:

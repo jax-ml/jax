@@ -238,7 +238,7 @@ def _require_integer(arr: Array) -> Array:
     raise ValueError(f"integer argument required; got dtype={arr.dtype}")
   return arr
 
-def _ensure_optional_axes(x: Axis) -> Axis:
+def _ensure_optional_axes(x: Axis, name: str) -> Axis:
   def force(x):
     if x is None:
       return None
@@ -247,7 +247,7 @@ def _ensure_optional_axes(x: Axis) -> Axis:
     except TypeError:
       return tuple(i if isinstance(i, str) else operator.index(i) for i in x)
   return core.concrete_or_error(
-    force, x, "The axis argument must be known statically.")
+    force, x, f"The axis argument to {name}() must be known statically.")
 
 
 @api.jit(
@@ -342,7 +342,7 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     Array([[0, 0, 0, 0]], dtype=int32)
   """
   return _reduce_sum(
-      a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
+      a, axis=_ensure_optional_axes(axis, "jnp.sum"), dtype=dtype, out=out,
       keepdims=keepdims, initial=initial, where=where,
       promote_integers=promote_integers, out_sharding=out_sharding,
       reduction_order=reduction_order_lib.normalize_order(reduction_order))
@@ -430,9 +430,9 @@ def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
            [1],
            [1]], dtype=int32)
   """
-  return _reduce_prod(a, axis=_ensure_optional_axes(axis), dtype=dtype,
-                      out=out, keepdims=keepdims, initial=initial, where=where,
-                      promote_integers=promote_integers)
+  return _reduce_prod(a, axis=_ensure_optional_axes(axis, "jnp.prod"),
+                      dtype=dtype, out=out, keepdims=keepdims, initial=initial,
+                      where=where, promote_integers=promote_integers)
 
 
 @api.jit(
@@ -524,8 +524,9 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
     Array([[0, 0, 0, 0]], dtype=int32)
   """
   return _reduce_max(
-      a, axis=_ensure_optional_axes(axis), out=out, keepdims=keepdims,
-      initial=initial, where=where, out_sharding=out_sharding,
+      a, axis=_ensure_optional_axes(axis, "jnp.max"), out=out,
+      keepdims=keepdims, initial=initial, where=where,
+      out_sharding=out_sharding,
       reduction_order=reduction_order_lib.normalize_order(reduction_order))
 
 @api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
@@ -607,7 +608,7 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
     >>> jnp.min(x, axis=0, keepdims=True, initial=0, where=where)
     Array([[0, 0, 0, 0]], dtype=int32)
   """
-  return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
+  return _reduce_min(a, axis=_ensure_optional_axes(axis, "jnp.min"), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
 def _minmax_op(
@@ -725,9 +726,9 @@ def minmax(a: ArrayLike, axis: Axis = None, out: None = None,
     init_min, init_max = initial
   else:
     init_min = init_max = initial
-  return _reduce_minmax(a, axis=_ensure_optional_axes(axis), out=out,
-                        keepdims=keepdims, init_min=init_min, init_max=init_max,
-                        where=where)
+  return _reduce_minmax(a, axis=_ensure_optional_axes(axis, "jnp.minmax"),
+                        out=out, keepdims=keepdims, init_min=init_min,
+                        init_max=init_max, where=where)
 
 
 @api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
@@ -784,7 +785,7 @@ def all(a: ArrayLike, axis: Axis = None, out: None = None,
     >>> jnp.all(x, axis=0, keepdims=True, where=where)
     Array([[ True,  True, False, False]], dtype=bool)
   """
-  return _reduce_all(a, axis=_ensure_optional_axes(axis), out=out,
+  return _reduce_all(a, axis=_ensure_optional_axes(axis, "jnp.all"), out=out,
                      keepdims=keepdims, where=where)
 
 @api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
@@ -841,7 +842,7 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
     >>> jnp.any(x, axis=0, keepdims=True, where=where)
     Array([[ True, False,  True, False]], dtype=bool)
   """
-  return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
+  return _reduce_any(a, axis=_ensure_optional_axes(axis, "jnp.any"), out=out,
                      keepdims=keepdims, where=where)
 
 
@@ -852,7 +853,7 @@ def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
   arr = lax.asarray(a)
   init_val = np.array(-1).astype(dtype or arr.dtype)
   return _reduction(arr, name="reduce_bitwise_and", op=lax.bitwise_and, init_val=init_val, preproc=_require_integer,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_bitwise_and"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -861,7 +862,7 @@ def _reduce_bitwise_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None 
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, name="reduce_bitwise_or", op=lax.bitwise_or, init_val=0, preproc=_require_integer,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_bitwise_or"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -870,7 +871,7 @@ def _reduce_bitwise_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, name="reduce_bitwise_xor", op=lax.bitwise_xor, init_val=0, preproc=_require_integer,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_bitwise_xor"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -879,7 +880,7 @@ def _reduce_logical_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, name="reduce_logical_and", op=lax.bitwise_and, init_val=True, preproc=_cast_to_bool,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_logical_and"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -888,7 +889,7 @@ def _reduce_logical_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None 
                        out: None = None, keepdims: bool = False,
                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, name="reduce_logical_or", op=lax.bitwise_or, init_val=False, preproc=_cast_to_bool,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_logical_or"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -897,7 +898,7 @@ def _reduce_logical_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                         out: None = None, keepdims: bool = False,
                         initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
   return _reduction(a, name="reduce_logical_xor", op=lax.bitwise_xor, init_val=False, preproc=_cast_to_bool,
-                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    axis=_ensure_optional_axes(axis, "reduce_logical_xor"), dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where)
 
 
@@ -1033,7 +1034,7 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
            [2.5],
            [6. ]], dtype=float32)
   """
-  return _mean(a, _ensure_optional_axes(axis), dtype, out, keepdims,
+  return _mean(a, _ensure_optional_axes(axis, "jnp.mean"), dtype, out, keepdims,
                where=where, upcast_f16_for_computation=(dtype is None))
 
 def _count(
@@ -1157,7 +1158,8 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
     >>> jnp.average(x, weights=weights, axis=1)
     Array([5.5, 4.5], dtype=float32)
   """
-  return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
+  return _average(a, _ensure_optional_axes(axis, "jnp.average"), weights,
+                  returned, keepdims)
 
 @api.jit(static_argnames=('axis', 'returned', 'keepdims'), inline=api.Inline.JAX_EARLY)
 def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
@@ -1284,7 +1286,7 @@ def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   elif not isinstance(ddof, int) or ddof != 0:
     raise ValueError("ddof and correction can't be provided simultaneously.")
   a = ensure_arraylike("var", a)
-  return _var(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction, keepdims=keepdims,
+  return _var(a, axis=_ensure_optional_axes(axis, "jnp.var"), dtype=dtype, out=out, correction=correction, keepdims=keepdims,
               where=where, a_mean=mean)
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
@@ -1432,7 +1434,7 @@ def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   elif not isinstance(ddof, int) or ddof != 0:
     raise ValueError("ddof and correction can't be provided simultaneously.")
   a = ensure_arraylike("std", a)
-  return _std(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction, keepdims=keepdims,
+  return _std(a, axis=_ensure_optional_axes(axis, "jnp.std"), dtype=dtype, out=out, correction=correction, keepdims=keepdims,
               where=where, mean=mean)
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
@@ -1490,7 +1492,7 @@ def ptp(a: ArrayLike, axis: Axis = None, out: None = None,
            [6]], dtype=int32)
   """
   a = ensure_arraylike("ptp", a)
-  return _ptp(a, _ensure_optional_axes(axis), out, keepdims)
+  return _ptp(a, _ensure_optional_axes(axis, "jnp.ptp"), out, keepdims)
 
 @api.jit(static_argnames=('axis', 'keepdims'))
 def _ptp(a: Array, axis: Axis = None, out: None = None,
@@ -2087,7 +2089,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
-  return _nanvar(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction,
+  return _nanvar(a, axis=_ensure_optional_axes(axis, "jnp.nanvar"), dtype=dtype, out=out, correction=correction,
                  keepdims=keepdims, where=where, a_mean=mean)
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
@@ -2199,7 +2201,7 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   if correction is None:
     correction = 0 if ddof is None else ddof
   a = ensure_arraylike("nanstd", a)
-  return _nanstd(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction,
+  return _nanstd(a, axis=_ensure_optional_axes(axis, "jnp.nanstd"), dtype=dtype, out=out, correction=correction,
                  keepdims=keepdims, where=where, mean=mean)
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
