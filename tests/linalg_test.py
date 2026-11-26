@@ -2334,9 +2334,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, side=side)
      for shape, side in [
-       ((4, 4), 'right'),  # square, side='right' (m >= n)
-       ((5, 3), 'right'),  # tall, side='right' (m > n)
-       ((3, 5), 'left'),   # wide, side='left' (m < n, qdwh constraint)
+       ((4, 4), 'right'),  # square, side='right'
+       ((4, 4), 'left'),   # square, side='left' (GH-42763)
+       ((5, 3), 'right'),  # tall, side='right'
+       ((5, 3), 'left'),   # tall, side='left'
+       ((3, 5), 'right'),  # wide, side='right'
+       ((3, 5), 'left'),   # wide, side='left'
      ]
     ],
     batch=[3],

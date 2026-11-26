@@ -2079,19 +2079,29 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   m, n = a.shape
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
-    if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
-                                         max_iterations=max_iterations)
-    elif m < n and side == "left":
-      a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
-                                         max_iterations=max_iterations)
-      posdef = posdef.T.conj()
-      unitary = unitary.T.conj()
+    if side == "right":
+      if m >= n:
+        unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                           max_iterations=max_iterations)
+      else:
+        a_h = a.T.conj()
+        u_h, _, _, _ = qdwh.qdwh(a_h, is_hermitian=False, eps=eps,
+                                 max_iterations=max_iterations)
+        unitary = u_h.T.conj()
+        posdef = u_h @ a
+    elif side == "left":
+      if m <= n:
+        a_h = a.T.conj()
+        u_h, posdef, _, _ = qdwh.qdwh(a_h, is_hermitian=False, eps=eps,
+                                      max_iterations=max_iterations)
+        unitary = u_h.T.conj()
+        posdef = posdef.T.conj()
+      else:
+        unitary, _, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                     max_iterations=max_iterations)
+        posdef = a @ unitary.T.conj()
     else:
-      raise NotImplementedError("method='qdwh' only supports mxn matrices "
-                                "where m < n where side='right' and m >= n "
-                                f"side='left', got {a.shape} with {side=}")
+      raise ValueError(f"Unknown polar decomposition side {side}; should be 'left' or 'right'.")
   elif method == "svd":
     u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
     s_svd = s_svd.astype(u_svd.dtype)
