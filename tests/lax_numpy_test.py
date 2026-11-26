@@ -285,6 +285,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertFalse(jnp.array_equiv([1, 2], [[1, 2, 1, 2], [1, 2, 1, 2]]))
       self.assertFalse(jnp.array_equiv([1, 2], [[1, 2], [1, 3]]))
 
+  @jtu.sample_product(
+    shapes=[((2,), (3,)), ((2, 3), (2, 4)), ((2, 3), (4, 3)), ((0,), (3,))],
+  )
+  def testArrayEquivIncompatibleShapes(self, shapes):
+    # Regression test for https://github.com/jax-ml/jax/issues/42873
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32) for shape in shapes]
+    self._CheckAgainstNumpy(np.array_equiv, jnp.array_equiv, args_maker)
+    self._CompileAndCheck(jnp.array_equiv, args_maker)
+
   def testArrayModule(self):
     if numpy_dispatch is None:
       raise SkipTest('requires https://github.com/seberg/numpy-dispatch')
