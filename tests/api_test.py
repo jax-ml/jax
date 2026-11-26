@@ -2625,6 +2625,53 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "unexpected JAX type"):
       pullback(np.ones((2, 4), dtype=np.float32))
 
+  @jtu.device_supports_buffer_donation()
+  def test_vjp_with_donating_jit_residual(self):
+    def f(x, w):
+      return jax.nn.silu(x @ w) + x * 0.5
+
+    f_jit = jax.jit(f, donate_argnums=(0,))
+    x = jnp.ones((16, 32), dtype=jnp.float32)
+    w = jnp.ones((32, 32), dtype=jnp.float32) * 0.1
+    _, expected_pullback = jax.vjp(f, x, w)
+    expected_gx, expected_gw = expected_pullback(
+        jnp.ones((16, 32), dtype=jnp.float32))
+
+    y, pullback = jax.vjp(f_jit, x.copy(), w)
+    gx, gw = pullback(jnp.ones_like(y))
+
+    self.assertAllClose(gx, expected_gx)
+    self.assertAllClose(gw, expected_gw)
+
+  @jtu.device_supports_buffer_donation()
+  def test_linearize_with_donating_jit_residual(self):
+    def f(x, w):
+      return jax.nn.silu(x @ w) + x * 0.5
+
+    f_jit = jax.jit(f, donate_argnums=(0,))
+    x = jnp.ones((16, 32), dtype=jnp.float32)
+    w = jnp.ones((32, 32), dtype=jnp.float32) * 0.1
+    tx, tw = jnp.ones_like(x), jnp.ones_like(w)
+    expected_y, expected_dy = jax.jvp(f, (x, w), (tx, tw))
+
+    y, pushforward = jax.linearize(f_jit, x.copy(), w)
+    dy = pushforward(tx, tw)
+
+    self.assertAllClose(y, expected_y)
+    self.assertAllClose(dy, expected_dy)
+
+  @jtu.device_supports_buffer_donation()
+  def test_second_order_grad_with_donating_jit_residual(self):
+    def f(x):
+      return jax.nn.silu(x) + x * 0.5
+
+    f_jit = jax.jit(f, donate_argnums=(0,))
+    x = jnp.array(1.0, dtype=jnp.float32)
+    expected = jax.grad(jax.grad(f))(x)
+    actual = jax.grad(jax.grad(f_jit))(x.copy())
+
+    self.assertAllClose(actual, expected)
+
   def test_vjp_too_many_args(self):
     def f(x): return x, x
     _, pullback = api.vjp(f, 1.)
