@@ -1592,6 +1592,21 @@ class JitTest(jtu.BufferDonationTestCase):
       _ = f(x)
     self.assertEqual(f._cache_size(), 1)
 
+  @parameterized.parameters(np.float32, np.int32, np.complex64)
+  def test_jit_cache_rejects_non_native_byte_order(self, dtype):
+    native = np.array([1, -3], dtype=dtype)
+    swapped = native.astype(native.dtype.newbyteorder('S'))
+    cold = jit(lambda x: x)
+    warm = jit(lambda x: x)
+
+    with self.assertRaises(TypeError) as cold_error:
+      cold(swapped)
+    self.assertArraysEqual(warm(native), native)
+    with self.assertRaises(TypeError) as warm_error:
+      warm(swapped)
+    self.assertIn("Error interpreting argument", str(cold_error.exception))
+    self.assertIn("Error interpreting argument", str(warm_error.exception))
+
   def test_jit_nan_times_zero(self):
     # https://github.com/jax-ml/jax/issues/4780
     def f(x):
