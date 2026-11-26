@@ -1798,6 +1798,11 @@ def _swap_pull_rule(
     **kwargs,
 ):
   del kwargs
+  if block_transform.block_shape is not None and any(
+      isinstance(bd, pallas_core.Element) and bd.padding != (0, 0)
+      for bd in block_transform.block_shape
+  ):
+    raise NotImplementedError('swap not supported yet')
   # The output and val block spec are the same.
   return [block_transform, block_transform] + [None] * (
       len(ctx.avals_in) - 2
@@ -1835,6 +1840,8 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
             block_size=block_size,
         )
         res = indexing.ds(start + i * block_size, block_size)
+      case pallas_core.Element(bs, (0, 0)):
+        res = indexing.ds(start + i, bs)
       case pallas_core.Squeezed() | None:
         res = start + i
       case _:
@@ -1893,6 +1900,7 @@ def _get_pull_rule(
   if not all(
       bd is None
       or isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed))
+      or (isinstance(bd, pallas_core.Element) and bd.padding == (0, 0))
       for bd in block_transform.block_shape
   ):
     raise NotImplementedError('get not supported yet')
@@ -1911,14 +1919,15 @@ def _get_pull_rule(
       raise NotImplementedError('get not supported yet')
     bd = next(block_shape_iter)
     if not _is_squeezed(bd) and isinstance(idx_aval.start, int):
-      block_size = pallas_core.get_block_size(bd)
-      _maybe_static_check(
-          idx_aval.start % block_size == 0,
-          'slice_start={slice_start} is not a multiple of'
-          ' block_size={block_size}',
-          slice_start=idx_aval.start,
-          block_size=block_size,
-      )
+      if isinstance(bd, (int, pallas_core.Blocked)):
+        block_size = pallas_core.get_block_size(bd)
+        _maybe_static_check(
+            idx_aval.start % block_size == 0,
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=idx_aval.start,
+            block_size=block_size,
+        )
       _maybe_static_check(
           idx_aval.start + idx_aval.size <= size,
           'slice_start={slice_start} + slice_size={slice_size} exceeds'
@@ -1972,6 +1981,8 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
         return indexing.ds(start + i * b, b)
       case pallas_core.Blocked(bs):
         return indexing.ds(start + i * bs, bs)
+      case pallas_core.Element(bs, (0, 0)):
+        return indexing.ds(start + i, bs)
       case pallas_core.Squeezed() | None:
         return start + i
       case _:
@@ -2001,14 +2012,15 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
     if not _is_squeezed(bd):
-      block_size = pallas_core.get_block_size(bd)
-      _maybe_static_check(
-          idx.start % block_size == 0,
-          'slice_start={slice_start} is not a multiple of'
-          ' block_size={block_size}',
-          slice_start=idx.start,
-          block_size=block_size,
-      )
+      if isinstance(bd, (int, pallas_core.Blocked)):
+        block_size = pallas_core.get_block_size(bd)
+        _maybe_static_check(
+            idx.start % block_size == 0,
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=idx.start,
+            block_size=block_size,
+        )
       _maybe_static_check(
           idx.start + idx_aval.size <= size,
           'slice_start={slice_start} + slice_size={slice_size} exceeds'
