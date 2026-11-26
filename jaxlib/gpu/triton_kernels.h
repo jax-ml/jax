@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -190,9 +191,13 @@ class AutotunedKernelCall {
       std::string name, std::vector<Config> configs,
       std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
 
-  static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
-                                             gpuStream_t stream,
-                                             void** buffers);
+  // Benchmarks each launchable config by calling `launch` on it and returns the
+  // fastest one. `launch` must enqueue the kernel on `stream` using `buffers`:
+  // timing events are recorded on `stream`, and aliased inputs in `buffers` are
+  // restored after autotuning.
+  static absl::StatusOr<KernelCall> Autotune(
+      AutotunedKernelCall kernel_call, gpuStream_t stream, void** buffers,
+      absl::FunctionRef<absl::Status(KernelCall&)> launch);
 
   static absl::StatusOr<AutotunedKernelCall> FromProto(
       const jax_triton::TritonAutotunedKernelCall& proto);

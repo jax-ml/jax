@@ -291,15 +291,16 @@ absl::StatusOr<ModuleImage*> GetModuleImage(
   return it->second.get();
 }
 
-absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
-                                void** buffers, int num_iterations) {
+absl::StatusOr<float> Benchmark(gpuStream_t stream,
+                                absl::FunctionRef<absl::Status()> launch,
+                                int num_iterations) {
   gpuEvent_t start, stop;
   GPU_RETURN_IF_ERROR(gpuEventCreate(&start, /*Flags=*/GPU_EVENT_DEFAULT));
   GPU_RETURN_IF_ERROR(gpuEventCreate(&stop, /*Flags=*/GPU_EVENT_DEFAULT));
-  JAX_RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));  // Warm-up.
+  JAX_RETURN_IF_ERROR(launch());  // Warm-up.
   GPU_RETURN_IF_ERROR(gpuEventRecord(start, stream));
   for (int i = 0; i < num_iterations; ++i) {
-    JAX_RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));
+    JAX_RETURN_IF_ERROR(launch());
   }
   GPU_RETURN_IF_ERROR(gpuEventRecord(stop, stream));
   GPU_RETURN_IF_ERROR(gpuEventSynchronize(stop));
@@ -356,8 +357,9 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
       JAX_ASSIGN_OR_RETURN(
           AutotunedKernelCall autotuned_call,
           AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-      return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
-                                           buffers);
+      return AutotunedKernelCall::Autotune(
+          std::move(autotuned_call), stream, buffers,
+          [&](KernelCall& call) { return call.Launch(stream, buffers); });
     } else {
       return absl::InvalidArgumentError("Unknown kernel call type.");
     }
@@ -1188,7 +1190,8 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
 }
 
 /*static*/ absl::StatusOr<KernelCall> AutotunedKernelCall::Autotune(
-    AutotunedKernelCall kernel_call, gpuStream_t stream, void** buffers) {
+    AutotunedKernelCall kernel_call, gpuStream_t stream, void** buffers,
+    absl::FunctionRef<absl::Status(KernelCall&)> launch) {
   // Ensure a valid context for driver calls that don't take the stream.
   // gpuContext_t context;
   // GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
@@ -1232,8 +1235,9 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
       configs_to_skip.insert(&config);
       continue;
     }
-    JAX_ASSIGN_OR_RETURN(float t,
-                         Benchmark(stream, config.kernel_call, buffers, 1));
+    JAX_ASSIGN_OR_RETURN(
+        float t,
+        Benchmark(stream, [&] { return launch(config.kernel_call); }, 1));
     LOG(INFO) << config.description << ", ran 1 iter in " << t << " ms";
     best = std::min(best, t);
   }
@@ -1257,7 +1261,9 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
     }
 
     JAX_ASSIGN_OR_RETURN(
-        float t, Benchmark(stream, config.kernel_call, buffers, timed_iters));
+        float t,
+        Benchmark(
+            stream, [&] { return launch(config.kernel_call); }, timed_iters));
     LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
               << t << " ms";
 
@@ -1349,8 +1355,9 @@ static absl::StatusOr<KernelCall*> ResolveKernelCall(
                   instantiate_result->proto.autotuning_kernel_candidates()));
           // The returned KernelCall is fully compiled down to machine code, and
           // thus ready to be executed.
-          return AutotunedKernelCall::Autotune(std::move(autotuned_call),
-                                               stream, buffers);
+          return AutotunedKernelCall::Autotune(
+              std::move(autotuned_call), stream, buffers,
+              [&](KernelCall& call) { return call.Launch(stream, buffers); });
         }
         default:
           return absl::InvalidArgumentError("Unknown kernel call type.");
