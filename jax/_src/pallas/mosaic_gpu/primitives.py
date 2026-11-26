@@ -4339,7 +4339,7 @@ def _async_load_tmem_lowering_rule_wg(
   transform_avals = tree.unflatten(
       ctx.avals_in[1 : 1 + tree.num_leaves]
   )
-  x_tmem, _, transforms = lowering._handle_transforms(
+  x_tmem, transformed_aval, transforms = lowering._handle_transforms(
       ctx,
       x_aval,
       x_ref,
@@ -4354,7 +4354,10 @@ def _async_load_tmem_lowering_rule_wg(
     orig_reduce = reduce
     # Make sure we will interpret the reduction as unsigned, since we erase
     # signedness.
-    if isinstance(x_aval.dtype, jnp.unsignedinteger) and "abs" not in reduce:
+    if (
+        jnp.issubdtype(transformed_aval.dtype, jnp.unsignedinteger)
+        and "abs" not in reduce
+    ):
       reduce = "abs" + reduce  # type: ignore
     match reduce:
       case "min":

@@ -7021,8 +7021,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   @parameterized.product(
       dtype=[jnp.float32, jnp.int32],
       reduction=["min", "max", "absmin", "absmax"],
+      use_ref_union=[False, True],
   )
-  def test_load_reduce_tmem_native(self, dtype, reduction):
+  def test_load_reduce_tmem_native(self, dtype, reduction, use_ref_union):
     if not (
         jtu.is_cuda_compute_capability_at_least("10.1")
         and not jtu.is_cuda_compute_capability_at_least("12.0")
@@ -7034,15 +7035,17 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     if "abs" in reduction and dtype == jnp.int32:
       reduction = reduction[-3:]
       dtype = jnp.uint32
+    tmem = plgpu.TMEM(shape, dtype)
 
     @self.kernel(
         out_type=(
             jax.ShapeDtypeStruct(shape, dtype),
             jax.ShapeDtypeStruct((shape[0],), dtype),
         ),
-        scratch_types=[plgpu.TMEM(shape, dtype)],
+        scratch_types=[plgpu.RefUnion(tmem) if use_ref_union else tmem],
     )
-    def kernel(x_ref, y_ref, red_y_ref, tmem_ref):
+    def kernel(x_ref, y_ref, red_y_ref, scratch):
+      [tmem_ref] = scratch if use_ref_union else [scratch]
       x_val = plgpu.load(x_ref, layout=plgpu.Layout.TCGEN05, optimized=False)
       plgpu.async_store_tmem(tmem_ref, x_val)
       plgpu.commit_tmem()
@@ -7058,7 +7061,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     if dtype == jnp.int32:
       x = prng.integers(-100000, 100000, shape).astype(dtype)
     elif dtype == jnp.uint32:
-      x = prng.integers(0, 1000000, shape).astype(dtype)
+      x = prng.integers(0, 2**32, shape, dtype=np.uint32)
     else:
       x = prng.uniform(-1, 1, shape).astype(dtype)
     y, red_y = jax.block_until_ready(kernel(x))
