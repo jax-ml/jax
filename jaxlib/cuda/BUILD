@@ -615,6 +615,7 @@ cc_library(
         "@xla//xla/ffi:record_ffi",
         "@xla//xla/ffi:type_registry",
         "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:kernel_api",
         "@xla//xla/ffi/api:record_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor:device_description",
