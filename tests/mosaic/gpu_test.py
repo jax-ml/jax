@@ -4894,6 +4894,77 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
+  def _check_tma_bounded_slice(
+      self,
+      gmem_shape,
+      starts,
+      box,
+      bound_dim,
+      bound,
+      *,
+      dtype=jnp.float32,
+  ):
+    """Runs a TMA store of `box` at `starts` with `bound` on `bound_dim`."""
+    def mgpu_slice():
+      bound_arg = c(bound, ir.IntegerType.get_signless(32))
+      return tuple(
+          bds(start, length, bound_arg)
+          if d == bound_dim
+          else ds(start, length)
+          for d, (start, length) in enumerate(zip(starts, box, strict=True))
+      )
+
+    def kernel(ctx, src, dst, tile):
+      copy(src, tile)
+      ctx.async_copy(src_ref=tile, dst_ref=dst, gmem_slice=mgpu_slice())
+      ctx.await_async_copy(0)
+
+    x = (np.arange(math.prod(box), dtype=np.float32).reshape(box) % 251).astype(dtype)
+    init = np.full(gmem_shape, -7.0, dtype)
+    (out,) = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, (), x, inout_shape=init
+    )(x, init)
+    stops = [
+        min(start + (bound if d == bound_dim else length), size)
+        for d, (start, length, size) in enumerate(
+            zip(starts, box, gmem_shape, strict=True)
+        )
+    ]
+    gmem_window = tuple(slice(a, b) for a, b in zip(starts, stops))
+    box_window = tuple(slice(0, b - a) for a, b in zip(starts, stops))
+    expected = init.copy()
+    expected[gmem_window] = x[box_window]
+    np.testing.assert_array_equal(np.asarray(out, np.float32), expected.astype(np.float32))
+
+  @parameterized.named_parameters(
+      ("full", 128, 128),
+      ("partial", 128, 50),
+      ("one_row", 128, 1),
+      ("empty", 128, 0),
+      ("clipped_by_array_end", 256, 128),
+  )
+  def test_tma_bounded_slice(self, start, bound):
+    self.skip_unless_sm107f()
+    self._check_tma_bounded_slice(
+        gmem_shape=(300, 256), starts=[start, 128], box=(128, 128), bound_dim=0,
+        bound=bound, dtype=jnp.bfloat16,
+    )
+
+  @parameterized.named_parameters(
+      (f"_{rank}d_dim{dim}", rank, dim)
+      for rank in range(1, 6)
+      for dim in range(rank)
+  )
+  def test_tma_bounded_slice_nd(self, rank, dim):
+    self.skip_unless_sm107f()
+    gmem_shape = (5, 6, 7, 9, 96)[-rank:]
+    box = (2, 3, 4, 4, 32)[-rank:]
+    starts = list((1, 2, 1, 3, 16)[-rank:])
+    minor = dim == rank - 1
+    starts[dim] = gmem_shape[dim] - box[dim] + (4 if minor else 1)
+    bound = box[dim]
+    self._check_tma_bounded_slice(gmem_shape, starts, box, dim, bound)
+
   def test_tma_load_oob_over_trivial_gmem_dimension(self):
     src_shape = (64, 1, 64)
     dst_shape = (64, 2, 64)
@@ -11374,6 +11445,15 @@ class UtilsTest(TestCase):
       with self.subTest(s=s):
         with self.assertRaisesRegex(NotImplementedError, "has dynamic bounds"):
           utils.parse_indices(s, (2, 3, 4))
+
+  @parameterized.named_parameters(
+      ("negative_base", -1, 64, "base must be non-negative"),
+      ("negative_length", 0, -1, "length must be non-negative"),
+  )
+  def test_bounded_dynamic_slice_validation(self, base, length, pattern):
+    bound = c(4, ir.IntegerType.get_signless(32))
+    with self.assertRaisesRegex(ValueError, pattern):
+      bds(base, length, bound)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_assert(self):
