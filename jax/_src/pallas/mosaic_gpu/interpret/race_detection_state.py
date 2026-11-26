@@ -59,9 +59,14 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
       buffer_key,
       rnge: interpret_utils.Access,
       source_info=None,
+      record_clock=None,
   ):
-    super().check_read(thread, clock, buffer_key, rnge.range, source_info)
-    self._check_ref_union(thread, clock, buffer_key, False, source_info)
+    super().check_read(
+        thread, clock, buffer_key, rnge.range, source_info, record_clock
+    )
+    self._check_ref_union(
+        thread, clock, buffer_key, False, source_info, record_clock
+    )
 
   def check_write(
       self,
@@ -70,11 +75,18 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
       buffer_key,
       rnge: interpret_utils.Access,
       source_info=None,
+      record_clock=None,
   ):
-    super().check_write(thread, clock, buffer_key, rnge.range, source_info)
-    self._check_ref_union(thread, clock, buffer_key, True, source_info)
+    super().check_write(
+        thread, clock, buffer_key, rnge.range, source_info, record_clock
+    )
+    self._check_ref_union(
+        thread, clock, buffer_key, True, source_info, record_clock
+    )
 
-  def _check_ref_union(self, thread, clock, buffer_key, is_write, source_info):
+  def _check_ref_union(
+      self, thread, clock, buffer_key, is_write, source_info, record_clock=None
+  ):
     with self.lock:
       membership = self.ref_union_members.get(buffer_key)
     if membership is None:
@@ -88,7 +100,13 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
     with self.lock:
       accesses = self.union_accesses[union]
       prior = accesses[:]
-      accesses.append((thread, clock, group, is_write, user_frame))
+      accesses.append((
+          thread,
+          clock if record_clock is None else record_clock,
+          group,
+          is_write,
+          user_frame,
+      ))
 
     def describe(writing, in_group, frame):
       kind = "write" if writing else "read"
