@@ -207,6 +207,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertEqual(f(), 3)
 
   @parameterized.parameters([True, False])
+  def test_slice_addupdate(self, jit):
+    def f(x):
+      r = jax.new_ref(x)
+      r.at[1:3].addupdate(jnp.array([10.0, 20.0]))
+      return r[...]
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertAllClose(f(jnp.zeros(4)), jnp.array([0.0, 10.0, 20.0, 0.0]))
+
+  @parameterized.parameters([True, False])
   def test_internal_mutarray_basic(self, jit):
     def f():
       x_mut = core.new_ref(jnp.zeros(3))
