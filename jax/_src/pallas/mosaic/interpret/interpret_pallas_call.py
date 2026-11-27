@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 import contextlib
 import dataclasses
 import enum
@@ -36,6 +36,7 @@ from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as mosaic_core
+from jax._src.pallas.mosaic import pallas_call_registration
 from jax._src.pallas.mosaic import pipeline as mosaic_pipeline
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import tpu_info
@@ -143,11 +144,23 @@ def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
   config.pallas_tpu_interpret_mode_context_manager.set_global(params)
 
 
+@dataclasses.dataclass
+class KernelExitLeftovers:
+  leftovers_found: bool = False
+  messages: list[str] = dataclasses.field(default_factory=list)
+
+  def reset(self):
+    self.leftovers_found = False
+    self.messages.clear()
+
+
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
 # Maybe for running multiple distinct interpreted computations in parallel?
 _shared_memory: memory.SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 races: RaceDetectionState[memory.SharedMemory.ThreadKey] | None = None
+kernel_exit_leftovers: KernelExitLeftovers = KernelExitLeftovers()
+_kernel_exit_leftover_error: Exception | None = None
 dma_id_counter: interpret_utils.Counter | None = None
 
 
@@ -163,11 +176,13 @@ def reset_tpu_interpret_mode_state():
   debugging purposes.  In this case, the shared state must be reset before
   any further kernels are interpreted.
   """
-  global _shared_memory, races, dma_id_counter
+  global _shared_memory, races, dma_id_counter, _kernel_exit_leftover_error
   with _shared_memory_init_lock:
     _shared_memory = None
     races = None
     dma_id_counter = None
+    _kernel_exit_leftover_error = None
+    kernel_exit_leftovers.reset()
 
 
 def _get_shared_memory() -> memory.SharedMemory:
@@ -175,8 +190,66 @@ def _get_shared_memory() -> memory.SharedMemory:
   return _shared_memory
 
 
-def _clear_shared_memory():
-  global _shared_memory
+def _clear_shared_memory(*, on_kernel_exit_leftovers: str = 'print'):
+  global _shared_memory, _kernel_exit_leftover_error
+  messages = []
+  if _shared_memory is not None:
+    with _shared_memory.lock:
+      failed = _shared_memory._failure is not None
+      all_sems = (
+          []
+          if failed
+          else list(_shared_memory.sem.values())
+          + list(_shared_memory.fixed_id_sem.values())
+      )
+    if not failed:
+      # 1. Collect every semaphore (regular and fixed-id) with non-zero count
+      for sem in all_sems:
+        with sem.cv:
+          for gci in range(_shared_memory.num_cores):
+            count = sem.count_by_core[gci]
+            if count != 0:
+              dev_id, _ = _shared_memory.global_core_id_to_thread(gci)
+              msg = (
+                  f'Semaphore {sem.id} has non-zero count for {dev_id} (global'
+                  f' core {gci}) at kernel exit: {count}'
+              )
+              messages.append(msg)
+
+      # 2. Collect every queued DMA task whose DMA is not COMPLETED
+      uncompleted_dmas = {}
+      for sem in all_sems:
+        with sem.cv:
+          for tasks in sem.tasks:
+            for t in tasks:
+              dma_obj = getattr(t, '__self__', None)
+              if (
+                  dma_obj is not None
+                  and hasattr(dma_obj, 'state')
+                  and hasattr(dma_obj, 'id')
+              ):
+                if dma_obj.state != DmaState.COMPLETED:
+                  uncompleted_dmas[dma_obj.id] = dma_obj
+
+      for dma_id, dma_obj in uncompleted_dmas.items():
+        msg = (
+            f'DMA {dma_id} was never completed at kernel exit: '
+            f'state={dma_obj.state.name}, src_device={dma_obj.src_device_id}, '
+            f'dst_device={dma_obj.dst_device_id}'
+        )
+        messages.append(msg)
+
+  if messages:
+    kernel_exit_leftovers.leftovers_found = True
+    kernel_exit_leftovers.messages.extend(messages)
+    joined_msg = '\n'.join(messages)
+    if on_kernel_exit_leftovers == 'print':
+      print(joined_msg)
+    elif on_kernel_exit_leftovers == 'raise':
+      _kernel_exit_leftover_error = RuntimeError(
+          f'Leftover state detected at kernel exit:\n{joined_msg}'
+      )
+
   with _shared_memory_init_lock:
     _shared_memory = None
 
@@ -188,7 +261,7 @@ def ordering_barrier(token):
 def _initialize_shared_memory(
     token, device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
-  global _shared_memory, races, dma_id_counter
+  global _shared_memory, races, dma_id_counter, _kernel_exit_leftover_error
   del device_id
 
   num_devices = int(num_devices)
@@ -200,6 +273,8 @@ def _initialize_shared_memory(
       vector_clock_size = interpret_params.get_vector_clock_size(num_devices)
       races = RaceDetectionState(on_race=interpret_params.on_race)
       dma_id_counter = interpret_utils.Counter(100)
+      _kernel_exit_leftover_error = None
+      kernel_exit_leftovers.reset()
       _shared_memory = memory.SharedMemory(
           num_devices=num_devices,
           num_cores_per_device=num_cores_per_device,
@@ -213,7 +288,11 @@ def _initialize_shared_memory(
               num_devices, action=_update_clocks_for_global_barrier
           ),
           clean_up_barrier=threading.Barrier(
-              num_devices, action=_clear_shared_memory
+              num_devices,
+              action=functools.partial(
+                  _clear_shared_memory,
+                  on_kernel_exit_leftovers=interpret_params.on_kernel_exit_leftovers,
+              ),
           ),
           logging_mode=interpret_params.logging_mode,
       )
@@ -253,15 +332,16 @@ def _barrier(token, device_id):
   return token
 
 
-@fail_on_exception
 def _clean_up_shared_memory(token, device_id):
   del device_id
   shared_memory = _get_shared_memory()
-  # NOTE: We rely on the fact that `clean_up_barrier.wait()` will not raise.
-  # Otherwise, we could end up waiting on the barrier once here, and then again
-  # in the fail_on_exception wrapper -- so the barrier could complete without
-  # all devices having reached it.
+  # NOTE: Do not wrap `_clean_up_shared_memory` in `@fail_on_exception`: raising
+  # after `clean_up_barrier.wait()` inside `@fail_on_exception` would call
+  # `set_failed(top_level=True)` and wait on `clean_up_barrier` a second time.
   shared_memory.clean_up_barrier.wait()
+  shared_memory.check_failed()
+  if _kernel_exit_leftover_error is not None:
+    raise _kernel_exit_leftover_error
   return token
 
 
@@ -307,24 +387,6 @@ def _check_for_revisiting(
       )
 
   past_output_ranges.append((loop_idx, output_ranges))
-  return token
-
-
-@fail_on_exception
-def _validate(token, device_id):
-  device_id = int(device_id)
-
-  shared_memory = _get_shared_memory()
-  semaphores = shared_memory.get_sempahores_with_nonzero_count(device_id)
-  if semaphores:
-    sem, global_core_id = semaphores[0]
-    # TODO(jburnim): Make this raise an error, but in a way that doesn't
-    # cause other devices to hang later in `_clean_up_shared_memory`.
-    print(
-        f'Semaphore {sem.id} has non-zero count for {device_id} (global core'
-        f' {global_core_id}) at kernel exit:'
-        f' {sem.count_by_core[global_core_id]}'
-    )
   return token
 
 
@@ -610,6 +672,18 @@ TPU_MEMORY_SPACE_IDXS[jax_core.MemorySpace.Host] = host_idx
 TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.DEFAULT] = TPU_MEMORY_SPACE_IDXS[
     mosaic_core.MemorySpace.VMEM
 ]
+
+
+_tag_to_collective_id_mapping: dict[Hashable, int] = {}
+_tag_id_counter: int = 1000
+
+def _get_or_allocate_tag_collective_id(tag: Hashable) -> int:
+  """Returns a stable fixed semaphore ID for the given barrier semaphore tag."""
+  global _tag_id_counter
+  if tag not in _tag_to_collective_id_mapping:
+    _tag_to_collective_id_mapping[tag] = _tag_id_counter
+    _tag_id_counter += 1
+  return _tag_to_collective_id_mapping[tag]
 
 
 def get_barrier_semaphore(token, device_id, collective_id):
@@ -1753,13 +1827,22 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is mosaic_primitives.get_barrier_semaphore_p:
-        # TODO(rdyro): Support barrier semaphore tags in interpret mode.
+        collective_id = ctx.mosaic_params.collective_id
+        tag = eqn.params.get('tag')
+        if collective_id is not None and tag is not None:
+          raise ValueError(
+              'Conflicting collective_id specified: CompilerParams has'
+              f' {collective_id!r} but get_barrier_semaphore has'
+              f' {tag!r}. Specify only one.'
+          )
+        if collective_id is None and tag is not None:
+          collective_id = _get_or_allocate_tag_collective_id(tag)
         token, out = callback.io_callback(
             get_barrier_semaphore,
             (TOKEN_SHAPE_DTYPE, jax.ShapeDtypeStruct((), jnp.int16)),
             token,
             ctx.device_id,
-            ctx.mosaic_params.collective_id,
+            collective_id,
         )
 
       elif prim is primitives.semaphore_signal_p:
@@ -2023,6 +2106,18 @@ def interpret_pallas_call(
     assert isinstance(compiler_params, mosaic_core.CompilerParams)
     mosaic_params = compiler_params
   del compiler_params
+
+  # When collective_id is None, the kernel does not specify an explicit collective
+  # semaphore, so the interpreter's default global entry barrier runs below. That
+  # matches TPU hardware lowering where XLA inserts the default device barrier
+  # unless skip_device_barrier is set.
+  tag = pallas_call_registration._extract_single_barrier_semaphore_tag(jaxpr)
+  if mosaic_params.collective_id is not None and tag is not None:
+    raise ValueError(
+        'Conflicting collective_id specified: CompilerParams has'
+        f' {mosaic_params.collective_id!r} but get_barrier_semaphore has'
+        f' {tag!r}. Specify only one.'
+    )
 
   if isinstance(mesh, mosaic_core.TensorCoreMesh):
     # As a convenience for users, if we are interpreting a pl.core_map over a
@@ -2633,8 +2728,6 @@ def interpret_pallas_call(
         ),
     )
     ret.append(r)
-
-  token = callback.io_callback(_validate, TOKEN_SHAPE_DTYPE, token, device_id)
 
   # For now, when we're done with a pallas_call, we delete the shared memory.
   # We use a barrier to ensure that all devices are done running the kernel.

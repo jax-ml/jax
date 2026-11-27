@@ -28,6 +28,7 @@ from jax._src import shard_map
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 import jax.numpy as jnp
 import numpy as np
 
@@ -143,6 +144,200 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result)
+
+  @parameterized.product(
+      dma_execution_mode=['eager', 'on_wait'],
+      detect_races=[True, False])
+  def test_tagged_barrier_semaphore(self, dma_execution_mode, detect_races):
+    num_devices = jax.device_count()
+    partition = P(None, 'x')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8, 128 * num_devices), dtype=jnp.float32)
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      left_neighbor = lax.rem(my_id + num_devices - 1, jnp.int32(num_devices))
+      right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
+
+      barrier_sem = pltpu.get_barrier_semaphore(tag=('some', 'tag'))
+      pl.semaphore_signal(barrier_sem, device_id=(left_neighbor,))
+      pl.semaphore_signal(barrier_sem, device_id=(right_neighbor,))
+      pl.semaphore_wait(barrier_sem, 2)
+
+      remote_copy_op = pltpu.make_async_remote_copy(
+          src_ref=input_ref,
+          dst_ref=output_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(right_neighbor,),
+      )
+      remote_copy_op.start()
+      remote_copy_op.wait()
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=([pltpu.SemaphoreType.DMA] * 2),
+    )
+    right_permute = pl.pallas_call(
+        right_permute_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(
+            dma_execution_mode=dma_execution_mode, detect_races=detect_races),
+    )
+    pallas_result = jax.jit(
+        shard_map.shard_map(
+            right_permute,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )(input_arr)
+
+    perm = tuple((src, (src + 1) % num_devices) for src in range(num_devices))
+    xla_result = jax.jit(
+        shard_map.shard_map(
+            lambda x: lax.ppermute(x, 'x', perm),
+            mesh=mesh, in_specs=partition, out_specs=partition)
+    )(input_arr)
+
+    np.testing.assert_allclose(xla_result, pallas_result)
+
+  def test_sequential_kernels_same_and_different_tags(self):
+    num_devices = jax.device_count()
+    partition = P(None, 'x')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    input_arr = jax.random.uniform(
+        jax.random.key(1), (8, 128 * num_devices), dtype=jnp.float32)
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def kernel_maker(tag):
+      def kernel(input_ref, output_ref, send_sem, recv_sem):
+        my_id = lax.axis_index('x')
+        left_neighbor = lax.rem(my_id + num_devices - 1, jnp.int32(num_devices))
+        right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
+
+        barrier_sem = pltpu.get_barrier_semaphore(tag=tag)
+        pl.semaphore_signal(barrier_sem, device_id=(left_neighbor,))
+        pl.semaphore_signal(barrier_sem, device_id=(right_neighbor,))
+        pl.semaphore_wait(barrier_sem, 2)
+
+        remote_copy_op = pltpu.make_async_remote_copy(
+            src_ref=input_ref,
+            dst_ref=output_ref,
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=(right_neighbor,),
+        )
+        remote_copy_op.start()
+        remote_copy_op.wait()
+      return kernel
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=([pltpu.SemaphoreType.DMA] * 2),
+    )
+
+    # Kernel 1 with tag A
+    k1 = pl.pallas_call(
+        kernel_maker('tag_A'),
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(),
+    )
+    # Kernel 2 with same tag A
+    k2 = pl.pallas_call(
+        kernel_maker('tag_A'),
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(),
+    )
+    # Kernel 3 with different tag B
+    k3 = pl.pallas_call(
+        kernel_maker('tag_B'),
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(),
+    )
+
+    smap_k1 = jax.jit(
+        shard_map.shard_map(
+            k1, mesh=mesh, in_specs=partition, out_specs=partition, check_vma=False
+        )
+    )
+    smap_k2 = jax.jit(
+        shard_map.shard_map(
+            k2, mesh=mesh, in_specs=partition, out_specs=partition, check_vma=False
+        )
+    )
+    smap_k3 = jax.jit(
+        shard_map.shard_map(
+            k3, mesh=mesh, in_specs=partition, out_specs=partition, check_vma=False
+        )
+    )
+
+    res1 = smap_k1(input_arr)
+    res2 = smap_k2(res1)
+    res3 = smap_k3(res2)
+
+    perm = tuple((src, (src + 1) % num_devices) for src in range(num_devices))
+    xla_permute = jax.jit(
+        shard_map.shard_map(
+            lambda x: lax.ppermute(x, 'x', perm),
+            mesh=mesh, in_specs=partition, out_specs=partition)
+    )
+    expected = xla_permute(xla_permute(xla_permute(input_arr)))
+    np.testing.assert_allclose(expected, res3)
+
+  def test_collective_id_and_tag_raises_error(self):
+    num_devices = jax.device_count()
+    partition = P(None, 'x')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8, 128 * num_devices), dtype=jnp.float32)
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def kernel(input_ref, output_ref):
+      sem = pltpu.get_barrier_semaphore(tag='tag_1')
+      pl.semaphore_signal(sem)
+      pltpu.sync_copy(input_ref, output_ref)
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+    )
+    p_call = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        compiler_params=pltpu.CompilerParams(collective_id=0),
+        interpret=pltpu.InterpretParams(),
+    )
+    with self.assertRaisesRegex(ValueError, 'Conflicting collective_id specified'):
+      shard_map.shard_map(
+          p_call,
+          mesh=mesh,
+          in_specs=partition,
+          out_specs=partition,
+          check_vma=False,
+      )(input_arr)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -1307,6 +1502,432 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       res = sharded_run(in_arr)
       expected = jnp.arange(num_devices, dtype=jnp.int32) * 2
       np.testing.assert_array_equal(res, expected)
+
+  @parameterized.product(
+      dma_execution_mode=['eager', 'on_wait'],
+  )
+  def test_receiver_never_waits_for_incoming_remote_dma(
+      self, dma_execution_mode
+  ):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def kernel(x_ref, o_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      target_device = (my_id + 1) % num_devices
+
+      dma = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(target_device,),
+      )
+      dma.start()
+      dma.wait_send()
+      # Receiver intentionally never waits for incoming remote copy
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
+    )
+
+    # 1. With default 'print' mode: does not raise, but records leftovers
+    p_print = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(
+            dma_execution_mode=dma_execution_mode,
+            on_kernel_exit_leftovers='print',
+        ),
+    )
+    run_print = jax.jit(
+        shard_map.shard_map(
+            p_print,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    res = run_print(input_arr)
+    res.block_until_ready()
+    self.assertTrue(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+    self.assertNotEmpty(mosaic_interpret.kernel_exit_leftovers.messages)
+
+    # 2. Reset and verify 'raise' mode raises
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    p_raise = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(
+            dma_execution_mode=dma_execution_mode,
+            on_kernel_exit_leftovers='raise',
+        ),
+    )
+    run_raise = jax.jit(
+        shard_map.shard_map(
+            p_raise,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    with self.assertRaisesRegex(Exception, 'Leftover state detected'):
+      run_raise(input_arr).block_until_ready()
+
+    # Reset state cleanly
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+
+  def test_sender_never_waits_send_semaphore(self):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def kernel(x_ref, o_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      target_device = (my_id + 1) % num_devices
+
+      dma = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(target_device,),
+      )
+      dma.start()
+      # Sender does not wait send_sem, only receiver waits recv_sem
+      dma.wait_recv()
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
+    )
+
+    p_call = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(
+            dma_execution_mode='eager',
+            on_kernel_exit_leftovers='print',
+        ),
+    )
+    run = jax.jit(
+        shard_map.shard_map(
+            p_call,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    res = run(input_arr)
+    res.block_until_ready()
+    self.assertTrue(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+
+  def test_clean_kernel_has_no_leftovers(self):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def kernel(x_ref, o_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      target_device = (my_id + 1) % num_devices
+
+      dma = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(target_device,),
+      )
+      dma.start()
+      dma.wait_send()
+      dma.wait_recv()
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
+    )
+
+    p_call = pl.pallas_call(
+        kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(
+            on_kernel_exit_leftovers='raise',
+        ),
+    )
+    run = jax.jit(
+        shard_map.shard_map(
+            p_call,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    res = run(input_arr)
+    res.block_until_ready()
+    self.assertFalse(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+    self.assertEmpty(mosaic_interpret.kernel_exit_leftovers.messages)
+
+  def test_reset_after_raise_allows_running_another_kernel(self):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def bad_kernel(x_ref, o_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      target_device = (my_id + 1) % num_devices
+
+      dma = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(target_device,),
+      )
+      dma.start()
+      dma.wait_send()
+
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
+    )
+
+    p_bad = pl.pallas_call(
+        bad_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=pltpu.InterpretParams(on_kernel_exit_leftovers='raise'),
+    )
+    run_bad = jax.jit(
+        shard_map.shard_map(
+            p_bad,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    with self.assertRaisesRegex(Exception, 'Leftover state detected'):
+      run_bad(input_arr).block_until_ready()
+    try:
+      jax.effects_barrier()
+    except Exception:
+      pass
+
+    # Reset state and run a clean kernel
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+
+    def good_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    p_good = pl.pallas_call(
+        good_kernel,
+        out_shape=out_shape,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        interpret=pltpu.InterpretParams(on_kernel_exit_leftovers='raise'),
+    )
+    run_good = jax.jit(
+        shard_map.shard_map(
+            p_good,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    res = run_good(input_arr)
+    res.block_until_ready()
+    self.assertFalse(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+
+  def test_leftovers_reset_automatically_across_kernels(self):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+
+    def leftover_kernel(x_ref, o_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+      target_device = (my_id + 1) % num_devices
+      dma = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id=(target_device,),
+      )
+      dma.start()
+      dma.wait_send()
+
+    p_leftover = pl.pallas_call(
+        leftover_kernel,
+        out_shape=out_shape,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+            scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
+        ),
+        interpret=pltpu.InterpretParams(on_kernel_exit_leftovers='print'),
+    )
+    jax.jit(
+        shard_map.shard_map(
+            p_leftover,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )(input_arr).block_until_ready()
+    self.assertTrue(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+
+    # Without calling reset_tpu_interpret_mode_state(), a clean kernel resets
+    # kernel_exit_leftovers in _initialize_shared_memory.
+    p_clean = pl.pallas_call(
+        lambda x_ref, o_ref: o_ref.__setitem__(Ellipsis, x_ref[...]),
+        out_shape=out_shape,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+        interpret=pltpu.InterpretParams(on_kernel_exit_leftovers='raise'),
+    )
+    jax.jit(
+        shard_map.shard_map(
+            p_clean,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )(input_arr).block_until_ready()
+    self.assertFalse(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+    self.assertEmpty(mosaic_interpret.kernel_exit_leftovers.messages)
+
+  def test_mid_kernel_failure_with_leftovers_does_not_hang(self):
+    mosaic_interpret.reset_tpu_interpret_mode_state()
+    num_devices = jax.device_count()
+    if num_devices < 2:
+      self.skipTest('requires at least 2 devices')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+    partition = P('x', None)
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+    out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+
+    def failing_kernel(x_ref, o_ref, smem_ref, send_sem, recv_sem):
+      my_id = lax.axis_index('x')
+
+      def on_dev0():
+        dma = pltpu.make_async_remote_copy(
+            src_ref=x_ref,
+            dst_ref=o_ref,
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=(1,),
+        )
+        dma.start()
+        # Trigger a dynamic out-of-bounds read mid-kernel on device 0 while
+        # other devices finish cleanly and wait at clean_up_barrier.
+        smem_ref[0] = smem_ref[my_id + 16]
+
+      lax.cond(my_id == 0, on_dev0, lambda: None)
+
+    p_fail = pl.pallas_call(
+        failing_kernel,
+        out_shape=out_shape,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+            scratch_shapes=[
+                pltpu.SMEM((4,), jnp.int32),
+                pltpu.SemaphoreType.DMA,
+                pltpu.SemaphoreType.DMA,
+            ],
+        ),
+        interpret=pltpu.InterpretParams(
+            dma_execution_mode='eager',
+            on_kernel_exit_leftovers='raise',
+            out_of_bounds_reads='raise',
+        ),
+    )
+    run_fail = jax.jit(
+        shard_map.shard_map(
+            p_fail,
+            mesh=mesh,
+            in_specs=partition,
+            out_specs=partition,
+            check_vma=False,
+        )
+    )
+    with self.assertRaisesRegex(Exception, 'Out-of-bounds read'):
+      run_fail(input_arr).block_until_ready()
+    try:
+      jax.effects_barrier()
+    except Exception:
+      pass
+    self.assertFalse(mosaic_interpret.kernel_exit_leftovers.leftovers_found)
+    mosaic_interpret.reset_tpu_interpret_mode_state()
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
