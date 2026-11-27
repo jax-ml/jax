@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -72,7 +73,10 @@ def cdf(x: ArrayLike, beta: ArrayLike) -> Array:
     - :func:`jax.scipy.stats.gennorm.logpdf`
   """
   x, beta = promote_args_inexact("gennorm.cdf", x, beta)
-  return .5 * (1 + lax.sign(x) * lax.igamma(1/beta, lax.abs(x)**beta))
+  a = 1 / beta
+  z = lax.abs(x)**beta
+  return .5 * jnp.where(x < 0, lax.igammac(a, z),
+                       1 + lax.sign(x) * lax.igamma(a, z))
 
 
 def pdf(x: ArrayLike, beta: ArrayLike) -> Array:
