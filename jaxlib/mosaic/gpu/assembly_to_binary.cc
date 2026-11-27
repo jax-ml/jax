@@ -22,6 +22,7 @@ limitations under the License.
 
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_split.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/Builders.h"
@@ -104,6 +106,12 @@ class AssemblyToBinaryPass
     se::cuda::CompilationOptions compilation_options;
     compilation_options.dump_compilation_log = dump_opts.ptxas;
     compilation_options.generate_line_info = true;
+    if (const char* extra_flags =
+            std::getenv("JAX_MOSAIC_GPU_PTXAS_EXTRA_FLAGS");
+        extra_flags != nullptr) {
+      compilation_options.additional_ptxas_flags =
+          absl::StrSplit(extra_flags, ' ', absl::SkipEmpty());
+    }
 
     mlir::WalkResult result = module.walk([&](mlir::gpu::BinaryOp binary) {
       if (binary.getObjects().size() != 1) {
