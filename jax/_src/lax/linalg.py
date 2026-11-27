@@ -332,7 +332,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
   Args:
     a: A matrix with shape ``[..., m, n]``, whose lower triangle contains
       elementary Householder reflectors.
-    taus: A vector with shape ``[..., k]``, where ``k < min(m, n)``, containing
+    taus: A vector with shape ``[..., k]``, where ``k <= min(m, n)``, containing
       the scalar factors of the elementary Householder reflectors.
 
   Returns:
@@ -425,8 +425,8 @@ def qr(x: ArrayLike, *, pivoting: bool = False, full_matrices: bool = True,
     x: A batch of matrices with shape ``[..., m, n]``.
     pivoting: Allows the QR decomposition to be rank-revealing. If ``True``,
       compute the column pivoted decomposition ``A[:, P] = Q @ R``, where ``P``
-      is chosen such that the diagonal of ``R`` is non-increasing. Currently
-      supported on CPU and GPU backends only.
+      is chosen such that the absolute values of the diagonal of ``R`` are
+      non-increasing. Currently supported on CPU and GPU backends only.
     full_matrices: Determines if full or reduced matrices are returned; see
       below.
     use_magma: Locally override the ``jax_use_magma`` flag. If ``True``, the
@@ -476,13 +476,13 @@ def schur(
   Computes the Schur decomposition:
 
   .. math::
-    A = Q \, U \, Q^{-H}
+    A = Q \, U \, Q^H
 
   for a square matrix :math:`A`.
 
   Args:
     x: A batch of square matrices with shape ``[..., m, m]``.
-    compute_schur_vectors: If ``True``, compute the Schur vectors ::math:`Q`,
+    compute_schur_vectors: If ``True``, compute the Schur vectors :math:`Q`,
       otherwise only :math:`U` is computed.
     sort_eig_vals: Unused.
     select_callable: Unused.
@@ -2054,8 +2054,8 @@ def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
   Returns:
     A ``(a, jpvt, taus)`` triple, where ``r`` is in the upper triangle of ``a``,
     ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
-    elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
-    such that ``a[:, jpvt] = q @ r``.
+    elementary Householder reflectors, and ``jpvt`` holds the 1-based
+    column-pivot indices such that ``a[:, jpvt - 1] = q @ r``.
   """
   a, jpvt = core.auto_insert_reshard(a, jpvt)
   a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
