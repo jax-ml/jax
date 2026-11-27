@@ -467,7 +467,8 @@ def matrix_rank(
     return (M != 0).any().astype(np.int32)
   S = svd(M, full_matrices=False, compute_uv=False, hermitian=hermitian)
   if rtol is None:
-    rtol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
+    # initial=0 gives a rank of 0 for matrices with a zero-size dimension.
+    rtol = S.max(-1, initial=0) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
   rtol = jnp.expand_dims(rtol, np.ndim(rtol))
   return reductions.sum(S > rtol, axis=-1)
 
