@@ -2689,3 +2689,66 @@ jax_multiplatform_test(
         "absl/testing",
     ]),
 )
+
+jax_py_test(
+    name = "compiler_params_test",
+    srcs = ["compiler_params_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "lax_pipeline_test",
+    srcs = ["lax_pipeline_test.py"],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pipeline_test",
+    srcs = ["tpu_pipeline_test.py"],
+    enable_backends = ["tpu"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "lax_fusion_test",
+    srcs = ["lax_fusion_test.py"],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    deps = [
+        "//jax/experimental",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_fusion_test",
+    srcs = ["tpu_fusion_test.py"],
+    enable_backends = ["tpu"],
+    deps = [
+        "//jax/experimental:layout",
+        "//jax/experimental:scheduling_groups",
+        "//jax/experimental:xla_metadata",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)

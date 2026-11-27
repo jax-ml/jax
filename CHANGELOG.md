@@ -17,6 +17,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.lax.fusion`, which calls a function as one unit for a
+    backend to fuse, configured by an optional platform `compiler_params`
+    object. On TPU, `compiler_params=None` requests maximal fusion of the body;
+    other backends emit a plain call. It supports `jit` and `vmap` but not yet
+    differentiation of its inputs.
+  * Added {func}`jax.lax.pipeline`, a loop over a static grid whose value is
+    that of a `fori_loop`, with {func}`jax.lax.block_slice` and
+    {func}`jax.lax.block_update` to read and write tiles in its body. A
+    platform lowering may run the loop as a software pipeline, configured by
+    its `compiler_params` argument.
 * Breaking changes
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations

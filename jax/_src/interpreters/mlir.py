@@ -2779,7 +2779,9 @@ def lower_per_platform(ctx: LoweringRuleContext,
     with ir.InsertionPoint(branch):
       hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx.get(p, 0)))])
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
-  rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
+  rule_out_avals = [core.abstract_token] * len(ordered_effects) + list(
+      ctx.avals_out
+  )
   output_types = [_aval_to_ir_types(ctx.module_context, a) for a in rule_out_avals]
   flat_output_types, output_types_treedef = ir_tree_registry.flatten(output_types)
   case_op = hlo.CaseOp(flat_output_types,
