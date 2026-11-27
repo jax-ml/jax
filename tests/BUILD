@@ -2689,3 +2689,14 @@ jax_multiplatform_test(
         "absl/testing",
     ]),
 )
+
+jax_py_test(
+    name = "compiler_params_test",
+    srcs = ["compiler_params_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
