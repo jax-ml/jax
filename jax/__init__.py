@@ -232,6 +232,10 @@ del jax_api, jax_core, SimpleNamespace
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
+from jax._src import tpu as _tpu
+
+del _tpu
+
 _deprecations = {
     # Removed for v0.10.0
     "device_put_replicated": (

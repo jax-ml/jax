@@ -1538,6 +1538,7 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":typing",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
