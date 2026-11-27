@@ -3440,8 +3440,11 @@ class DialectLoweringTest(MosaicGpuTest):
       swizzle=(64, 128),
       k=(128, 256, 384),
       collective=(False, True),
+      scaled=(False, True),
   )
-  def test_tcgen05_mma_f8_instr_k_decomposition(self, swizzle, k, collective):
+  def test_tcgen05_mma_f8_instr_k_decomposition(
+      self, swizzle, k, collective, scaled
+  ):
     m = n = 128
     n_collective = n * (2 if collective else 1)
     i32 = ir.IntegerType.get_signless(32)
@@ -3460,9 +3463,17 @@ class DialectLoweringTest(MosaicGpuTest):
         ref = undefs(ir.MemRefType.get(tiled_shape, f8, memory_space=smem))
         return ref
 
+      def scale_ref(rows):
+        return tcgen05.TMEMRef(
+            undefs(i32),
+            (rows, k // 32),
+            ir.Float8E8M0FNUType.get(),
+            tcgen05.scales_layout(),
+        )
+
       tcgen05.mma(
           tcgen05.TMEMRef(
-              arith.constant(i32, 0),
+              undefs(i32),
               (m, n_collective),
               ir.F32Type.get(),
               tcgen05.tmem_default_layout(packing=1),
@@ -3471,16 +3482,20 @@ class DialectLoweringTest(MosaicGpuTest):
           mgpu_utils.memref_transpose(tiled_ref((n, k)), (1, 0, 3, 2)),
           a_swizzle=swizzle,
           b_swizzle=swizzle,
+          a_scale=scale_ref(m) if scaled else None,
+          b_scale=scale_ref(n_collective) if scaled else None,
           collective=collective,
       )
     self.assertTrue(self.module.operation.verify())
 
-    # Bit 29 of the instruction descriptor selects K=64 (instead of K=32).
+    # Bit 29 (bit 31 if block-scaled) of the instruction descriptor selects
+    # K=64 (instead of K=32).
+    k_bit = 31 if scaled else 29
     instr_ks = []
     for op in self.find_ops(llvm.InlineAsmOp):
       if "tcgen05.mma" in op.asm_string.value:
         idesc = op.operands[3].owner.literal_value & 0xFFFFFFFF
-        instr_ks.append(64 if (idesc >> 29) & 1 else 32)
+        instr_ks.append(64 if (idesc >> k_bit) & 1 else 32)
     self.assertEqual(instr_ks, [64] * (k // 64))
 
 

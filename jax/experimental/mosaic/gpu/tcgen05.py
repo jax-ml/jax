@@ -215,17 +215,17 @@ def _create_scaled_instr_descriptor(
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
   assert 0 <= a_scale_idx < 4
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
-  # The K dimension is encoded as a 2-bit value, with bit 3 as the upper bit
-  # and bit 31 as the lower bit. Zero is the default K: dense K=64 / sparse
-  # K=128 for .kind::mxf4 and .kind::mxf4nvf4, and dense K=32 / sparse K=64 for
-  # .kind::mxf8f6f4. For dense .kind::mxf4 and .kind::mxf4nvf4, one means K=96
-  # (sm_103a and sm_107a) and two means K=128 (sm_107f).
-  if is_fp4 and not sparse:
-    k_encoding = {64: 0, 96: 1, 128: 2}[k]
-    upper_k_bit = k_encoding >> 1
-    lower_k_bit = k_encoding & 1
-    desc |= upper_k_bit << 3
-    desc |= lower_k_bit << 31
+  # K is encoded as a 2-bit value, with bit 3 as the upper bit and bit 31 as
+  # the lower bit:
+  # - .kind::mxf4 and .kind::mxf4nvf4: 0 is dense K=64 / sparse K=128, 1 is
+  #   dense K=96 (sm_103a and sm_107a) and 2 is dense K=128 (sm_107f).
+  # - .kind::mxf8f6f4: 0 is dense K=32 / sparse K=64 and 1 is dense K=64
+  #   (sm_107f).
+  # We only issue sparse instructions with encoding 0.
+  if not sparse:
+    k_encoding = ({64: 0, 96: 1, 128: 2} if is_fp4 else {32: 0, 64: 1})[k]
+    desc |= (k_encoding >> 1) << 3
+    desc |= (k_encoding & 1) << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -684,10 +684,7 @@ def mma(
   # On sm_107f, dense 8-bit floating-point MMA can issue K=64 (64B) steps in
   # addition to K=32 (32B) steps.
   if (
-      not is_scaled
-      and isinstance(
-          mma_a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)
-      )
+      isinstance(mma_a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType))
       and not is_sparse
       and arch.is_sm107f
       # K=64 is only available for full-M instructions.
