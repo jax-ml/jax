@@ -15,7 +15,7 @@
 """Layout inference tests for the Mosaic GPU MLIR dialect."""
 
 import dataclasses
-from typing import assert_never
+from typing import assert_never, overload
 
 from absl.testing import parameterized
 import jax
@@ -74,9 +74,20 @@ def layout_cast(
   return mgpu.dialect.layout_cast(x, layout, strict=strict)
 
 
-def undefs(*tys: ir.Type) -> list[ir.Value]:
-  """Returns a list of `llvm.mlir_undef` values of the given types."""
-  return [llvm.mlir_undef(ty) for ty in tys]
+@overload
+def undefs(ty: ir.Type, /) -> ir.Value: ...
+
+
+@overload
+def undefs(
+    ty0: ir.Type, ty1: ir.Type, /, *tys: ir.Type
+) -> list[ir.Value]: ...
+
+
+def undefs(*tys: ir.Type) -> ir.Value | list[ir.Value]:
+  """Returns undefined values of the given types."""
+  values = [llvm.mlir_undef(ty) for ty in tys]
+  return values[0] if len(values) == 1 else values
 
 
 def transforms_attr(
@@ -196,7 +207,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     dst_type = ir.VectorType.get((256, 8), elt_type)
 
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(src_type)
+      x = undefs(src_type)
       if in_layout is not None:
         x = layout_cast(x, in_layout)
       op = vector.ShapeCastOp(dst_type, x)
@@ -311,7 +322,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (256,)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.IntegerType.get_signless(32))
-      [source] = undefs(ref_ty)
+      source = undefs(ref_ty)
       out = mgpu.dialect.multimem_load_reduce(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -326,7 +337,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.F16Type.get())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       out = mgpu.dialect.multimem_load_reduce(
           source=ref,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -344,7 +355,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(ir.VectorType.get(shape, ir.BF16Type.get()))
+      x = undefs(ir.VectorType.get(shape, ir.BF16Type.get()))
       x = mgpu.dialect.layout_cast(x, splat_layout)
       add = arith.AddFOp(x, x)
       cast = mgpu.dialect.LayoutCastOp(add.result, wgmma_layout)
@@ -373,7 +384,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     in_layout = out_layout.reduce((1 - axis,))
 
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(ir.VectorType.get(in_shape, dtype))
+      x = undefs(ir.VectorType.get(in_shape, dtype))
       if hint_on_input:
         x = layout_cast(x, in_layout)
       out_type = ir.VectorType.get(out_shape, dtype)
@@ -391,7 +402,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_dont_infer_invalid_strided_layout(self):
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(ir.VectorType.get((128,), ir.F32Type.get()))
+      x = undefs(ir.VectorType.get((128,), ir.F32Type.get()))
       out_type = ir.VectorType.get((2, 128), ir.F32Type.get())
       out = mgpu.dialect.broadcast_in_dim(out_type, x, [1])
       out_layout = mgpu.WGStridedFragLayout((2, 128), vec_size=2)
@@ -537,7 +548,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     in_layout = mgpu.WGStridedFragLayout(src_shape, vec_size=1)
     out_layout = mgpu.WGStridedFragLayout(dst_shape, vec_size=1)
     with ir.InsertionPoint(self.module.body):
-      [x] = undefs(ir.VectorType.get(src_shape, ir.F32Type.get()))
+      x = undefs(ir.VectorType.get(src_shape, ir.F32Type.get()))
       if hint_on_input:
         x = layout_cast(x, in_layout)
       out_type = ir.VectorType.get(dst_shape, ir.F32Type.get())
@@ -752,7 +763,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_type = ir.VectorType.get((128, 128), f32)
     with ir.InsertionPoint(self.module.body):
       i1 = ir.IntegerType.get_signless(1)
-      [condition] = undefs(i1)
+      condition = undefs(i1)
       index_switch = scf.IndexSwitchOp(
           [out_type, out_type, f32],
           condition,
@@ -802,7 +813,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_type = ir.VectorType.get((128, 128), f32)
     with ir.InsertionPoint(self.module.body):
       i1 = ir.IntegerType.get_signless(1)
-      [condition] = undefs(i1)
+      condition = undefs(i1)
       if_op = scf.IfOp(
           condition,
           [out_type, out_type, f32],
@@ -944,7 +955,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(
           (64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 32)),
           mgpu.dialect.SwizzleTransformAttr.get(64),
@@ -1022,7 +1033,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         case _:
           assert_never(memory_space)
 
-      [producer] = undefs(ty)
+      producer = undefs(ty)
       consumer = builtin.unrealized_conversion_cast([ty], [producer])
 
       r = layout_inference.ValueSite(
@@ -1154,7 +1165,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     f32 = ir.F32Type.get()
     layout = mgpu.WGSplatFragLayout(shape)
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(f32)
+      source = undefs(f32)
       bcast = vector.BroadcastOp(ir.VectorType.get(shape, f32), source)
 
     mgpu.infer_layout(self.module)
@@ -1166,7 +1177,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     f32 = ir.F32Type.get()
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.VectorType.get(shape, f32))
+      source = undefs(ir.VectorType.get(shape, f32))
       source = layout_cast(source, layout)
       reduction = vector.ReductionOp(f32, vector.CombiningKind.ADD, source)
 
@@ -1197,7 +1208,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     splat_layout = mgpu.WGSplatFragLayout(shape=shape)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       loaded = mgpu.dialect.vector_load(ref)
       layout_cast(loaded, splat_layout)
 
@@ -1225,7 +1236,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.with_transforms(
           ref,
           [
@@ -1258,7 +1269,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_layout_of_wgmma_layout_to_wgmma_row_layout_raises(self):
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ir.VectorType.get((128, 128), ir.F32Type.get()))
+      ref = undefs(ir.VectorType.get((128, 128), ir.F32Type.get()))
       wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       wgmma_row_layout = layouts.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
       ref = mgpu.dialect.layout_cast(ref, wgmma_layout)
@@ -1368,7 +1379,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       mgpu.dialect.layout_cast(op.result, out_layout)
 
@@ -1420,7 +1431,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     in_layout = layouts.to_layout_attr(in_layout)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
 
@@ -1441,7 +1452,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_layout = out_layout.to_layout_attr(shape, f32)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       mgpu.dialect.layout_cast(op.result, out_layout)
@@ -1459,7 +1470,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       mgpu.dialect.layout_cast(op.result, out_layout)
@@ -1481,7 +1492,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     in_layout = layouts.to_layout_attr(in_layout)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       invalid_layout = layouts.to_layout_attr(layout_factory(shape))
@@ -1501,7 +1512,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     out_layout = layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_type)
+      ref = undefs(ref_type)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(
           ref, reduce=mgpu.dialect.TMEMLoadReduction.Min
@@ -1732,7 +1743,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     f32 = ir.F32Type.get()
     layout = ir.StridedLayoutAttr.get(0, strides)
     ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
-    [ref] = undefs(ref_ty)
+    ref = undefs(ref_ty)
     value_site = layout_inference.ValueSite(
         operation=ref.owner,
         type=layout_inference.VariableType.RESULT,
@@ -1758,7 +1769,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (128, 128)
     f32 = ir.F32Type.get()
     ref_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
-    [ref] = undefs(ref_ty)
+    ref = undefs(ref_ty)
     value_site = layout_inference.ValueSite(
         operation=ref.owner,
         type=layout_inference.VariableType.RESULT,
@@ -1792,7 +1803,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     f32 = ir.F32Type.get()
     layout = ir.StridedLayoutAttr.get(0, [1, 128]) if transposed else None
     ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
-    [ref] = undefs(ref_ty)
+    ref = undefs(ref_ty)
     strides, _ = ref_ty.get_strides_and_offset()
     value_site = layout_inference.ValueSite(
         operation=ref.owner,
@@ -1870,7 +1881,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_conjure_tries_high_priority_assignments_first(self):
     shape = (128, 128)
     f32 = ir.F32Type.get()
-    [val] = undefs(ir.VectorType.get(shape, f32))
+    val = undefs(ir.VectorType.get(shape, f32))
     value_site = layout_inference.ValueSite(
         operation=val.owner,
         type=layout_inference.VariableType.RESULT,
@@ -2678,7 +2689,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_infer_transforms_for_query_cluster_cancel_op(self):
     with ir.InsertionPoint(self.module.body):
-      result, = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()))
+      result = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8), memory_space=mgpu.utils.smem()))
       op_results = mgpu.dialect.query_cluster_cancel(result)
       op = op_results[0].owner
 
@@ -2766,7 +2777,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      [smem_ref] = undefs(smem_ty)
+      smem_ref = undefs(smem_ty)
       op = mgpu.dialect.VectorLoadOp(smem_ref, optimized=optimized)
       layout_cast(op.result, layout)
 
@@ -2956,7 +2967,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       src_tmem_type = ir.MemRefType.get(
           (128, 512), i32, memory_space=mgpu.utils.tmem()
       )
-      [src] = undefs(src_tmem_type)
+      src = undefs(src_tmem_type)
 
       in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
       src = mgpu.dialect.tmem_layout_cast(src, in_layout)
@@ -2991,7 +3002,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       src_tmem_type = ir.MemRefType.get(
           (128, 512), i32, memory_space=mgpu.utils.tmem()
       )
-      [src] = undefs(src_tmem_type)
+      src = undefs(src_tmem_type)
 
       in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
       src = mgpu.dialect.tmem_layout_cast(src, in_layout)
@@ -3019,7 +3030,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
 
       transforms = ir.ArrayAttr.get([
         mgpu.dialect.TileTransformAttr.get((8, 64)),
@@ -3038,7 +3049,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
 
       transforms1 = ir.ArrayAttr.get([
         mgpu.dialect.TileTransformAttr.get((8, 64)),
@@ -3196,7 +3207,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       shape = (64, 64)
       elt_ty = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
 
       transforms = ir.ArrayAttr.get([
         mgpu.dialect.TileTransformAttr.get((8, 64)),
@@ -3225,7 +3236,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_ref_ty = ir.MemRefType.get(
           (2, 64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
-      [in_ref] = undefs(in_ref_ty)
+      in_ref = undefs(in_ref_ty)
 
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((32, 16)),
@@ -3253,7 +3264,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_ref_ty = ir.MemRefType.get(
           (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
       )
-      [in_ref] = undefs(in_ref_ty)
+      in_ref = undefs(in_ref_ty)
 
       layout = tcgen05.tmem_default_layout(packing=1)
       layout_attr = layouts.to_layout_attr(layout)
@@ -3304,7 +3315,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     slice3_ref_ty = ir.MemRefType.get(slice3_shape, elt_ty, memory_space=mgpu.utils.smem())
 
     with ir.InsertionPoint(self.module.body):
-      [source_ref] = undefs(source_ref_ty)
+      source_ref = undefs(source_ref_ty)
       subview_op0 = memref.SubViewOp(
           slice0_ref_ty,
           source_ref,
@@ -3385,7 +3396,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_ref_ty = ir.MemRefType.get(
           (32, 32, 32, 32), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
-      [in_ref] = undefs(in_ref_ty)
+      in_ref = undefs(in_ref_ty)
 
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((4, 8, 16)),
@@ -3422,7 +3433,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_ref_ty = ir.MemRefType.get(
           (128, 256), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
       )
-      [in_ref] = undefs(in_ref_ty)
+      in_ref = undefs(in_ref_ty)
 
       layout = tcgen05.tmem_default_layout(packing=1)
       layout_attr = layouts.to_layout_attr(layout)
@@ -3454,7 +3465,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(
           (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       op = mgpu.dialect.custom_primitive(
           result=[],
           operands_=[ref],
@@ -3477,7 +3488,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(
           (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.custom_primitive(
           result=[],
           operands_=[ref, ref],
@@ -3515,7 +3526,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
     with ir.InsertionPoint(self.module.body):
-      [in_ref] = undefs(in_ref_ty)
+      in_ref = undefs(in_ref_ty)
 
       in_transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get(in_tile),
@@ -3576,7 +3587,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
       src_ty = ir.VectorType.get([128, 128], i16)
-      [src] = undefs(src_ty)
+      src = undefs(src_ty)
       src = mgpu.dialect.layout_cast(src, layout)
       dest_ty = ir.VectorType.get([64, 64], i16)
       op = vector.ExtractStridedSliceOp(dest_ty, src, [0, 64], [64, 64], [1, 1])
@@ -3612,7 +3623,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
       src_ty = ir.VectorType.get([128, 128], i16)
-      [src] = undefs(src_ty)
+      src = undefs(src_ty)
       layout_attr = layout.to_layout_attr(src_ty.shape, src_ty.element_type)
       src = mgpu.dialect.layout_cast(src, layout_attr)
       dest_shape = [i.stop - i.start for i in indices]
@@ -3667,7 +3678,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
       src_ty = ir.VectorType.get([2, 3, 64, 8], i16)
-      [src] = undefs(src_ty)
+      src = undefs(src_ty)
       src = mgpu.dialect.layout_cast(src, layout)
       op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
     mgpu.infer_layout(self.module)
@@ -3678,7 +3689,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
       src_ty = ir.VectorType.get([64, 8], i16)
-      [src] = undefs(src_ty)
+      src = undefs(src_ty)
       op = vector.ExtractOp(src, dynamic_position=[], static_position=[1, 1])
     mgpu.infer_layout(self.module)
     self.checkInLayouts(op, [mgpu.WGSplatFragLayout(tuple(src_ty.shape))])
@@ -3689,7 +3700,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i16 = ir.IntegerType.get_signless(16)
       src_ty = ir.VectorType.get([64, 64], i16)
-      [src] = undefs(src_ty)
+      src = undefs(src_ty)
       src = mgpu.dialect.layout_cast(src, layout)
       vector.extract(src, dynamic_position=[], static_position=[0])
     with self.assertRaisesRegex(
@@ -3706,7 +3717,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       src_tmem_type = ir.MemRefType.get(
           (128, 512), i32, memory_space=mgpu.utils.tmem()
       )
-      [src] = undefs(src_tmem_type)
+      src = undefs(src_tmem_type)
       src = mgpu.dialect.tmem_layout_cast(src, in_layout)
       dst_tmem_type = ir.MemRefType.get(
           (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
@@ -3748,7 +3759,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_layout_for_print_register_layout_op(self):
     with ir.InsertionPoint(self.module.body):
       vec_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
-      [vec] = undefs(vec_ty)
+      vec = undefs(vec_ty)
       vec = layout_cast(vec, fa.WGMMA_LAYOUT)
       op = mgpu.dialect.PrintLayoutOp("{}", vec)
     mgpu.infer_layout(self.module)
@@ -3760,7 +3771,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(
           (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
       )
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       ref = mgpu.dialect.tmem_layout_cast(ref, layouts.to_layout_attr(layout))
       op = mgpu.dialect.PrintLayoutOp("{}", ref)
     mgpu.infer_layout(self.module)
@@ -3895,7 +3906,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       smem = mgpu.utils.smem()
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
       res_ty = ir.MemRefType.get(out_shape, elt_ty, memory_space=smem)
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.with_transforms(ref, no_transforms)
       op = memref.collapse_shape(res_ty, ref, [[0], [1], [2]]).owner
 
@@ -3916,7 +3927,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       smem = mgpu.utils.smem()
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
       res_ty = ir.MemRefType.get(out_shape, elt_ty, memory_space=smem)
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.with_transforms(ref, transforms)
       memref.collapse_shape(res_ty, ref, [[0], [1, 2]])
 
@@ -3938,7 +3949,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       smem = mgpu.utils.smem()
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
       res_ty = ir.MemRefType.get(out_shape, elt_ty, memory_space=smem)
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.with_transforms(ref, transforms)
       op = memref.collapse_shape(res_ty, ref, [[0], [1, 2]]).owner
 
@@ -3951,7 +3962,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_layout_cast_incompatible_with_vector_shape_is_unsatisfiable(self):
     with ir.InsertionPoint(self.module.body):
-      [vec] = undefs(ir.VectorType.get((4, 4), ir.BF16Type.get()))
+      vec = undefs(ir.VectorType.get((4, 4), ir.BF16Type.get()))
       mgpu.dialect.layout_cast(vec, layouts.to_layout_attr(fa.WGMMA_LAYOUT))
     with self.assertRaisesRegex(
         ValueError, "Cannot cast to layout"
@@ -3962,7 +3973,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       f32 = ir.F32Type.get()
       ref_ty = ir.MemRefType.get((4, 4), f32, memory_space=mgpu.utils.tmem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.tmem_layout_cast(
           ref, layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
       )
@@ -3975,7 +3986,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       f32 = ir.F32Type.get()
       ref_ty = ir.MemRefType.get((4, 4), f32, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 2)),
       ])
@@ -4038,7 +4049,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       bf16 = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       attrs = []
       if tiling is not None:
         attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
@@ -4069,7 +4080,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       bf16 = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       attrs = []
       if tiling is not None:
         attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
@@ -4167,7 +4178,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)
       ref_ty = ir.MemRefType.get((2, 128), i32, memory_space=mgpu.utils.smem())
-      ref, = undefs(ref_ty)
+      ref = undefs(ref_ty)
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((32,)),
           mgpu.dialect.SwizzleTransformAttr.get(128),
@@ -4193,7 +4204,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       layout = fa.TCGEN05_LAYOUT
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
+      ref = undefs(ref_ty)
       transforms = ir.ArrayAttr.get([
           mgpu.dialect.TileTransformAttr.get((8, 32)),
           mgpu.dialect.SwizzleTransformAttr.get(64),

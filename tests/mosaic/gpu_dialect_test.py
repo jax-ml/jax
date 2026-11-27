@@ -18,6 +18,7 @@ import contextlib
 import os
 import re
 import tempfile
+from typing import overload
 
 from absl.testing import parameterized
 import jax
@@ -86,10 +87,21 @@ def workgroup_ptr_ty() -> ir.Type:
   return llvm.PointerType.get(workgroup_nvptx_address_space)
 
 
-def undefs(*tys: ir.Type) -> list[ir.Value]:
-  """Returns a list of undefined values of the given types."""
+@overload
+def undefs(ty: ir.Type, /) -> ir.Value: ...
+
+
+@overload
+def undefs(
+    ty0: ir.Type, ty1: ir.Type, /, *tys: ir.Type
+) -> list[ir.Value]: ...
+
+
+def undefs(*tys: ir.Type) -> ir.Value | list[ir.Value]:
+  """Returns undefined values of the given types."""
   # TODO(allanrenucci): Use `ub.poison` once Python bindings are available.
-  return [builtin.unrealized_conversion_cast([ty], []) for ty in tys]
+  values = [builtin.unrealized_conversion_cast([ty], []) for ty in tys]
+  return values[0] if len(values) == 1 else values
 
 
 class MosaicGpuTest(parameterized.TestCase):
@@ -1247,7 +1259,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_unsupported_int_bitwidth(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(16)))
+      source = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(16)))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -1257,7 +1269,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_missing_signedness(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
+      source = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Max,
@@ -1267,7 +1279,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_unsupported_float_reduction(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
+      source = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.And,
@@ -1277,7 +1289,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_unsupported_f32_reduction(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.F32Type.get()))
+      source = undefs(ir.MemRefType.get([4], ir.F32Type.get()))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Min,
@@ -1287,7 +1299,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_unsupported_float_type(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.F64Type.get()))
+      source = undefs(ir.MemRefType.get([4], ir.F64Type.get()))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -1298,7 +1310,7 @@ ir.MLIRError,
   def test_multimem_load_reduce_source_not_in_gmem(self):
     smem = mgpu_utils.smem()
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get(), memory_space=smem))
+      source = undefs(ir.MemRefType.get([4], ir.F16Type.get(), memory_space=smem))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -1308,7 +1320,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_valid_int(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
+      source = undefs(ir.MemRefType.get([4], ir.IntegerType.get_signless(32)))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -1317,7 +1329,7 @@ ir.MLIRError,
 
   def test_multimem_load_reduce_valid_float(self):
     with ir.InsertionPoint(self.module.body):
-      source, = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
+      source = undefs(ir.MemRefType.get([4], ir.F16Type.get()))
       mgpu.dialect.MultimemLoadReduceOp(
           source=source,
           reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
@@ -1381,7 +1393,7 @@ ir.MLIRError,
           [1], mgpu.dialect.BarrierType.get(), memory_space=mgpu_utils.smem()
       )
       vec_ty = ir.VectorType.get([128, 64], f32)
-      [outer_val] = undefs(f32)
+      outer_val = undefs(f32)
 
       # Empty allocations and no results.
       empty_scope = mgpu.dialect.run_scoped(buffer_types=[], buffer_attrs=[])
@@ -1492,7 +1504,7 @@ ir.MLIRError,
     with ir.InsertionPoint(self.module.body):
       f32 = ir.F32Type.get()
       i32 = ir.IntegerType.get_signless(32)
-      [val] = undefs(i32)
+      val = undefs(i32)
       scope = mgpu.dialect.run_scoped(
           buffer_types=[], buffer_attrs=[], results=[f32]
       )
@@ -1538,7 +1550,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64], ir.F32Type.get()),
           operand,
@@ -1549,7 +1561,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_size_1_dim_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([1, 64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([1, 64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64], ir.F32Type.get()),
           operand,
@@ -1560,7 +1572,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_no_0d(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64], ir.F32Type.get()),
           operand,
@@ -1575,7 +1587,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_no_input_larger_than_output(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([64, 64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([64, 64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64], ir.F32Type.get()),
           operand,
@@ -1590,7 +1602,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_too_many_dims(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64], ir.F32Type.get()),
           operand,
@@ -1605,7 +1617,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_dim_oob(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64], ir.F32Type.get()),
           operand,
@@ -1620,7 +1632,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_dim_transpose(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()),
           operand,
@@ -1635,7 +1647,7 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_dim_size_mismatch(self):
     with ir.InsertionPoint(self.module.body):
-      (operand,) = undefs(ir.VectorType.get([2, 64], ir.F32Type.get()))
+      operand = undefs(ir.VectorType.get([2, 64], ir.F32Type.get()))
       mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64], ir.F32Type.get()),
           operand,
@@ -1732,7 +1744,7 @@ ir.MLIRError,
       )
       block = op.body.blocks.append()
       with ir.InsertionPoint(block):
-        [ref] = undefs(ref_ty)
+        ref = undefs(ref_ty)
         mgpu.dialect.ReturnOp(operands_=[ref])
 
     with self.assertRaisesRegex(
@@ -1743,7 +1755,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_must_have_smem_ref_input(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get([], ir.IntegerType.get_signless(32))
       )
       mgpu.dialect.tmem_alloc(
@@ -1765,7 +1777,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_result_must_have_tmem_memory_space(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1790,7 +1802,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_column_count_must_be_at_most_512(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1833,7 +1845,7 @@ ir.MLIRError,
     )
     has_enough_columns = num_columns <= max_columns
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get([], i32, memory_space=mgpu_utils.smem())
       )
       mgpu.dialect.tmem_alloc(
@@ -1857,7 +1869,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_bad_packing(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1883,7 +1895,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_15_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1905,7 +1917,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_100_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1927,7 +1939,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_777_packed_not_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1953,7 +1965,7 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_778_packed_ok(self):
     with ir.InsertionPoint(self.module.body):
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -1980,7 +1992,7 @@ ir.MLIRError,
           ir.BF16Type.get(),
           memory_space=mgpu_utils.tmem(),
       )
-      (smem_ptr,) = undefs(
+      smem_ptr = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
@@ -2241,7 +2253,7 @@ ir.MLIRError,
 
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
-      (tmem_ref,) = undefs(
+      tmem_ref = undefs(
           ir.MemRefType.get(
               [128, 128],
               ir.BF16Type.get(),
@@ -2317,7 +2329,7 @@ ir.MLIRError,
       ref_ty = ir.MemRefType.get(
           (2,), ir.F32Type.get(), memory_space=mgpu_utils.smem()
       )
-      (ref,) = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.print_layout("smem: {}", ref)
     self.assertTrue(self.module.operation.verify())
 
@@ -2328,7 +2340,7 @@ ir.MLIRError,
           ir.F32Type.get(),
           memory_space=ir.Attribute.parse("#gpu.address_space<global>"),
       )
-      (ref,) = undefs(ref_ty)
+      ref = undefs(ref_ty)
       mgpu.dialect.print_layout("gmem: {}", ref)
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -2354,7 +2366,7 @@ ir.MLIRError,
   def test_query_cluster_cancel_invalid_response_size(self):
 
     with ir.InsertionPoint(self.module.body):
-      (result,) = undefs(ir.MemRefType.get([8], ir.IntegerType.get_signless(8)))
+      result = undefs(ir.MemRefType.get([8], ir.IntegerType.get_signless(8)))
       mgpu.dialect.query_cluster_cancel(result)
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -2379,7 +2391,7 @@ ir.MLIRError,
   def test_query_cluster_cancel_not_in_smem(self):
 
     with ir.InsertionPoint(self.module.body):
-      (result,) = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8)))
+      result = undefs(ir.MemRefType.get([16], ir.IntegerType.get_signless(8)))
       mgpu.dialect.query_cluster_cancel(result)
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -2447,7 +2459,7 @@ ir.MLIRError,
     )
 
     with ir.InsertionPoint(self.module.body):
-      [outer_val] = undefs(vec_ty)
+      outer_val = undefs(vec_ty)
       scope = mgpu.dialect.alloca_scope([i32, vec_ty])
       with ir.InsertionPoint(scope.body):
         ref1 = mgpu.dialect.alloc_smem(smem_ref_ty1)
@@ -2468,7 +2480,7 @@ ir.MLIRError,
       # `alloc_smem` is nested in an `alloca_scope`, but not directly.
       scope = mgpu.dialect.alloca_scope()
       with ir.InsertionPoint(scope.body):
-        [cond] = undefs(ir.IntegerType.get_signless(1))
+        cond = undefs(ir.IntegerType.get_signless(1))
         with mgpu_utils.when(cond):
           mgpu.dialect.alloc_smem(ref_ty)
         mgpu.dialect.alloca_scope_return([])
@@ -2528,7 +2540,7 @@ ir.MLIRError,
       ty2 = ir.VectorType.get((256,), ir.F32Type.get())
       scope = mgpu.dialect.alloca_scope([ty1])
       with ir.InsertionPoint(scope.body):
-        [v] = undefs(ty2)
+        v = undefs(ty2)
         mgpu.dialect.alloca_scope_return([v])
 
     with self.assertRaisesRegex(
@@ -2540,7 +2552,7 @@ ir.MLIRError,
 
   def test_cumulative_reduction_dimension_must_be_in_range(self):
     with ir.InsertionPoint(self.module.body):
-      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      source = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
       mgpu.dialect.cumulative_reduction(
           source,
           kind=mgpu.dialect.CumulativeReductionKind.Add,
@@ -2555,7 +2567,7 @@ ir.MLIRError,
   @parameterized.parameters(0, 1)
   def test_cumulative_reduction_with_an_in_range_dimension_passes(self, dimension):
     with ir.InsertionPoint(self.module.body):
-      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      source = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
       mgpu.dialect.cumulative_reduction(
           source,
           kind=mgpu.dialect.CumulativeReductionKind.Add,
@@ -2565,7 +2577,7 @@ ir.MLIRError,
 
   def test_cumulative_reduction_accepts_a_rank_one_source(self):
     with ir.InsertionPoint(self.module.body):
-      [source] = undefs(ir.VectorType.get([128], ir.F32Type.get()))
+      source = undefs(ir.VectorType.get([128], ir.F32Type.get()))
       mgpu.dialect.cumulative_reduction(
           source,
           kind=mgpu.dialect.CumulativeReductionKind.LogAddExp,
@@ -2920,7 +2932,7 @@ class DialectLoweringTest(MosaicGpuTest):
       block = op.body.blocks.append(*args_ty)
       with ir.InsertionPoint(block):
         out = undefs(vec_ty)
-        mgpu.dialect.ReturnOp(out)
+        mgpu.dialect.ReturnOp([out])
 
     if omit_in_layouts:
       error = "layout for each vector operand"
@@ -3266,7 +3278,7 @@ class DialectLoweringTest(MosaicGpuTest):
     i32 = ir.IntegerType.get_signless(32)
     shape = (32, 1, 128, 1)
     ref_ty = ir.MemRefType.get(shape, i32, memory_space=mgpu_utils.smem())
-    [ref] = undefs(ref_ty)
+    ref = undefs(ref_ty)
     transposed_ref_ty = mgpu_utils.memref_transpose(ref, (2, 1, 3, 0)).type
     tiling = (8, 1, 1, 4)
     tiled_ty = lowering.transform_type(transposed_ref_ty, (launch_context.TileTransform(tiling),))
@@ -3374,7 +3386,7 @@ class DialectLoweringTest(MosaicGpuTest):
 
       def tiled_ref(shape):
         tiled_shape = mgpu_utils.tile_shape(shape, (8, 256))
-        (ref,) = undefs(ir.MemRefType.get(tiled_shape, f4, memory_space=smem))
+        ref = undefs(ir.MemRefType.get(tiled_shape, f4, memory_space=smem))
         return ref
 
       tmem_addr = arith.constant(i32, 0)
@@ -3446,7 +3458,7 @@ class DialectLoweringTest(MosaicGpuTest):
 
       def tiled_ref(shape):
         tiled_shape = mgpu_utils.tile_shape(shape, (8, swizzle))
-        (ref,) = undefs(ir.MemRefType.get(tiled_shape, f8, memory_space=smem))
+        ref = undefs(ir.MemRefType.get(tiled_shape, f8, memory_space=smem))
         return ref
 
       tcgen05.mma(
