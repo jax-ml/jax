@@ -2213,6 +2213,81 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  def _check_pinned_ref_control_flow(
+      self, make_f, x, expected, expected_grad, expected_jvp=None
+  ):
+    for pin in (False, True):
+      f = make_f(pin)
+      cases = [(f, expected), (jax.grad(f), expected_grad)]
+      if expected_jvp is not None:
+        cases.append((
+            lambda a: jax.jvp(f, (a,), (jnp.ones_like(a),)),
+            (expected, expected_jvp),
+        ))
+      for transformed_f, expected_out in cases:
+        compiled = jax.jit(transformed_f)
+        compiled.lower(x)
+        if not pin or jtu.test_device_matches(['gpu', 'tpu']):
+          self.assertAllClose(compiled(x), expected_out)
+
+  def test_new_ref_pinned_cond(self):
+    def make_f(pin):
+      def f(a):
+        ref = jax.new_ref(a, pin=pin)
+        lax.cond(
+            jnp.sum(a) > 0,
+            lambda _: ref.__setitem__(..., ref[...] * 2.0),
+            lambda _: ref.__setitem__(..., ref[...] * 3.0),
+            None,
+        )
+        return jnp.sum(jax.ref.freeze(ref))
+
+      return f
+
+    x = jnp.linspace(0.1, 1.0, 8, dtype=jnp.float32)
+    self._check_pinned_ref_control_flow(
+        make_f, x, 8.8, jnp.full_like(x, 2.0)
+    )
+
+  def test_new_ref_pinned_scan(self):
+    def make_f(pin):
+      def f(a):
+        ref = jax.new_ref(a, pin=pin)
+
+        def body(carry, xi):
+          ref[...] = ref[...] + xi
+          return carry + 1, ref[...]
+
+        _, ys = lax.scan(body, 0, a)
+        return jnp.sum(ys) + jnp.sum(jax.ref.freeze(ref))
+
+      return f
+
+    x = jnp.linspace(0.1, 1.0, 8, dtype=jnp.float32)
+    expected_grad = jnp.array([81., 73., 65., 57., 49., 41., 33., 25.])
+    self._check_pinned_ref_control_flow(
+        make_f, x, 190.0, expected_grad, 424.0
+    )
+
+  def test_new_ref_pinned_fori_loop(self):
+    def make_f(pin):
+      def f(a):
+        ref = jax.new_ref(a, pin=pin)
+
+        def body(i, carry):
+          ref[...] = ref[...] + a[i]
+          return carry + 1
+
+        lax.fori_loop(0, a.shape[0], body, 0)
+        return jnp.sum(jax.ref.freeze(ref))
+
+      return f
+
+    x = jnp.linspace(0.1, 1.0, 8, dtype=jnp.float32)
+    self._check_pinned_ref_control_flow(
+        make_f, x, 39.6, jnp.full_like(x, 9.0), 72.0
+    )
+
   def test_new_ref_unpinned_by_default(self):
     @jax.jit
     def f(x):
