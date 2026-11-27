@@ -52,7 +52,6 @@ except ImportError:
 
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
-# TODO(bchetioui): simplify other use sites to use the aliases directly.
 TileTransformAttr = mgpu.dialect.TileTransformAttr
 SwizzleTransformAttr = mgpu.dialect.SwizzleTransformAttr
 
@@ -2668,7 +2667,7 @@ class DialectLoweringTest(MosaicGpuTest):
     elt_ty = ir.BF16Type.get()
     with self.kernel() as launch_ctx:
       memref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu_utils.smem())
-      in_transforms = ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
+      in_transforms = ir.ArrayAttr.get([SwizzleTransformAttr.get(128)])
       transforms_attr = ir.ArrayAttr.get([in_transforms])
       mem_slice = mgpu.dialect.slice_smem(memref_ty, 0)
       mem_slice.owner.attributes["out_transforms"] = transforms_attr
@@ -2913,7 +2912,7 @@ class DialectLoweringTest(MosaicGpuTest):
     ]
     in_layouts = out_layouts * 2
     in_transforms = [
-        ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
+        ir.ArrayAttr.get([SwizzleTransformAttr.get(128)])
     ]
 
     in_layouts = [] if omit_in_layouts else in_layouts
@@ -2972,7 +2971,7 @@ class DialectLoweringTest(MosaicGpuTest):
           memory_space=mgpu_utils.smem(),
       )
       in_tiling = (16, 32)
-      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      tile_transform_attr = TileTransformAttr.get(in_tiling)
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
       slice_op.attributes["out_transforms"] = transforms_attr
@@ -2981,7 +2980,7 @@ class DialectLoweringTest(MosaicGpuTest):
       attributes = ref_transposed.owner.attributes
       attributes["in_transforms"] = transforms_attr
       out_tiling = in_tiling[::-1]
-      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(out_tiling)
+      tile_transform_attr = TileTransformAttr.get(out_tiling)
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       attributes["out_transforms"] = transforms_attr
 
@@ -2999,7 +2998,7 @@ class DialectLoweringTest(MosaicGpuTest):
           memory_space=mgpu_utils.smem(),
       )
       in_tiling = (16, 32)
-      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      tile_transform_attr = TileTransformAttr.get(in_tiling)
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
       slice_op.attributes["out_transforms"] = transforms_attr
@@ -3019,7 +3018,7 @@ class DialectLoweringTest(MosaicGpuTest):
           memory_space=mgpu_utils.smem(),
       )
       in_tiling = (16, 32)
-      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      tile_transform_attr = TileTransformAttr.get(in_tiling)
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
       slice_op.attributes["out_transforms"] = transforms_attr
@@ -3043,7 +3042,7 @@ class DialectLoweringTest(MosaicGpuTest):
           memory_space=mgpu_utils.smem(),
       )
       in_tiling = (16, 32)
-      tile_transform_attr = mgpu.dialect.TileTransformAttr.get(in_tiling)
+      tile_transform_attr = TileTransformAttr.get(in_tiling)
       transforms_attr = ir.ArrayAttr.get([ir.ArrayAttr.get([tile_transform_attr])])
       slice_op = mgpu.dialect.SliceSMEMOp(ty_logical, 0)
       slice_op.attributes["out_transforms"] = transforms_attr
@@ -3167,8 +3166,8 @@ class DialectLoweringTest(MosaicGpuTest):
       smem = mgpu.dialect.slice_smem(ty_logical, 0)
       transforms_attr = ir.ArrayAttr.get([
           ir.ArrayAttr.get([
-              mgpu.dialect.TileTransformAttr.get((64, 64)),
-              mgpu.dialect.SwizzleTransformAttr.get(128),
+              TileTransformAttr.get((64, 64)),
+              SwizzleTransformAttr.get(128),
           ])
       ])
       smem.owner.attributes["out_transforms"] = transforms_attr

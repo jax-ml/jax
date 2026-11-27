@@ -426,10 +426,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, i32
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
 
       zero = arith.constant(i32, 0)
@@ -663,10 +660,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       with ir.InsertionPoint(for_op.body):
         add = layout_cast(arith.addf(loop_a, loop_b), layout)
 
-        transforms = ir.ArrayAttr.get([
-            mgpu.dialect.TileTransformAttr.get((8, 32)),
-            mgpu.dialect.SwizzleTransformAttr.get(64),
-        ])
+        transforms = transforms_attr(tiling=(8, 32), swizzle=64)
         loop_ref = mgpu.dialect.with_transforms(loop_ref, transforms)
 
         yield_op = scf.YieldOp([add, add, loop_ref])
@@ -706,10 +700,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(for_op, [wgmma_layout])
     self.checkOutLayouts(for_op, [wgmma_layout])
 
-    transforms = ir.ArrayAttr.get([
-      mgpu.dialect.TileTransformAttr.get((8, 64)),
-      mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
+    transforms = transforms_attr(tiling=(8, 64), swizzle=128)
     in_transforms = inference_utils.in_transforms(for_op)
     self.assertSequenceEqual(in_transforms, [transforms, transforms])
     out_transforms = inference_utils.out_transforms(for_op)
@@ -956,10 +947,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           (64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
       ref = undefs(ref_ty)
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       ref = mgpu.dialect.with_transforms(ref, transforms)
       c0 = arith.constant(ir.IntegerType.get_signless(32), 0)
       get_cluster_ref = mgpu.dialect.get_cluster_ref(ref, x=c0).owner
@@ -1142,9 +1130,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
       vec_ty = ir.VectorType.get(shape, f32)
       ref, val = undefs(ref_ty, vec_ty)
-      mgpu.dialect.with_transforms(
-          ref, [mgpu.dialect.TileTransformAttr.get((64, 64))]
-      )
+      mgpu.dialect.with_transforms(ref, transforms_attr(tiling=(64, 64)))
       if is_store:
         val = layout_cast(val, mgpu.WGMMA_LAYOUT)
         mgpu.dialect.VectorStoreOp(val, ref, optimized=optimized)
@@ -1238,11 +1224,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
       mgpu.dialect.with_transforms(
-          ref,
-          [
-              mgpu.dialect.TileTransformAttr.get((8, 64)),
-              mgpu.dialect.SwizzleTransformAttr.get(128),
-          ],
+          ref, transforms_attr(tiling=(8, 64), swizzle=128)
       )
       transposed_ref = mgpu.memref_transpose(ref, (1, 0))
       load = mgpu.dialect.VectorLoadOp(transposed_ref)
@@ -1256,11 +1238,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
       [ref, value] = undefs(ref_ty, vec_ty)
       mgpu.dialect.with_transforms(
-          ref,
-          [
-              mgpu.dialect.TileTransformAttr.get((8, 64)),
-              mgpu.dialect.SwizzleTransformAttr.get(128),
-          ],
+          ref, transforms_attr(tiling=(8, 64), swizzle=128)
       )
       transposed_ref = mgpu.memref_transpose(ref, (1, 0))
       store = mgpu.dialect.VectorStoreOp(value, transposed_ref)
@@ -1567,10 +1545,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [dest_layout])
 
     expect_tiling = (8, 32) if dtype == ir.F32Type.get() else (8, 64)
-    expected_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get(expect_tiling),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
+    expected_transforms = transforms_attr(tiling=expect_tiling, swizzle=128)
     [in_transform] = inference_utils.in_transforms(op)
     self.assertSequenceEqual(in_transform, expected_transforms)
 
@@ -1580,9 +1555,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     dest_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.tmem())
     src_type = ir.MemRefType.get(shape, dtype, memory_space=mgpu.utils.smem())
     dest_layout = tcgen05.tmem_default_layout(packing=2)
-    transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 8)),
-    ])
+    transforms = transforms_attr(tiling=(8, 8))
     with ir.InsertionPoint(self.module.body):
       [src, dest] = undefs(src_type, dest_type)
       src = mgpu.dialect.with_transforms(src, transforms)
@@ -1931,7 +1904,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
       mgpu.infer_layout(self.module)
 
-      want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
+      want = ir.ArrayAttr.get([transforms_attr()])
       self.assertEqual(inference_utils.in_transforms(load_op), want)
       self.assertEqual(inference_utils.in_transforms(store_op), want)
 
@@ -1967,10 +1940,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
-    arg_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems)),
-        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle)),
-    ])
+    arg_transforms = transforms_attr(
+        tiling=(8, swizzle_elems), swizzle=int(swizzle)
+    )
 
     in_layouts = [wgmma_layout]
     out_layouts = [wgmma_layout]
@@ -2104,14 +2076,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     expected_layouts = [acc_layout, a_layout] if lhs_in_tmem else [acc_layout]
     self.checkInTmemLayouts(tcgen05_mma_op, expected_layouts)
 
-    arg_transforms_lhs = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems_lhs)),
-        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle_lhs)),
-    ])
-    arg_transforms_rhs = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems_rhs)),
-        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle_rhs)),
-    ])
+    arg_transforms_lhs = transforms_attr(
+        tiling=(8, swizzle_elems_lhs), swizzle=int(swizzle_lhs)
+    )
+    arg_transforms_rhs = transforms_attr(
+        tiling=(8, swizzle_elems_rhs), swizzle=int(swizzle_rhs)
+    )
     if lhs_in_tmem:
       transforms = [arg_transforms_rhs]
     else:
@@ -2133,14 +2103,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       op = mgpu.dialect.TcGen05MMAOp(acc, lhs, rhs, accumulate)
 
     mgpu.infer_layout(self.module)
-    lhs_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(64),
-    ])
-    rhs_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 32)),
-        mgpu.dialect.SwizzleTransformAttr.get(32),
-    ])
+    lhs_transforms = transforms_attr(tiling=(8, 64), swizzle=64)
+    rhs_transforms = transforms_attr(tiling=(8, 32), swizzle=32)
     self.assertSequenceEqual(
         inference_utils.in_transforms(op), [lhs_transforms, rhs_transforms]
     )
@@ -2400,10 +2364,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       barrier_ty = mgpu.dialect.BarrierType.get()
       gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2443,10 +2404,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 16)),
-          mgpu.dialect.SwizzleTransformAttr.get(16),
-      ])
+      transforms = transforms_attr(tiling=(8, 16), swizzle=16)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2487,10 +2445,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 16)),
-          mgpu.dialect.SwizzleTransformAttr.get(16),
-      ])
+      transforms = transforms_attr(tiling=(8, 16), swizzle=16)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2529,10 +2484,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2571,10 +2523,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2615,10 +2564,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 16)),
-          mgpu.dialect.SwizzleTransformAttr.get(16),
-      ])
+      transforms = transforms_attr(tiling=(8, 16), swizzle=16)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2652,10 +2598,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           gmem_ty, smem_ty, barrier_ty, gather_indices_ty
       )
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2709,9 +2652,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       barrier_ty = mgpu.dialect.BarrierType.get()
       gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
 
-      transforms = ir.ArrayAttr.get(
-          [mgpu.dialect.TileTransformAttr.get((8, 32))]
-      )
+      transforms = transforms_attr(tiling=(8, 32))
       one = arith.constant(ir.IntegerType.get_signless(32), 1)
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
       if op_type == mgpu.dialect.AsyncLoadOp:
@@ -2741,10 +2682,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           (64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
       [ref, o0] = undefs(ref_ty, ir.IntegerType.get_signless(32))
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(8, 64), swizzle=128)
       mgpu.dialect.with_transforms(ref, transforms)
       if multiple is not None:
         o0 = mgpu.dialect.assume_multiple(o0, multiple)
@@ -2782,12 +2720,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       layout_cast(op.result, layout)
 
     if isinstance(layout, fa.TiledLayout):
-      expected_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      expected_transforms = transforms_attr(tiling=(8, 64), swizzle=128)
     else:
-      expected_transforms = ir.ArrayAttr.get([])
+      expected_transforms = transforms_attr()
 
     mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
@@ -2809,12 +2744,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       op = mgpu.dialect.VectorStoreOp(value_to_store, smem_ref, optimized=optimized)
 
     if isinstance(layout, fa.TiledLayout):
-      expected_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      expected_transforms = transforms_attr(tiling=(8, 64), swizzle=128)
     else:
-      expected_transforms = ir.ArrayAttr.get([])
+      expected_transforms = transforms_attr()
 
     mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
@@ -2849,10 +2781,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         mgpu.infer_layout(self.module)
     else:
       self.assertIsInstance(layout, fa.TiledLayout)
-      expected_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      expected_transforms = transforms_attr(tiling=(8, 64), swizzle=128)
       mgpu.infer_layout(self.module)
       self.assertSequenceEqual(
           inference_utils.in_transforms(op), [expected_transforms]
@@ -2870,10 +2799,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # An unset `optimized` attribute requires an optimized transfer, so we
     # infer the transforms that make one possible.
-    expected_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
+    expected_transforms = transforms_attr(tiling=(8, 64), swizzle=128)
     self.assertSequenceEqual(
         inference_utils.in_transforms(store), [expected_transforms]
     )
@@ -2885,7 +2811,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       slice_smem_op = mgpu.dialect.SliceSMEMOp(ref_ty, 0)
 
-      transforms = ir.ArrayAttr.get([])
+      transforms = transforms_attr()
       mgpu.infer_layout(self.module)
       self.assertSequenceEqual(
           inference_utils.out_transforms(slice_smem_op), [transforms]
@@ -2904,27 +2830,18 @@ class LayoutInferenceTest(parameterized.TestCase):
       ops[4].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
       ops[5].attributes["alias_id"] = ir.IntegerAttr.get(i32, 1)
 
-      transforms_0 = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms_0 = transforms_attr(tiling=(8, 64), swizzle=128)
       mgpu.dialect.with_transforms(ops[0].result, transforms_0)
 
-      transforms_1 = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((16, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms_1 = transforms_attr(tiling=(16, 64), swizzle=128)
       mgpu.dialect.with_transforms(ops[2].result, transforms_1)
 
-      transforms_2 = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((32, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms_2 = transforms_attr(tiling=(32, 64), swizzle=128)
       mgpu.dialect.with_transforms(ops[5].result, transforms_2)
 
     mgpu.infer_layout(self.module)
 
-    empty_transforms = ir.ArrayAttr.get([])
+    empty_transforms = transforms_attr()
 
     self.assertSequenceEqual(inference_utils.out_transforms(ops[0]), [transforms_0])
     self.assertSequenceEqual(inference_utils.out_transforms(ops[1]), [empty_transforms])
@@ -2946,16 +2863,10 @@ class LayoutInferenceTest(parameterized.TestCase):
       ops[0].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
       ops[1].attributes["alias_id"] = ir.IntegerAttr.get(i32, 0)
 
-      transforms_0 = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms_0 = transforms_attr(tiling=(8, 64), swizzle=128)
       mgpu.dialect.with_transforms(ops[0].result, transforms_0)
 
-      transforms_1 = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((16, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms_1 = transforms_attr(tiling=(16, 64), swizzle=128)
       mgpu.dialect.with_transforms(ops[1].result, transforms_1)
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
@@ -3032,10 +2943,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
 
-      transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(8, 64), swizzle=128)
       mgpu.dialect.with_transforms(ref, transforms)
 
     mgpu.infer_layout(self.module)
@@ -3051,14 +2959,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
 
-      transforms1 = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
-      transforms2 = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((16, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms1 = transforms_attr(tiling=(8, 64), swizzle=128)
+      transforms2 = transforms_attr(tiling=(16, 64), swizzle=128)
       mgpu.dialect.with_transforms(ref, transforms1)
       mgpu.dialect.with_transforms(ref, transforms2)
 
@@ -3087,7 +2989,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
     [in_transform] = inference_utils.in_transforms(async_load_op)
-    self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
+    self.assertSequenceEqual(in_transform, transforms_attr())
 
   @parameterized.named_parameters(
       ("default", (32, 64), None, ((8, 64), 128)),
@@ -3209,10 +3111,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
 
-      transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(8, 64), swizzle=128)
 
       if annotate_producer:
         ref = mgpu.dialect.with_transforms(ref, transforms)
@@ -3238,10 +3137,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
       in_ref = undefs(in_ref_ty)
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((32, 16)),
-          mgpu.dialect.SwizzleTransformAttr.get(32),
-      ])
+      transforms = transforms_attr(tiling=(32, 16), swizzle=32)
       out_ref = memref.subview(
           in_ref, offsets=[1, 0, 0], sizes=[2, 64, 8], strides=[1, 1, 1]
       )
@@ -3327,10 +3223,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           static_strides=[1, 1],
       )
 
-      want = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((2 if even_offsets else 1, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      want = transforms_attr(tiling=(2 if even_offsets else 1, 64), swizzle=128)
       mgpu.dialect.WithTransformsOp(subview_op0.result, want)
 
       subview_op1 = memref.SubViewOp(
@@ -3398,10 +3291,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
       in_ref = undefs(in_ref_ty)
 
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((4, 8, 16)),
-          mgpu.dialect.SwizzleTransformAttr.get(32),
-      ])
+      transforms = transforms_attr(tiling=(4, 8, 16), swizzle=32)
 
       if annotate_input:
         in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
@@ -3458,10 +3348,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_custom_primitive_op_retains_transforms(self):
     with ir.InsertionPoint(self.module.body):
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((64, 64)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(64, 64), swizzle=128)
       ref_ty = ir.MemRefType.get(
           (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
@@ -3479,12 +3366,8 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_custom_primitive_op_with_conflicting_transforms_is_unsat(self):
     with ir.InsertionPoint(self.module.body):
-      transforms_a = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((64, 64)),
-      ])
-      transforms_b = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((32, 32)),
-      ])
+      transforms_a = transforms_attr(tiling=(64, 64))
+      transforms_b = transforms_attr(tiling=(32, 32))
       ref_ty = ir.MemRefType.get(
           (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
       )
@@ -3528,10 +3411,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       in_ref = undefs(in_ref_ty)
 
-      in_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get(in_tile),
-          mgpu.dialect.SwizzleTransformAttr.get(32),
-      ])
+      in_transforms = transforms_attr(tiling=in_tile, swizzle=32)
 
       if annotate_input:
         in_ref = mgpu.dialect.with_transforms(in_ref, in_transforms)
@@ -3539,10 +3419,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       permutation = ir.AffineMap.get_permutation(perm)
       transpose_op = memref.TransposeOp(out_ref_ty, in_ref, permutation)
 
-      out_transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get(out_tile),
-          mgpu.dialect.SwizzleTransformAttr.get(32),
-      ])
+      out_transforms = transforms_attr(tiling=out_tile, swizzle=32)
 
       if not annotate_input:
         mgpu.dialect.with_transforms(transpose_op.result, out_transforms)
@@ -3869,10 +3746,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       [in_ref, idx] = undefs(ref_ty, ir.IndexType.get())
 
       if has_transforms:
-        transforms = ir.ArrayAttr.get([
-            mgpu.dialect.TileTransformAttr.get((32, 32)),
-            mgpu.dialect.SwizzleTransformAttr.get(64),
-        ])
+        transforms = transforms_attr(tiling=(32, 32), swizzle=64)
         in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
       else:
         transforms = []
@@ -3899,7 +3773,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_out_layout_for_memref_collapse_shape_no_reassociation(self):
     shape = (32, 64, 128)
     out_shape = (32, 64, 128)
-    no_transforms = ir.ArrayAttr.get([])
+    no_transforms = transforms_attr()
 
     with ir.InsertionPoint(self.module.body):
       elt_ty = ir.BF16Type.get()
@@ -3917,10 +3791,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_out_layout_for_memref_collapse_shape_with_non_reassociable_tiling_fails(self):
     shape = (32, 64, 128)
     out_shape = (32, 64 * 128)
-    transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((32, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
+    transforms = transforms_attr(tiling=(32, 64), swizzle=128)
 
     with ir.InsertionPoint(self.module.body):
       elt_ty = ir.BF16Type.get()
@@ -3939,10 +3810,7 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_out_layout_for_memref_collapse_shape_with_reassociable_tiling(self):
     shape = (32, 64, 128)
     out_shape = (32, 64 * 128)
-    transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((1, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
+    transforms = transforms_attr(tiling=(1, 64), swizzle=128)
 
     with ir.InsertionPoint(self.module.body):
       elt_ty = ir.BF16Type.get()
@@ -3955,10 +3823,9 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
     [out_transforms] = inference_utils.out_transforms(op)
-    self.assertSequenceEqual(out_transforms, ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((64,)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ]))
+    self.assertSequenceEqual(
+        out_transforms, transforms_attr(tiling=(64,), swizzle=128)
+    )
 
   def test_layout_cast_incompatible_with_vector_shape_is_unsatisfiable(self):
     with ir.InsertionPoint(self.module.body):
@@ -3987,9 +3854,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       f32 = ir.F32Type.get()
       ref_ty = ir.MemRefType.get((4, 4), f32, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 2)),
-      ])
+      transforms = transforms_attr(tiling=(8, 2))
       mgpu.dialect.with_transforms(ref, transforms)
     with self.assertRaisesRegex(
         ValueError, "Cannot apply tiling"
@@ -4005,10 +3870,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       self, swizzle, side, transpose_other_side
   ):
     shape = (64, 64)
-    transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, swizzle // 2)),
-        mgpu.dialect.SwizzleTransformAttr.get(swizzle),
-    ])
+    transforms = transforms_attr(tiling=(8, swizzle // 2), swizzle=swizzle)
     with ir.InsertionPoint(self.module.body):
       bf16 = ir.BF16Type.get()
       f32 = ir.F32Type.get()
@@ -4018,10 +3880,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.dialect.with_transforms(lhs if side == "lhs" else rhs, transforms)
       lhs_transforms, rhs_transforms = transforms, transforms
       if transpose_other_side:
-        transposed_transforms = ir.ArrayAttr.get([
-            mgpu.dialect.TileTransformAttr.get((swizzle // 2, 8)),
-            mgpu.dialect.SwizzleTransformAttr.get(swizzle),
-        ])
+        transposed_transforms = transforms_attr(
+            tiling=(swizzle // 2, 8), swizzle=swizzle
+        )
         if side == "lhs":
           rhs = mgpu.utils.memref_transpose(rhs, (1, 0))
           rhs_transforms = transposed_transforms
@@ -4050,12 +3911,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       bf16 = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
-      attrs = []
-      if tiling is not None:
-        attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
-      if swizzle is not None:
-        attrs.append(mgpu.dialect.SwizzleTransformAttr.get(swizzle))
-      in_transforms = ir.ArrayAttr.get(attrs)
+      in_transforms = transforms_attr(tiling, swizzle)
       mgpu.dialect.with_transforms(ref, in_transforms)
 
     mgpu.infer_layout(self.module)
@@ -4081,12 +3937,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       bf16 = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
-      attrs = []
-      if tiling is not None:
-        attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
-      if swizzle is not None:
-        attrs.append(mgpu.dialect.SwizzleTransformAttr.get(swizzle))
-      transforms = ir.ArrayAttr.get(attrs)
+      transforms = transforms_attr(tiling, swizzle)
       mgpu.dialect.with_transforms(ref, transforms)
 
     with self.assertRaisesRegex(ValueError, "Cannot apply.*tiling"):
@@ -4111,14 +3962,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
       acc_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
       acc, lhs, rhs = undefs(acc_ty, ref_ty, ref_ty)
-      mgpu.dialect.with_transforms(lhs, ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, lhs_swizzle // 2)),
-          mgpu.dialect.SwizzleTransformAttr.get(lhs_swizzle),
-      ]))
-      mgpu.dialect.with_transforms(rhs, ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, rhs_swizzle // 2)),
-          mgpu.dialect.SwizzleTransformAttr.get(rhs_swizzle),
-      ]))
+      mgpu.dialect.with_transforms(
+          lhs,
+          transforms_attr(tiling=(8, lhs_swizzle // 2), swizzle=lhs_swizzle),
+      )
+      mgpu.dialect.with_transforms(
+          rhs,
+          transforms_attr(tiling=(8, rhs_swizzle // 2), swizzle=rhs_swizzle),
+      )
 
       if transpose_lhs:
         lhs = mgpu.utils.memref_transpose(lhs, (1, 0))
@@ -4132,14 +3983,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     lhs_tiling = (lhs_swizzle // 2, 8) if transpose_lhs else (8, lhs_swizzle // 2)
     rhs_tiling = (rhs_swizzle // 2, 8) if transpose_rhs else (8, rhs_swizzle // 2)
 
-    lhs_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get(lhs_tiling),
-        mgpu.dialect.SwizzleTransformAttr.get(lhs_swizzle),
-    ])
-    rhs_transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get(rhs_tiling),
-        mgpu.dialect.SwizzleTransformAttr.get(rhs_swizzle),
-    ])
+    lhs_transforms = transforms_attr(lhs_tiling, lhs_swizzle)
+    rhs_transforms = transforms_attr(rhs_tiling, rhs_swizzle)
     tcgen05_mma_transforms = inference_utils.in_transforms(tcgen05_mma_op)
     self.assertSequenceEqual(tcgen05_mma_transforms, [lhs_transforms, rhs_transforms])
 
@@ -4153,10 +3998,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           mgpu.dialect.BarrierType.get(),
       )
       args = undefs(*args_ty)
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((32,)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(32,), swizzle=128)
       args = [mgpu.dialect.with_transforms(a, transforms) for a in args]
       op = mgpu.dialect.WarpMapOp(operands=args)
       with ir.InsertionPoint(op.body):
@@ -4179,10 +4021,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       i32 = ir.IntegerType.get_signless(32)
       ref_ty = ir.MemRefType.get((2, 128), i32, memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((32,)),
-          mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
+      transforms = transforms_attr(tiling=(32,), swizzle=128)
       ref = mgpu.dialect.with_transforms(ref, transforms)
       op = mgpu.dialect.WarpMapOp(operands=[ref, ref])
       with ir.InsertionPoint(op.body):
@@ -4205,10 +4044,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       ref = undefs(ref_ty)
-      transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((8, 32)),
-          mgpu.dialect.SwizzleTransformAttr.get(64),
-      ])
+      transforms = transforms_attr(tiling=(8, 32), swizzle=64)
       ref = mgpu.dialect.with_transforms(ref, transforms)
       v = mgpu.dialect.vector_load(ref)
     mgpu.infer_layout(self.module, arch=arch)
