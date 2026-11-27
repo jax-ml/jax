@@ -549,6 +549,28 @@ class NNFunctionsTest(jtu.JaxTestCase):
       self.assertEqual(g.dtype, dtype)
       self.assertAllClose(g.astype(jnp.float32), g_ref, rtol=.02, atol=.02)
 
+  @jtu.sample_product(dtype=[jnp.float32, jnp.bfloat16, jnp.float16])
+  def testDotProductAttentionAllMaskedRow(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/42929
+    key = random.PRNGKey(0)
+    q = random.normal(key, (2, 4, 3, 16), dtype)
+    k = random.normal(key, (2, 4, 3, 16), dtype)
+    v = random.normal(key, (2, 4, 3, 16), dtype)
+    bias = jnp.full((2, 3, 4, 4), -jnp.inf, dtype=dtype)
+
+    out = nn.dot_product_attention(q, k, v, bias=bias, implementation="xla")
+    self.assertEqual(out.dtype, dtype)
+    self.assertTrue(jnp.all(out == 0.0))
+    self.assertEqual(int(jnp.isnan(out).sum()), 0)
+
+    def loss(q, k, v):
+      res = nn.dot_product_attention(q, k, v, bias=bias, implementation="xla")
+      return jnp.sum(res.astype(jnp.float32))
+
+    grads = jax.grad(loss, argnums=(0, 1, 2))(q, k, v)
+    for g in grads:
+      self.assertEqual(int(jnp.isnan(g).sum()), 0)
+
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
