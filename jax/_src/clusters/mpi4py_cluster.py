@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
-from jax._src import clusters
+from jax._src.clusters import cluster
 import socket
 
 from importlib.util import find_spec
 
 
-class Mpi4pyCluster(clusters.ClusterEnv):
+class Mpi4pyCluster(cluster.ClusterEnv):
 
 
   name: str = "mpi4py"
