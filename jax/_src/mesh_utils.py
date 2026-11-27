@@ -297,8 +297,6 @@ def _create_device_mesh_for_nd_torus(
       np.prod(assignment, axis=1) = physical_mesh_shape, and
       np.prod(assignment, axis=0) = mesh_shape.
   """
-  # Remaining physical axes to be assigned to logical axes.
-  assignable_physical_mesh = list(physical_mesh.shape)
   # Map each logical axis to a subset of physical axes.
   assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
@@ -315,34 +313,33 @@ def _create_device_mesh_for_nd_torus(
     # 4D mesh (x, y, z, core): core (axis 3) first, then x, y, z.
     priority_map = {0: 1, 1: 2, 2: 3, 3: 0}
 
-  # Assign logical axes from highest network intensity to lowest.
-  # `mesh_shape` is assumed to ordered by lowest network intensity first, so
-  # reverse it first.
-  for logical_axis_index, logical_axis_size in reversed(
-      list(enumerate(mesh_shape))
-  ):
-    # Preferentially map to more physical axes first for higher bandwidth.
+  def _candidate_priority(candidate):
+    # Lower rank = higher priority. Sort by best (lowest) priority
+    # among all axes in the candidate, then by sum of priorities
+    # as a tie-breaker.
+    indices = tuple(c[0] for c in candidate)
+    best_priority = min(priority_map[i] for i in indices)  # type: ignore
+    total_priority = sum(priority_map[i] for i in indices)  # type: ignore
+    return (best_priority, total_priority)
+
+  def _axis_candidates(
+      logical_axis_size: int, assignable_physical_mesh: Sequence[int]
+  ) -> Generator[tuple[int, ...]]:
+    """Yields subsets of assignable whole physical axes for a logical axis.
+
+    Subsets are yielded in heuristic preference order: prefer mapping to more
+    physical axes first for higher bandwidth, then, if `priority_map`
+    applies, prefer subsets containing higher-bandwidth physical axes. This
+    ensures high network intensity logical axes get assigned to high
+    bandwidth physical axes.
+    """
     for num_axes in range(len(physical_mesh.shape), 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
       candidates = list(
           itertools.combinations(enumerate(assignable_physical_mesh), num_axes)
       )
-
-      # Sort candidates by priority if provided, so that candidates containing
-      # higher priority physical axes are tried first. This ensures high network
-      # intensity logical axes get assigned to high bandwidth physical axes.
       if priority_map is not None:
-        def _candidate_priority(candidate):
-          # Lower rank = higher priority. Sort by best (lowest) priority
-          # among all axes in the candidate, then by sum of priorities
-          # as a tie-breaker.
-          indices = tuple(c[0] for c in candidate)
-          best_priority = min(priority_map[i] for i in indices)  # type: ignore
-          total_priority = sum(priority_map[i] for i in indices)  # type: ignore
-          return (best_priority, total_priority)
-
         candidates.sort(key=_candidate_priority)
-
       for elem in candidates:
         c_indices, c_axes = zip(*elem)
         # TODO(zhangqiaorjc): Due to limitations in XLA, 2D collectives only
@@ -352,39 +349,69 @@ def _create_device_mesh_for_nd_torus(
         # soon, we can continue to preferentially map to 2D plane in general,
         # otherwise, we should treat non-square 2D plane and 1D submesh equally.
         if np.prod(c_axes) == logical_axis_size:
-          assignment[logical_axis_index] = c_indices
-          # Zero the assigned physical axes.
-          assignable_physical_mesh = [
-              0 if i in c_indices else v
-              for i, v in enumerate(assignable_physical_mesh)
-          ]
-          break
-      if assignment[logical_axis_index]:
-        # We already found an assignment from one candidate above.
-        break
+          yield c_indices
+
+  # Assign logical axes from highest network intensity to lowest.
+  # `mesh_shape` is assumed to ordered by lowest network intensity first, so
+  # reverse it first.
+  logical_axes = list(reversed(list(enumerate(mesh_shape))))
+
+  # A first fit preferred by the heuristics above can leave no whole-axis
+  # mapping for the remaining logical axes, e.g., for mesh (2, 8, 16) on a
+  # physical (x, y, z, core) = (4, 4, 8, 2) topology, assigning the axis of
+  # size 16 to (z, core) strands the axes of size 8 and 2 on physical axes of
+  # size 4 and 4. So search over the candidates in their preference order
+  # with backtracking: this returns the same assignment the first-fit
+  # heuristic finds whenever the heuristic succeeds, but recovers a valid
+  # whole-axis assignment in cases where the heuristic would fail.
+  failed_states: set[tuple[int, tuple[int, ...]]] = set()
+
+  def _assign_axes(
+      logical_axis_pos: int, assignable_physical_mesh: tuple[int, ...]
+  ) -> bool:
+    state = (logical_axis_pos, assignable_physical_mesh)
+    if state in failed_states:
+      return False
+    if logical_axis_pos == len(logical_axes):
+      return True
+    logical_axis_index, logical_axis_size = logical_axes[logical_axis_pos]
+    for c_indices in _axis_candidates(
+        logical_axis_size, assignable_physical_mesh
+    ):
+      # Zero the assigned physical axes.
+      new_assignable = tuple(
+          0 if i in c_indices else v
+          for i, v in enumerate(assignable_physical_mesh)
+      )
+      if _assign_axes(logical_axis_pos + 1, new_assignable):
+        assignment[logical_axis_index] = c_indices
+        return True
+    if logical_axis_size <= 1:
+      # A trivial logical axis does not need any physical axes.
+      if _assign_axes(logical_axis_pos + 1, assignable_physical_mesh):
+        return True
+    failed_states.add(state)
+    return False
+
+  if not _assign_axes(0, tuple(physical_mesh.shape)):
+    if not allow_split_physical_axes:
+      # Although this is now implemented, there are downstream tasks
+      # counting on this being a NotImplementedError.
+      raise NotImplementedError(
+          f'Failed to find assignment of whole physical axes for logical mesh'
+          f' {tuple(mesh_shape)} on physical mesh {tuple(physical_mesh.shape)}.'
+          ' The size of each axis in your logical mesh must be equal to the'
+          ' product of some subset of the physical mesh axis sizes. E.g.'
+          ' logical mesh (4, 16) is compatible with physical mesh 4x4x4 since'
+          ' 4=4 and 16=4x4. If you want to split physical axes, set '
+          ' allow_split_physical_axes to True.'
+      )
     else:
-      # If the num_axes for loop did not break, i.e. none of the candidates work
-      # goto here with this while-else construct.
-      if logical_axis_size > 1:
-        if not allow_split_physical_axes:
-          # Although this is now implemented, there are downstream tasks
-          # counting on this being a NotImplementedError.
-          raise NotImplementedError(
-              'Failed to find assignment for logical_axis_index'
-              f' {logical_axis_index} of size {logical_axis_size} with'
-              f' remaining assignable mesh {assignable_physical_mesh}. The size'
-              ' of each axis in your logical mesh must be equal to the product'
-              ' of some subset of the physical mesh axis sizes. E.g. logical'
-              ' mesh (4, 16) is compatible with physical mesh 4x4x4 since 4=4'
-              ' and 16=4x4. If you want to split physical axes, set '
-              ' allow_split_physical_axes to True.'
-          )
-        else:
-          # We will try finding an assignment, even if that means splitting the
-          # physical axes, which requires a more sophisticated implementation.
-          return _create_device_mesh_for_nd_torus_splitting_axes(
-              physical_mesh, mesh_shape
-          )
+      # We will try finding an assignment, even if that means splitting the
+      # physical axes, which requires a more sophisticated implementation.
+      return _create_device_mesh_for_nd_torus_splitting_axes(
+          physical_mesh, mesh_shape
+      )
 
   # Flatten the assignment, e.g., [(), (2,), (0, 1)] -> (2, 0, 1).
   transpose: list[int] = []
