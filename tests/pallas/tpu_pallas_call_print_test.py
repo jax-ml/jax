@@ -171,6 +171,44 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     self.assertLen(numbers, n)
     self.assertTrue(all(num == i for i, num in enumerate(numbers)))
 
+  @parameterized.named_parameters(
+      ("uint8", jnp.uint8),
+      ("uint16", jnp.uint16),
+      ("uint32", jnp.uint32),
+  )
+  def test_debug_print_vector_unsigned_values(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40860: vector
+    # `debug_print` printed unsigned values above the signed range (e.g.
+    # 2**32 - 1 for uint32) as negative signed integers, even though the
+    # array returned by the kernel was correct.
+    bits = np.dtype(dtype).itemsize * 8
+    values = [0, 2 ** (bits - 1) - 1, 2 ** (bits - 1), 2**bits - 1]
+
+    @jax.jit(compiler_options={"xla_tpu_enable_log_recorder": "true"})
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((len(values),), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("unsigned_vec: {}", x_ref[...])
+      o_ref[...] = x_ref[...]
+
+    x = jnp.array(values, dtype=dtype)
+    with jtu.capture_stderr() as get_output:
+      result = jax.block_until_ready(kernel(x))
+    _, sep, output = get_output().partition("unsigned_vec: ")
+    self.assertTrue(sep)
+
+    np.testing.assert_array_equal(np.asarray(result), values)
+    numbers = [
+        int(num)
+        for line in output.splitlines()
+        if (match := re.search(r"\{(.*)", line))  # extract contents after `{`
+        for num in re.findall(r"-?\d+", match.group(1))
+    ]
+    # Printing the same bits as signed would give negative values instead.
+    self.assertEqual(numbers, values)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
