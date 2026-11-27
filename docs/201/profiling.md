@@ -579,8 +579,23 @@ Alternatively, you can point TensorBoard to the `log_dir` to analyze the trace (
 
 ### Nsight
 
-NVIDIA's `Nsight` tools can be used to trace and profile JAX code on GPU. For
-details, see the [`Nsight`
+NVIDIA's Nsight tools can be used to trace and profile JAX code on GPU. Use
+{func}`jax.profiler.capture` (or {func}`jax.profiler.start_capture` and
+{func}`jax.profiler.stop_capture`) to limit collection to specific steps:
+
+```python
+with jax.profiler.capture():
+  y = step(x)
+  jax.block_until_ready(y)
+```
+
+Then run the program under `nsys profile --capture-range=cudaProfilerApi` or
+`ncu --profile-from-start off`. By default, Nsight Systems terminates the
+program when the first capture ends. Add `--capture-range-end=stop` to let the
+program continue, or `--capture-range-end=repeat` to write one report per
+capture.
+
+For details, see the [Nsight
 documentation](https://developer.nvidia.com/tools-overview).
 
 (jax-201-memory-profiling)=

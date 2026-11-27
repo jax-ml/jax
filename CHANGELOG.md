@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.profiler.start_capture`, {func}`jax.profiler.stop_capture`,
+    and {func}`jax.profiler.capture` to limit Nsight Systems and Nsight Compute
+    collection to parts of a program on CUDA GPUs.
 * Breaking changes
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations

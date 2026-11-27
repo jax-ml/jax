@@ -18,6 +18,9 @@ features.
   start_trace
   stop_trace
   trace
+  start_capture
+  stop_capture
+  capture
   annotate_function
   TraceAnnotation
   StepTraceAnnotation

@@ -29,6 +29,7 @@ import unittest.mock
 from absl.testing import absltest
 import jax
 from jax import jit
+from jax._src import lib
 from jax._src import profiler
 import jax._src.test_util as jtu
 import jax.numpy as jnp
@@ -635,6 +636,83 @@ class ProfilerTest(unittest.TestCase):
         trace_content = f.read()
       # Sanity check that trace contains kernel_details
       self.assertTrue("kernel_details" in trace_content, "Expected 'kernel_details' in trace content")
+
+  @jtu.skip_on_devices("cuda")
+  def testCaptureUnsupportedBackendRaises(self):
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      jax.profiler.start_capture()
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      jax.profiler.stop_capture()
+    with self.assertRaisesRegex(
+        RuntimeError, "only supported on CUDA GPU backends"
+    ):
+      with jax.profiler.capture():
+        pass
+
+  @jtu.run_on_devices("cuda")
+  @jtu.thread_unsafe_test()
+  def testCudaCapture(self):
+    devices = jax.local_devices()
+    cuda_plugin_extension = profiler._get_cuda_plugin_extension()
+    self.assertIsNotNone(cuda_plugin_extension)
+    if (
+        not hasattr(cuda_plugin_extension, "start_capture")
+        and jax.__version__ != lib.version_str
+    ):
+      self.skipTest("The installed CUDA plugin does not support capture")
+
+    @jit
+    def matmul_plus_bias(x, y, z):
+      return jnp.dot(x, y) + z
+
+    inputs = [
+        jax.device_put(jnp.ones((64, 64), dtype=jnp.float32), device)
+        for device in devices
+    ]
+
+    def run_on_all_devices():
+      jax.block_until_ready([matmul_plus_bias(x, x, x) for x in inputs])
+
+    # Warm up outside capture.
+    run_on_all_devices()
+
+    with jax.profiler.capture():
+      run_on_all_devices()
+
+    jax.profiler.start_capture()
+    try:
+      run_on_all_devices()
+    finally:
+      jax.profiler.stop_capture()
+
+    # Capture also works on a thread that has not run any JAX computation.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+      executor.submit(jax.profiler.start_capture).result()
+      executor.submit(jax.profiler.stop_capture).result()
+
+    with unittest.mock.patch.object(
+        profiler, "stop_capture", wraps=profiler.stop_capture
+    ) as mock_stop:
+      with self.assertRaisesRegex(ValueError, "boom"):
+        with jax.profiler.capture():
+          raise ValueError("boom")
+      mock_stop.assert_called_once()
+
+    with unittest.mock.patch.object(
+        profiler, "_get_cuda_plugin_extension", return_value=None
+    ):
+      with self.assertRaisesRegex(
+          RuntimeError, "installed CUDA plugin does not support"
+      ):
+        jax.profiler.start_capture()
+      with self.assertRaisesRegex(
+          RuntimeError, "installed CUDA plugin does not support"
+      ):
+        jax.profiler.stop_capture()
 
 
 if __name__ == "__main__":

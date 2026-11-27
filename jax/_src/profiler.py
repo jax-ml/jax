@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from functools import wraps
+from functools import cache, wraps
 import gzip
 import http.server
 import json
@@ -25,6 +25,7 @@ import os
 import pathlib
 import socketserver
 import threading
+from types import ModuleType
 from typing import Any
 import warnings
 
@@ -34,6 +35,7 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
+from jax._src.lib import plugin_support
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
 
@@ -496,6 +498,74 @@ def trace(
       profiler_options=profiler_options,
   ) as session:
     yield session
+
+
+@cache
+def _get_cuda_plugin_extension() -> ModuleType | None:
+  return plugin_support.import_from_plugin("cuda", "cuda_plugin_extension")
+
+
+def _get_capture_fn(fn_name: str) -> Callable[[], None]:
+  backend = xla_bridge.get_backend()
+  if (
+      backend.platform != "gpu"
+      or "cuda" not in backend.platform_version.lower()
+  ):
+    platform = (
+        backend.platform_version or backend.platform
+        if backend.platform == "gpu"
+        else backend.platform
+    )
+    raise RuntimeError(
+        f"{fn_name} is only supported on CUDA GPU backends, got {platform!r}."
+    )
+  fn = getattr(_get_cuda_plugin_extension(), fn_name, None)
+  if fn is None:
+    raise RuntimeError(
+        f"The installed CUDA plugin does not support {fn_name}."
+    )
+  return fn
+
+
+def start_capture() -> None:
+  """Starts external GPU profiler capture on CUDA GPUs.
+
+  Calls ``cuProfilerStart`` for every GPU that JAX uses in this process, so
+  external tools such as Nsight Systems
+  (``nsys profile --capture-range=cudaProfilerApi``) and Nsight Compute
+  (``ncu --profile-from-start off``) begin collecting data. Nsight Systems
+  terminates the program when the first capture ends unless
+  ``--capture-range-end`` is set to ``stop`` or ``repeat``.
+
+  Note that JAX dispatches operations asynchronously; call
+  :func:`jax.block_until_ready` on outputs before :func:`stop_capture` so
+  enqueued work finishes inside the capture window.
+  """
+  _get_capture_fn("start_capture")()
+
+
+def stop_capture() -> None:
+  """Stops external GPU profiler capture started by :func:`start_capture`."""
+  _get_capture_fn("stop_capture")()
+
+
+@contextmanager
+def capture() -> Iterator[None]:
+  """Context manager that starts and stops external GPU profiler capture.
+
+  For example, under ``nsys profile --capture-range=cudaProfilerApi``::
+
+    with jax.profiler.capture():
+      y = step(x)
+      jax.block_until_ready(y)
+
+  See :func:`start_capture` for details.
+  """
+  start_capture()
+  try:
+    yield
+  finally:
+    stop_capture()
 
 
 class TraceAnnotation(_profiler.TraceMe):
