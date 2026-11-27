@@ -534,8 +534,9 @@ class DotProductAttentionBatchingTest(jtu.JaxTestCase):
     # bfloat16 logits to float32, which strict mode rejects.
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
-    if jtu.is_cuda_version_at_least(13, 0):
-      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    if (jtu.is_cuda_version_at_least(13, 0)
+        and check_cudnn_version() < 92700):
+      self.skipTest("CUDA 13 SDPA tests require cuDNN 9.27 or newer.")
     keys = jax.random.split(jax.random.key(0), 3)
     B, T, N, H = 2, 64, 4, 64
     q, k, v = (jax.random.normal(key, (B, T, N, H), dtype=jnp.bfloat16)
@@ -838,13 +839,9 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
 
 
 class DotProductAttentionDbiasTest(jtu.JaxTestCase):
-  # Regression tests for https://github.com/jax-ml/jax/issues/34685: the
-  # backward kernel computed dbias whenever a bias or mask was present, but a
-  # boolean mask alone becomes a constant additive bias whose gradient no
-  # caller can request, so computing it is pure waste. These tests are
-  # trace-level (they inspect the jaxpr, without running the kernel), so
-  # unlike the execution tests above they do not need Ampere; they run
-  # wherever cuDNN is available.
+  # Regression for #34685: boolean masks must not request a bias gradient.
+  # Inspect each route's backward operands and outputs. The Python frontend
+  # builds a cuDNN plan while tracing and needs a supported GPU.
 
   def setUp(self):
     super().setUp()
@@ -856,6 +853,11 @@ class DotProductAttentionDbiasTest(jtu.JaxTestCase):
   def _bwd_eqns(self, jaxpr):
     for eqn in jaxpr.eqns:
       if eqn.primitive.name == "dot_product_attention_bwd_wrapper":
+        yield eqn
+      elif (eqn.primitive.name == "ffi_call"
+            and eqn.params["target_name"].startswith("cudnn_sdpa_")
+            and len(eqn.outvars) >= 4):
+        # Backward returns dQ/dK/dV, optional dBias, and workspace.
         yield eqn
       for param in eqn.params.values():
         values = param if isinstance(param, (tuple, list)) else (param,)
@@ -869,7 +871,11 @@ class DotProductAttentionDbiasTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(fn)(*args)
     eqns = list(self._bwd_eqns(jaxpr.jaxpr))
     self.assertLen(eqns, 1)
-    return eqns[0].params["variadic_args"]
+    eqn = eqns[0]
+    if eqn.primitive.name == "ffi_call":
+      # These cases have no lengths: Q/K/V, optional bias, O/stats/dO.
+      return len(eqn.invars) == 7, len(eqn.outvars) == 5
+    return eqn.params["variadic_args"]
 
   def _make_qkv(self):
     keys = jax.random.split(jax.random.key(0), 3)
