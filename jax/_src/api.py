@@ -589,10 +589,13 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
         "returned VJP function's `with_refs` method. (Ref arguments not "
         f"selected by {name}'s argnums are fine: they are treated as "
         "plumbing, and are not differentiated.)")
+  if not isinstance(aval, ShapedArray) and name == "jacrev":
+    aval = _shaped_aval_for_jac(x, cotangent=True)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
+    check_aval = aval if isinstance(aval, ShapedArray) else aval.to_ct_aval()
+    if isinstance(check_aval, ShapedArray) and not dtypes.issubdtype(check_aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
-                      f"but got {aval.dtype.name}.")
+                      f"but got {check_aval.dtype.name}.")
   if isinstance(aval, ShapedArray):
     if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
         dtypes.issubdtype(aval.dtype, np.integer) or
@@ -609,6 +612,8 @@ _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
   aval = core.typeof(x)
+  if not isinstance(aval, ShapedArray):
+    aval = _shaped_aval_for_jac(x, cotangent=True)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"{name} with output element type {aval.dtype.name}")
@@ -764,7 +769,7 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
   dispatch.check_arg(x)
-  aval = core.typeof(x)
+  aval = _shaped_aval_for_jac(x)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"jacfwd with input element type {aval.dtype.name}")
@@ -780,7 +785,7 @@ def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
                     "complex inputs or integer inputs, use jax.jvp directly.")
 
 def _check_output_dtype_jacfwd(holomorphic, x):
-  aval = core.typeof(x)
+  aval = _shaped_aval_for_jac(x)
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError("jacfwd with holomorphic=True requires outputs with complex dtype, "
@@ -836,7 +841,7 @@ def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
     y, pullback, *maybe_aux = vjp(f_partial, *dyn_args, has_aux=has_aux)
     tree_map(partial(_check_output_dtype_jacrev, holomorphic), y)
-    jac = vmap(pullback)(_std_basis(y))
+    jac = vmap(pullback)(_std_basis(y, cotangent=True))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     jac_tree = tree_map(partial(_jacrev_unravel, y), example_args, jac)
@@ -924,53 +929,69 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
   return jacfwd(jacrev(fun, argnums, has_aux=has_aux, holomorphic=holomorphic),
                 argnums, has_aux=has_aux, holomorphic=holomorphic)
 
-def _insert_pvary(basis, leaf):
+def _shaped_aval_for_jac(x: Any, *, cotangent: bool = False) -> ShapedArray:
+  aval = core.typeof(x)
+  if isinstance(aval, ShapedArray):
+    return aval
+  tangent_aval = aval.to_ct_aval() if cotangent else aval.to_tangent_aval()
+  if not isinstance(tangent_aval, ShapedArray):
+    raise TypeError(
+        f"Jacobian requires array-valued tangent types, but got {tangent_aval} "
+        f"for value of type {aval}."
+    )
+  return tangent_aval
+
+def _insert_pvary(basis, leaf, *, cotangent: bool = False):
   if not config._check_vma.value or not config.auto_pcast.value:
     return basis
-  return core.pvary(basis, tuple(core.typeof(leaf).mat.varying))
+  return core.pvary(
+      basis, tuple(_shaped_aval_for_jac(leaf, cotangent=cotangent).mat.varying))
 
-def _std_basis(pytree):
+def _std_basis(pytree, *, cotangent: bool = False):
   import jax.numpy as jnp  # pyrefly: ignore[missing-import]
   leaves, _ = tree_flatten(pytree)
-  ndim = sum(map(np.size, leaves))
-  dtype = dtypes.result_type(*leaves)
+  avals = [_shaped_aval_for_jac(l, cotangent=cotangent) for l in leaves]
+  ndim = sum(a.size for a in avals)
+  dtype = dtypes.result_type(
+      *(l if isinstance(core.typeof(l), ShapedArray) else a
+        for l, a in zip(leaves, avals)))
   flat_basis = jnp.eye(ndim, dtype=dtype)
   axis = 1
   arr_s = [None] * flat_basis.ndim
-  specs = [P(*arr_s[:axis], *core.typeof(l).sharding.spec, *arr_s[axis+1:])
-           for l in leaves]
-  out_pytree = _unravel_array_into_pytree(pytree, axis, None, flat_basis, specs)
-  out_pytree = tree_map(_insert_pvary, out_pytree, pytree)
+  specs = [P(*arr_s[:axis], *a.sharding.spec, *arr_s[axis+1:])
+           for a in avals]
+  out_pytree = _unravel_array_into_pytree(
+      pytree, axis, None, flat_basis, specs, cotangent=cotangent)
+  out_pytree = tree_map(
+      partial(_insert_pvary, cotangent=cotangent), out_pytree, pytree)
   return out_pytree
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
   axis = -1 % arr.ndim
   arr_s = core.typeof(arr).sharding.spec
   specs = tree_map(
-      lambda l: P(*arr_s[:axis], *[None] * len(np.shape(l)), *arr_s[axis+1:]),
+      lambda l: P(*arr_s[:axis], *[None] * len(_shaped_aval_for_jac(l).shape), *arr_s[axis+1:]),
       input_pytree)
   return _unravel_array_into_pytree(
     input_pytree, axis, output_pytree_leaf, arr, specs)
 
 def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
   specs = tree_map(
-      lambda l: P(*[None] * len(np.shape(l)), *core.typeof(arr).sharding.spec[1:]),
+      lambda l: P(*[None] * len(_shaped_aval_for_jac(l, cotangent=True).shape), *core.typeof(arr).sharding.spec[1:]),
       output_pytree)
   return _unravel_array_into_pytree(
-    output_pytree, 0, input_pytree_leaf, arr, specs)
+    output_pytree, 0, input_pytree_leaf, arr, specs, cotangent=True)
 
-def _possible_downcast(x, example, spec):
+def _possible_downcast(x, example_aval: ShapedArray, spec):
   from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
-      not dtypes.issubdtype(_dtype(example), np.complexfloating)):
+      not dtypes.issubdtype(example_aval.dtype, np.complexfloating)):
     x = x.real
-  dtype = _dtype(example)
-  weak_type = dtypes.is_weakly_typed(example)
-  sharding = NamedSharding(core.typeof(example).sharding.mesh, spec)
+  sharding = NamedSharding(example_aval.sharding.mesh, spec)
   return lax_internal._convert_element_type(
-      x, dtype, weak_type, sharding=sharding)
+      x, example_aval.dtype, example_aval.weak_type, sharding=sharding)
 
-def _unravel_array_into_pytree(pytree, axis, example, arr, specs):
+def _unravel_array_into_pytree(pytree, axis, example, arr, specs, *, cotangent: bool = False):
   """Unravel an array into a PyTree with a given structure.
   Args:
       pytree: The pytree that provides the structure.
@@ -981,14 +1002,16 @@ def _unravel_array_into_pytree(pytree, axis, example, arr, specs):
       arr: The array to be unraveled.
   """
   leaves, treedef = tree_flatten(pytree)
+  avals = [_shaped_aval_for_jac(l, cotangent=cotangent) for l in leaves]
   specs, _ = tree_flatten(specs)
-  shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
-  parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
+  shapes = [arr.shape[:axis] + a.shape + arr.shape[axis+1:] for a in avals]
+  parts = _split(arr, np.cumsum([a.size for a in avals[:-1]]), axis)
+  example_aval = None if example is None else _shaped_aval_for_jac(example, cotangent=cotangent)
   reshaped_parts = [
       _possible_downcast(np.reshape(x, shape),
-                         leaf if example is None else example,
+                         aval if example_aval is None else example_aval,
                          spec=spec)
-      for x, shape, leaf, spec in zip(parts, shapes, leaves, specs)]
+      for x, shape, aval, spec in zip(parts, shapes, avals, specs)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
