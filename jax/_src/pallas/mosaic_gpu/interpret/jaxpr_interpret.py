@@ -193,7 +193,8 @@ def _member_inner_aval(member: pallas_core.TransformedRef) -> jax_core.ShapedArr
   """The logical aval of a `RefUnion` member."""
   (extract,) = member.transforms
   assert isinstance(extract, mosaic_gpu_core.ExtractAliasedRef), extract
-  return jax_core.ShapedArray(tuple(extract.shape), extract.dtype)
+  assert isinstance(extract.aval.inner_aval, jax_core.ShapedArray)
+  return extract.aval.inner_aval
 
 
 def resolve_ref(
