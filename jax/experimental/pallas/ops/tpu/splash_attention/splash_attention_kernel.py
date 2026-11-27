@@ -812,6 +812,7 @@ def flash_attention_kernel(
     assert m_curr.shape == (bq, 1)
     m_next = jnp.maximum(m_prev, m_curr)
     assert m_next.shape == (bq, NUM_LANES)
+    m_next_safe = jnp.where(m_next <= mask_value, 0.0, m_next)
 
     bkv_repeats, rem = divmod(bkv_compute, NUM_LANES)
     if rem != 0:
@@ -819,13 +820,13 @@ def flash_attention_kernel(
           f"{bkv_compute=} should be a multiple of {NUM_LANES}"
       )
 
-    s_curr = jnp.exp(qk - jnp.tile(m_next, (1, bkv_repeats)))
+    s_curr = jnp.exp(qk - jnp.tile(m_next_safe, (1, bkv_repeats)))
     assert s_curr.shape == (bq, bkv_compute)
 
     l_curr = jax.lax.broadcast_in_dim(s_curr.sum(axis=-1), l_prev.shape, (0,))
     assert l_curr.shape == (bq, NUM_LANES)
 
-    alpha = jnp.exp(m_prev - m_next)
+    alpha = jnp.exp(m_prev - m_next_safe)
     l_next = l_curr + alpha * l_prev
     m_scratch_ref[...], l_scratch_ref[...] = m_next, l_next
 
@@ -853,13 +854,16 @@ def flash_attention_kernel(
   def end():
     l = l_scratch_ref[...]
     l_inv = jnp.tile(
-        1.0 / l, (1, head_dim_v_repeats))[..., :o_scratch_ref.shape[-1]]
+        jnp.where(l == 0.0, 0.0, 1.0 / l), (1, head_dim_v_repeats)
+    )[..., : o_scratch_ref.shape[-1]]
     o_ref[...] = (o_scratch_ref[...] * l_inv).astype(o_ref.dtype)
     if logsumexp_ref is not None:
       assert logsumexp_ref.shape == (bq, NUM_LANES)
-      logsumexp_ref[...] = (jnp.log(l) + m_scratch_ref[...]).astype(
-          logsumexp_ref.dtype
+      l_safe = jnp.where(l == 0.0, 1.0, l)
+      lse = jnp.where(
+          l == 0.0, mask_value, jnp.log(l_safe) + m_scratch_ref[...]
       )
+      logsumexp_ref[...] = lse.astype(logsumexp_ref.dtype)
 
 
 def _div(dividend: int, divisor: int):
@@ -1391,7 +1395,8 @@ def _flash_attention_dq_kernel(
         bq=bq,
         mask_function=mask_function,
     )
-    p = jnp.exp(qk - logsumexp)
+    logsumexp_safe = jnp.where(logsumexp <= mask_value, 0.0, logsumexp)
+    p = jnp.exp(qk - logsumexp_safe)
     dp_dims = NT_DIM_NUMBERS if v_layout == HEAD_DIM_MINOR else NN_DIM_NUMBERS
     dp = lax.dot_general(
         do.astype(v.dtype), v, dp_dims, preferred_element_type=jnp.float32,
@@ -1802,7 +1807,8 @@ def _flash_attention_dkv_kernel(
         k_in_lanes=False,
         mask_function=mask_function,
     )
-    p = jnp.exp(qk - logsumexp)
+    logsumexp_safe = jnp.where(logsumexp <= mask_value, 0.0, logsumexp)
+    p = jnp.exp(qk - logsumexp_safe)
     dv = lax.dot(p.astype(do.dtype), do, preferred_element_type=jnp.float32)
     dv = dv.astype(dv_scratch_ref.dtype) + dv_scratch_ref[slice_k, :]
     dv_scratch_ref[slice_k, :] = dv
