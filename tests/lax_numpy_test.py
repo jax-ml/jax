@@ -3454,6 +3454,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
 
+  def testAsarrayConcreteTracer(self):
+    # `jax.Array` includes tracers, but jnp.asarray must still stage concrete
+    # scalar tracers into arrays (see the fast path in jnp.array).
+    p, t = jax.jvp(jnp.asarray, (1.0,), (1.0,))
+    self.assertIsInstance(p, jax.Array)
+    self.assertIsInstance(t, jax.Array)
+    self.assertEqual(p, 1.0)
+    self.assertEqual(t, 1.0)
+
+    p, _ = jax.linearize(jnp.asarray, 1.0)
+    self.assertIsInstance(p, jax.Array)
+
+    p, _ = jax.vjp(jnp.asarray, 1.0)
+    self.assertIsInstance(p, jax.Array)
+
   @jtu.sample_product(
     shape=nonempty_nonscalar_array_shapes,
     dtype=[int, float, complex],
