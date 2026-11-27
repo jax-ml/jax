@@ -2615,7 +2615,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
       n=(8, 32, 64, 128, 192, 256),
-      swizzle=(32, 128),
+      swizzle=(32, 64, 128),
       lhs_in_tmem=(False, True),
   )
   def test_mma_block_scaled_basic(
@@ -2685,21 +2685,23 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         b_scale_rows=256,
     )
 
-  def test_mma_block_scaled_128_lane_a_scales(self):
+  @parameterized.parameters(jnp.float4_e2m1fn, jnp.float8_e4m3fn)
+  def test_mma_block_scaled_128_lane_a_scales(self, in_jax_dtype):
     self.skip_unless_sm107f()  # 128-lane A scales are only supported on sm_107f.
-    # With f4 inputs and swizzle=128, K=512, so A has 16 scales per row. That's
-    # exactly the 16 bytes per row that tcgen05.cp needs, so no padding is
-    # required. K=512 also mixes K=96 and K=64 instructions (see `_do_mma`).
+    # With swizzle=128, K=512 (2 steps for f4 inputs, 4 steps for f8 inputs), so
+    # A has 16 scales per row. That's exactly the 16 bytes per row that
+    # tcgen05.cp needs, so no padding is required. With f4 inputs, K=512 also
+    # mixes K=96 and K=64 instructions (see `_do_mma`).
     self._run_mma_block_scaled(
         m=128,
         n=128,
-        in_jax_dtype=jnp.float4_e2m1fn,
+        in_jax_dtype=in_jax_dtype,
         scale_jax_dtype=jnp.float8_e8m0fnu,
         block_size=32,
         swizzle=128,
         lhs_in_tmem=False,
         a_scale_128_lane=True,
-        k_steps=2,
+        k_steps=2 if in_jax_dtype == jnp.float4_e2m1fn else 4,
     )
 
   def _run_mma_block_scaled(
@@ -3111,6 +3113,19 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         k_steps=2,
     )
 
+  def test_mma_block_scaled_collective_fp8(self):
+    # On sm_107f, this uses K=64 instructions (see `tcgen05.mma`).
+    self._run_mma_block_scaled_collective(
+        m=256,
+        n=256,
+        scale_jax_dtype=jnp.float8_e8m0fnu,
+        block_size=32,
+        lhs_in_tmem=False,
+        a_scale_128_lane=False,
+        k_steps=2,
+        in_jax_dtype=jnp.float8_e4m3fn,
+    )
+
   def _run_mma_block_scaled_collective(
       self,
       m,
@@ -3120,8 +3135,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       lhs_in_tmem,
       a_scale_128_lane,
       k_steps,
+      in_jax_dtype=jnp.float4_e2m1fn,
   ):
-    in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = block_size
     swizzle = 128
