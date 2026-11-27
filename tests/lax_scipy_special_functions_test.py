@@ -445,6 +445,16 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
 
+  def testPochOverflow(self):
+    cases = [(40.0, 2.0), (200.0, 2.0), (171.0, 1.0), (1000.0, -3.0)]
+    for z, m in cases:
+      val = lsp_special.poch(z, m)
+      expected = osp_special.poch(z, m)
+      self.assertAllClose(val, expected, rtol=1e-4)
+
+    grad_val = jax.grad(lambda z: lsp_special.poch(z, 2.0))(40.0)
+    self.assertAllClose(grad_val, 81.0, rtol=1e-4)
+
   @parameterized.parameters([True, False])
   def testGammaDebugNans(self, with_jit):
     finfo = jnp.finfo(dtypes.default_float_dtype())
