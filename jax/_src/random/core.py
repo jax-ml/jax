@@ -1267,20 +1267,20 @@ def _signed_midpoint_and_complement(
     input_bits = dtypes.iinfo(bits.dtype).bits
     if input_bits < w:
       bits_u = lax.shift_left(
-          bits_u, np.array(w - input_bits, dtype=uint_dtype)
+          bits_u, lax.convert_element_type(w - input_bits, uint_dtype)
       )
     sign_bit = lax.bitwise_and(
-        bits_u, np.array(1 << (w - 1), dtype=uint_dtype)
+        bits_u, lax.convert_element_type(1 << (w - 1), uint_dtype)
     )
     # Shift left by 1 to drop `sign_bit`, leaving `2 * k` in bits `1 .. w-1`
     # (where `k` is the `(w - 1)`-bit integer in `0 .. 2^(w-1) - 1`).
-    two_k = lax.shift_left(bits_u, np.array(1, dtype=uint_dtype))
+    two_k = lax.shift_left(bits_u, lax.convert_element_type(1, uint_dtype))
 
     # Map `k` to `(k + 0.5) / 2^(w-1) = (2 * k + 1) * 2^-w`:
     # - at `k = 0`, `+x` and `-x` land at `+2^-w` and `-2^-w` instead of
     #   mapping both `+0` and `-0` to `0.0`;
     # - at `k = 2^(w-1) - 1`, `1 - |x| = 2^-w > 0`, avoiding `erfinv(1) = inf`.
-    abs_x_int = lax.bitwise_or(two_k, np.array(1, dtype=uint_dtype))
+    abs_x_int = lax.bitwise_or(two_k, lax.convert_element_type(1, uint_dtype))
 
     # Since `|x| = (2 * k + 1) * 2^-w`, `1 - |x| = ((2^w - 1) - 2 * k) * 2^-w`,
     # whose numerator `(2^w - 1) - two_k` is the bitwise complement `~two_k`.
@@ -1296,29 +1296,29 @@ def _signed_midpoint_and_complement(
     # - Near `x = 0`, `q` rounds up to `1.0`, giving `q * (1 + |x|) == 1.0`,
     #   while `erf_inv_core` scales its result by `x` so small values stay
     #   distinct.
-    scale = np.array(2.0 ** -w, compute_dtype)
+    scale = lax.convert_element_type(2.0 ** -w, compute_dtype)
     abs_x = lax.convert_element_type(abs_x_int, compute_dtype) * scale
     q = lax.convert_element_type(q_int, compute_dtype) * scale
   elif mode == "highest":
     assert isinstance(bits, tuple) and len(bits) == 2
     hi, lo = bits
-    sign_bit = lax.bitwise_and(hi, np.array(1 << (w - 1), dtype=uint_dtype))
+    sign_bit = lax.bitwise_and(hi, lax.convert_element_type(1 << (w - 1), uint_dtype))
     # Same construction across two `w`-bit words `(hi, lo)`: shift left by 1
     # into `(two_k_hi, two_k_lo)` to drop `sign_bit`.
     two_k_hi = lax.bitwise_or(
-        lax.shift_left(hi, np.array(1, dtype=uint_dtype)),
-        lax.shift_right_logical(lo, np.array(w - 1, dtype=uint_dtype)),
+        lax.shift_left(hi, lax.convert_element_type(1, uint_dtype)),
+        lax.shift_right_logical(lo, lax.convert_element_type(w - 1, uint_dtype)),
     )
-    two_k_lo = lax.shift_left(lo, np.array(1, dtype=uint_dtype))
+    two_k_lo = lax.shift_left(lo, lax.convert_element_type(1, uint_dtype))
     abs_x_hi = two_k_hi
-    abs_x_lo = lax.bitwise_or(two_k_lo, np.array(1, dtype=uint_dtype))
+    abs_x_lo = lax.bitwise_or(two_k_lo, lax.convert_element_type(1, uint_dtype))
     q_hi = lax.bitwise_not(two_k_hi)
     q_lo = lax.bitwise_not(two_k_lo)
     # Scale the high and low words separately by `2^-w` and `2^(-2*w)` before
     # adding in floating point so tail values down to `2^(-2*w)` do not round to
     # zero when `q_hi == 0`.
-    scale_hi = np.array(2.0 ** -w, compute_dtype)
-    scale_lo = np.array(2.0 ** (-2 * w), compute_dtype)
+    scale_hi = lax.convert_element_type(2.0 ** -w, compute_dtype)
+    scale_lo = lax.convert_element_type(2.0 ** (-2 * w), compute_dtype)
     abs_x = (
         lax.convert_element_type(abs_x_hi, compute_dtype) * scale_hi
         + lax.convert_element_type(abs_x_lo, compute_dtype) * scale_lo
@@ -1393,7 +1393,7 @@ def _normal_real(
     lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
     hi = np.array(1.0, dtype)
     u = uniform(key, shape, dtype, lo, hi, out_sharding=out_sharding)
-    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+    return lax.mul(lax.convert_element_type(np.sqrt(2), dtype), lax_special.erf_inv(u))
   compute_dtype = (
       dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
   )
@@ -1697,8 +1697,8 @@ def _ndtr_and_erf_shifted(
   x_fin = jnp.where(jnp.isfinite(x), x, 0.0)
   xm = x + dx
   rem = dx - ((x_fin + dx) - x_fin)
-  sqrt_2_over_pi = np.array(math.sqrt(2.0 / math.pi), dtype=x.dtype)
-  inv_sqrt2 = np.array(1.0 / math.sqrt(2.0), dtype=x.dtype)
+  sqrt_2_over_pi = lax.convert_element_type(math.sqrt(2.0 / math.pi), x.dtype)
+  inv_sqrt2 = lax.convert_element_type(1.0 / math.sqrt(2.0), x.dtype)
   corr = rem * sqrt_2_over_pi * jnp.exp(-0.5 * jnp.square(xm))
   return (
       2.0 * ndtr(xm) + corr,
@@ -1724,7 +1724,7 @@ def _truncated_normal(
   lower, upper = _align_params(shape, sample_s, lower, upper)
 
   if mode == "low":
-    sqrt2 = np.array(np.sqrt(2), dtype)
+    sqrt2 = lax.convert_element_type(np.sqrt(2), dtype)
     a = lax_special.erf(lower / sqrt2)
     b = lax_special.erf(upper / sqrt2)
     u = uniform(key, shape, dtype, minval=a, maxval=b, out_sharding=sample_s)
@@ -1733,8 +1733,8 @@ def _truncated_normal(
     # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
     return jnp.clip(
         out,
-        lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
-        lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+        lax.nextafter(lax.stop_gradient(lower), lax.convert_element_type(np.inf, dtype)),
+        lax.nextafter(lax.stop_gradient(upper), lax.convert_element_type(-np.inf, dtype)))
 
   lower = lax.stop_gradient(lower)
   upper = lax.stop_gradient(upper)
@@ -1759,8 +1759,8 @@ def _truncated_normal(
         if core.typeof(lower).sharding != bound_s:
           lower = reshard(lower, bound_s)
           upper = reshard(upper, bound_s)
-  min_out = lax.nextafter(lower, np.array(np.inf, dtype=dtype))
-  max_out = lax.nextafter(upper, np.array(-np.inf, dtype=dtype))
+  min_out = lax.nextafter(lower, lax.convert_element_type(np.inf, dtype))
+  max_out = lax.nextafter(upper, lax.convert_element_type(-np.inf, dtype))
 
   # Compute in at least float32 so 16-bit dtypes get full 32-bit quantile
   # resolution and avoid underflow/rounding in the tails.
@@ -1796,8 +1796,10 @@ def _truncated_normal(
   neg = s < 0
   step = (0.5 * q_s) * delta_q
 
-  q_l = jnp.clip(jnp.where(neg, qa_l + step, qb_l - step), finfo.tiny, 2.0)
-  q_r = jnp.clip(jnp.where(neg, qa_r - step, qb_r + step), finfo.tiny, 2.0)
+  tiny = lax.convert_element_type(finfo.tiny, compute_dtype)
+  two = lax.convert_element_type(2.0, compute_dtype)
+  q_l = jnp.clip(jnp.where(neg, qa_l + step, qb_l - step), tiny, two)
+  q_r = jnp.clip(jnp.where(neg, qa_r - step, qb_r + step), tiny, two)
   q_erf = jnp.minimum(q_l, q_r)
 
   x_end = jnp.where(neg, ea + step, eb - step)

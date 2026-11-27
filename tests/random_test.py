@@ -1656,5 +1656,20 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
       jax.random.normal(jax.random.key(0), 1000)
     f()  # don't crash
 
+  def test_truncated_normal_and_normal_explicit_x64_dtypes(self):
+    with config.explicit_x64_dtypes("allow"), jax.enable_x64(False):
+      key = random.key(0)
+      for mode in ["low", "high"]:
+        sample = random.truncated_normal(
+            key, -2.0, 2.0, shape=(5,), dtype=jnp.float64, mode=mode
+        )
+        self.assertEqual(sample.dtype, jnp.float64)
+        self.assertTrue(jnp.all(sample > -2.0) and jnp.all(sample < 2.0))
+
+      for mode in ["low", "high", "highest"]:
+        sample = random.normal(key, shape=(5,), dtype=jnp.float64, mode=mode)
+        self.assertEqual(sample.dtype, jnp.float64)
+        self.assertTrue(jnp.all(jnp.isfinite(sample)))
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
