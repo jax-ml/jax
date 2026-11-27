@@ -14,6 +14,7 @@
 # ==============================================================================
 """Test different parameterizations of matrix multiplication."""
 
+import functools
 import os
 
 from absl.testing import absltest
@@ -37,6 +38,76 @@ os.environ["XLA_FLAGS"] = (
 def exceeds_h100_smem(alloc_bytes: int) -> bool:
   """Whether the given allocation will exceed the amount of SMEM on H100."""
   return alloc_bytes > 228000
+
+
+@functools.partial(jax.jit, static_argnames=("atol", "rtol"))
+def _allclose_ok(actual, expected, atol: float, rtol: float) -> jax.Array:
+  actual_f32 = actual.astype(jnp.float32)
+  expected_f32 = expected.astype(jnp.float32)
+  atol_f32 = jnp.float32(atol)
+  rtol_f32 = jnp.float32(rtol)
+  scale_f32 = jnp.float32(1.0 - 4.0 * float(jnp.finfo(jnp.float32).eps))
+  tol = (atol_f32 + rtol_f32 * jnp.abs(expected_f32)) * scale_f32
+  ok = (
+      jnp.isfinite(actual_f32)
+      & jnp.isfinite(expected_f32)
+      & (jnp.abs(actual_f32 - expected_f32) <= tol)
+  )
+  return jnp.all(ok, axis=-1).all() if ok.ndim >= 2 else jnp.all(ok)
+
+
+def _assert_allclose(
+    actual, expected, *, rtol=1e-7, atol=0.0, strict: bool = False
+):
+  if (
+      actual.shape == expected.shape
+      and (not strict or actual.dtype == expected.dtype)
+      and bool(_allclose_ok(actual, expected, float(atol), float(rtol)).item())
+  ):
+    return
+  np.testing.assert_allclose(
+      actual, expected, rtol=rtol, atol=atol, strict=strict
+  )
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_hopper_matmul_inputs(m: int, n: int, k: int, dtype, c_dtype):
+  key = jax.random.key(42)
+  if c_dtype is None:
+    k1, k2 = jax.random.split(key, 2)
+    a = jax.random.normal(k1, (m, k), dtype)
+    b = jax.random.normal(k2, (k, n), dtype)
+    c = None
+  else:
+    # Uniform avoids too many values around zero which cause precision issues.
+    k1, k2, k3 = jax.random.split(key, 3)
+    a = jax.random.uniform(k1, (m, k), dtype)
+    b = jax.random.uniform(k2, (k, n), dtype)
+    c = jax.random.uniform(k3, (m, n), c_dtype)
+  out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
+  if c is not None:
+    out_ref = out_ref.astype(c.dtype) + c
+  return a, b, c, out_ref
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_hopper_mixed_matmul_inputs(
+    m: int, n: int, k: int, lhs_dtype, rhs_dtype
+):
+  out_dtype = rhs_dtype
+  k1, k2 = jax.random.split(jax.random.key(42), 2)
+  lhs = jax.random.randint(
+      k1, (m, k), minval=-5, maxval=5, dtype=jnp.int8
+  ).astype(lhs_dtype)
+  rhs = jax.random.normal(k2, (k, n), rhs_dtype)
+  precision = {
+      jnp.float16: jax.lax.DotAlgorithmPreset.F16_F16_F32,
+      jnp.bfloat16: jax.lax.DotAlgorithmPreset.BF16_BF16_F32,
+  }[rhs_dtype]
+  out_ref = jnp.dot(lhs.astype(rhs_dtype), rhs, precision=precision).astype(
+      out_dtype
+  )
+  return lhs, rhs, out_ref
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -77,7 +148,7 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
         ),
     )
     out_ref = a @ b
-    np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+    _assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
 
   def test_blackwell_matmul_collective(self):
     self.skip_unless_tcgen05()
@@ -102,11 +173,17 @@ class MatrixMultiplicationTCGen05Test(jtu.JaxTestCase, jtu.CudaArchSpecificTest)
         ),
     )
     out_ref = a @ b
-    np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+    _assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
 class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
+
+  @classmethod
+  def tearDownClass(cls):
+    _cached_hopper_matmul_inputs.cache_clear()
+    _cached_hopper_mixed_matmul_inputs.cache_clear()
+    super().tearDownClass()
 
   def setUp(self):
     super().setUp()
@@ -116,6 +193,7 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       self.skipTest("Test requires an NVIDIA GPU")
 
   @parameterized.product(
+      c_dtype=(None, jnp.float32),
       m=(4096,),
       k=(4096,),
       n=(4096,),
@@ -127,7 +205,6 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       epi_tile_n=(None, 64),
       epi_tile_m=(None, 64),
       wg_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
-      c_dtype=(None, jnp.float32),
   )
   def test_hopper_matmul(self, *args, **kwargs):
     self.check_hopper_matmul(*args, **kwargs)
@@ -206,20 +283,8 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     ):
       self.skipTest("Tile too big to fit into SMEM")
 
-    key = jax.random.key(42)
-    if c_dtype is None:
-      k1, k2 = jax.random.split(key, 2)
-      a = jax.random.normal(k1, (m, k), dtype)
-      b = jax.random.normal(k2, (k, n), dtype)
-      c = None
-      rtol = 1e-7
-    else:
-      # Uniform avoids too many values around zero which cause precision issues.
-      k1, k2, k3 = jax.random.split(key, 3)
-      a = jax.random.uniform(k1, (m, k), dtype)
-      b = jax.random.uniform(k2, (k, n), dtype)
-      c = jax.random.uniform(k3, (m, n), c_dtype)
-      rtol = 5e-3
+    a, b, c, out_ref = _cached_hopper_matmul_inputs(m, n, k, dtype, c_dtype)
+    rtol = 1e-7 if c_dtype is None else 5e-3
 
     spec = hopper_matmul_mgpu.TuningConfig(
         tile_m=tile_m,
@@ -232,12 +297,10 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         **kwargs,
     )
     out = hopper_matmul_mgpu.matmul(a, b, c, spec)
-    out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
-    if c is not None:
-      out_ref = out_ref.astype(c.dtype) + c
-    np.testing.assert_allclose(out, out_ref, rtol=rtol)
+    _assert_allclose(out, out_ref, rtol=rtol)
 
   @parameterized.product(
+      rhs_dtype=(jnp.bfloat16, jnp.float16),
       m=(4096,),
       k=(4096,),
       n=(4096,),
@@ -248,7 +311,6 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       epi_tile_n=(None, 64),
       max_concurrent_steps=(2, 4),
       lhs_dtype=(jnp.int8,),  # TODO(bchetioui): add int4.
-      rhs_dtype=(jnp.bfloat16, jnp.float16),
       wg_dimension=tuple(hopper_mixed_type_matmul_mgpu.MatmulDimension),
   )
   def test_hopper_mixed_type_matmul(self, *args, **kwargs):
@@ -291,11 +353,9 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         + out_smem_bytes
     ):
       self.skipTest("Tile too big to fit into SMEM")
-    (k1, k2) = jax.random.split(jax.random.key(42), 2)
-    lhs = jax.random.randint(
-        k1, (m, k), minval=-5, maxval=5, dtype=jnp.int8
-    ).astype(lhs_dtype)
-    rhs = jax.random.normal(k2, (k, n), rhs_dtype)
+    lhs, rhs, out_ref = _cached_hopper_mixed_matmul_inputs(
+        m, n, k, lhs_dtype, rhs_dtype
+    )
 
     tuning_config = hopper_mixed_type_matmul_mgpu.TuningConfig(
         tile_m=tile_m,
@@ -311,14 +371,7 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     out = hopper_mixed_type_matmul_mgpu.mixed_matmul_kernel(
         lhs, rhs, out_dtype=out_dtype, config=tuning_config
     )
-    precision = {
-        jnp.float16: jax.lax.DotAlgorithmPreset.F16_F16_F32,
-        jnp.bfloat16: jax.lax.DotAlgorithmPreset.BF16_BF16_F32,
-    }[rhs_dtype]
-    out_ref = jnp.dot(
-        lhs.astype(rhs_dtype), rhs, precision=precision,
-    ).astype(out_dtype)
-    np.testing.assert_allclose(out, out_ref, strict=True)
+    _assert_allclose(out, out_ref, strict=True)
 
   # Grid tiling doesn't really interact with many other options so we can test
   # it separately.

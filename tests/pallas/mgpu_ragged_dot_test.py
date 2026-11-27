@@ -14,6 +14,7 @@
 # ==============================================================================
 """Test different parameterizations of our Mosaic GPU ragged dot kernel."""
 
+import functools
 import os
 
 from absl.testing import absltest, parameterized
@@ -57,8 +58,54 @@ def sample_inputs(
   return lhs, rhs, group_sizes
 
 
+@functools.partial(jax.jit, static_argnames=("atol", "rtol"))
+def _allclose_ok(actual, expected, atol: float, rtol: float) -> jax.Array:
+  actual_f32 = actual.astype(jnp.float32)
+  expected_f32 = expected.astype(jnp.float32)
+  atol_f32 = jnp.float32(atol)
+  rtol_f32 = jnp.float32(rtol)
+  scale_f32 = jnp.float32(1.0 - 4.0 * float(jnp.finfo(jnp.float32).eps))
+  tol = (atol_f32 + rtol_f32 * jnp.abs(expected_f32)) * scale_f32
+  ok = (
+      jnp.isfinite(actual_f32)
+      & jnp.isfinite(expected_f32)
+      & (jnp.abs(actual_f32 - expected_f32) <= tol)
+  )
+  return jnp.all(ok, axis=-1).all() if ok.ndim >= 2 else jnp.all(ok)
+
+
+def _assert_allclose(actual, expected, *, atol=0.0, rtol=1e-7):
+  if actual.shape == expected.shape and bool(
+      _allclose_ok(actual, expected, float(atol), float(rtol)).item()
+  ):
+    return
+  np.testing.assert_allclose(actual, expected, atol=atol, rtol=rtol)
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_ragged_dot_inputs(
+    num_groups: int, dtype, preferred_element_type=None
+):
+  m, k, n = 16 * 1024, 2048, 16 * 1024
+  lhs, rhs, group_sizes = sample_inputs(
+      random.key(1234), m, k, n, num_groups, dtype
+  )
+  out_ref = jax.lax.ragged_dot(
+      lhs,
+      rhs,
+      group_sizes=group_sizes,
+      preferred_element_type=preferred_element_type,
+  )
+  return lhs, rhs, group_sizes, out_ref
+
+
 @jtu.with_config(jax_traceback_filtering="off")
 class RaggedDotTestCase(jtu.JaxTestCase):
+
+  @classmethod
+  def tearDownClass(cls):
+    _cached_ragged_dot_inputs.cache_clear()
+    super().tearDownClass()
 
   def setUp(self):
     super().setUp()
@@ -71,12 +118,12 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.product(
+      num_groups=(1, 3, 16),
       block_m=(64, 128),
       block_n=(64, 128, 192),
       block_k=(64, 128),
       grid_block_n=(2, 4),
       max_concurrent_steps=(2, 4),
-      num_groups=(1, 3, 16),
       transpose_rhs=(False, True),
   )
   def test_ragged_dot(
@@ -96,9 +143,8 @@ class RaggedDotTestCase(jtu.JaxTestCase):
     if lhs_smem_size + rhs_smem_size > 228_000:
       self.skipTest("This configuration requires too much SMEM.")
 
-    m, k, n = 16 * 1024, 2048, 16 * 1024
-    lhs, rhs, group_sizes = sample_inputs(
-        random.key(1234), m, k, n, num_groups, dtype
+    lhs, rhs, group_sizes, out_ref = _cached_ragged_dot_inputs(
+        num_groups, dtype
     )
 
     out = ragged_dot_mgpu.ragged_dot(
@@ -112,8 +158,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
         grid_block_n=grid_block_n,
         transpose_rhs=transpose_rhs,
     )
-    out_ref = jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes)
-    np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+    _assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
   @parameterized.product(
       block_m=(64, 128),
@@ -168,7 +213,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
             rhs_group_dimensions=[],
         )
     )
-    np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+    _assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
   def test_ragged_dot_shard_map_check_vma(self):
     """Test that ragged_dot can lower inside shard_map with check_vma=True."""
@@ -211,6 +256,11 @@ class RaggedDotTestCase(jtu.JaxTestCase):
 @jtu.with_config(jax_traceback_filtering="off")
 class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
+  @classmethod
+  def tearDownClass(cls):
+    _cached_ragged_dot_inputs.cache_clear()
+    super().tearDownClass()
+
   def setUp(self):
     super().setUp()
     if blackwell_ragged_dot_mgpu is None:
@@ -218,11 +268,11 @@ class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     self.skip_unless_tcgen05()
 
   @parameterized.product(
+      num_groups=(1, 3, 16),
       grid_tile_width=(1, 8, 16),
       grid_minor_dim=(0, 1),
       max_concurrent_steps=(2, 4),
-      num_groups=(1, 3, 16),
-      tile_k=(64, 128)
+      tile_k=(64, 128),
   )
   def test_ragged_dot(
       self,
@@ -243,9 +293,8 @@ class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
       self.skipTest("This configuration requires too much SMEM.")
 
     dtype = jnp.float16
-    m, k, n = 16 * 1024, 2048, 16 * 1024
-    lhs, rhs, group_sizes = sample_inputs(
-        random.key(1234), m, k, n, num_groups, dtype
+    lhs, rhs, group_sizes, out_ref = _cached_ragged_dot_inputs(
+        num_groups, dtype, preferred_element_type=dtype
     )
     tuning_config = blackwell_ragged_dot_mgpu.TuningConfig(
         tile_m=tile_m,
@@ -262,9 +311,7 @@ class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
         group_sizes=group_sizes,
         config=tuning_config,
     )
-    out_ref = jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes,
-                                 preferred_element_type=dtype)
-    np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+    _assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":
