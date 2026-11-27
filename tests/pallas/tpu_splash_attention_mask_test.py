@@ -2380,6 +2380,191 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     self.assertArraysEqual(mask_info.mask_next, _expected_mask_next)
     self.assertArraysEqual(mask_info.data_next, _expected_data_next)
 
+  @parameterized.named_parameters(
+      ("causal_0", lambda s: mask_lib.CausalMask(s, offset=0)),
+      ("causal_pos", lambda s: mask_lib.CausalMask(s, offset=3)),
+      ("causal_neg", lambda s: mask_lib.CausalMask(s, offset=-2)),
+      ("local_sym", lambda s: mask_lib.LocalMask(s, (4, 4), offset=0)),
+      ("local_left_none", lambda s: mask_lib.LocalMask(s, (None, 5), offset=1)),
+      (
+          "local_right_none",
+          lambda s: mask_lib.LocalMask(s, (3, None), offset=-1),
+      ),
+      (
+          "local_unbounded",
+          lambda s: mask_lib.LocalMask(s, (None, None), offset=0),
+      ),
+      (
+          "chunked_aligned",
+          lambda s: mask_lib.ChunkedCausalMask(s, chunk_size=8),
+      ),
+      (
+          "chunked_unaligned",
+          lambda s: mask_lib.ChunkedCausalMask(s, chunk_size=6),
+      ),
+      ("full", mask_lib.FullMask),
+      (
+          "logical_or",
+          lambda s: (
+              mask_lib.CausalMask(s, offset=-4)
+              | mask_lib.LocalMask(s, (2, 2), offset=0)
+          ),
+      ),
+      (
+          "logical_and",
+          lambda s: (
+              mask_lib.CausalMask(s, offset=2)
+              & mask_lib.LocalMask(s, (6, 4), offset=0)
+          ),
+      ),
+  )
+  def test_lazy_and_dense_mask_info_equivalence(self, make_mask):
+    for shape, block_shape in (
+        ((4, 4), (1, 1)),
+        ((16, 16), (4, 4)),
+        ((16, 32), (4, 4)),
+        ((32, 16), (4, 4)),
+        ((16, 32), (4, 8)),
+        ((32, 16), (8, 4)),
+    ):
+      lazy_single = make_mask(shape)
+      dense_single = mask_lib.NumpyMask(lazy_single[:, :])
+      lazy_mh = mask_lib.MultiHeadMask((lazy_single,) * 4)
+      dense_mh = mask_lib.MultiHeadMask((dense_single,) * 4)
+
+      for head_shards, q_seq_shards, shrink_grid in [
+          (1, 1, True),
+          (2, 2, True),
+          (2, 2, False),
+      ]:
+        if (
+            shrink_grid
+            and not dense_single[:, :]
+            .reshape(q_seq_shards, -1)
+            .any(axis=1)
+            .all()
+        ):
+          continue
+        actual, actual_dkv, mask_fn = self._process_mask(
+            lazy_mh,
+            block_shape,
+            head_shards=head_shards,
+            q_seq_shards=q_seq_shards,
+            shrink_grid=shrink_grid,
+        )
+        expected, expected_dkv, expected_fn = self._process_mask(
+            dense_mh,
+            block_shape,
+            head_shards=head_shards,
+            q_seq_shards=q_seq_shards,
+            shrink_grid=shrink_grid,
+        )
+        self.assertIsNone(expected_fn)
+        if hasattr(lazy_single, "mask_function"):
+          self.assertIsNotNone(mask_fn)
+          self.assertIsNotNone(actual.q_sequence)
+          self.assertIsNone(actual.mask_next)
+          self.assertIsNone(actual.partial_mask_blocks)
+          self.assertArraysEqual(actual.block_mask, expected.block_mask)
+          self.assertArraysEqual(actual.data_next, expected.data_next)
+          self.assertArraysEqual(actual_dkv.block_mask, expected_dkv.block_mask)
+          self.assertArraysEqual(actual_dkv.data_next, expected_dkv.data_next)
+        else:
+          self.assertIsNone(mask_fn)
+          self.assertArraysEqual(actual.block_mask, expected.block_mask)
+          self.assertArraysEqual(actual.data_next, expected.data_next)
+          self.assertArraysEqual(actual_dkv.block_mask, expected_dkv.block_mask)
+          self.assertArraysEqual(actual_dkv.data_next, expected_dkv.data_next)
+          if expected.mask_next is not None:
+            self.assertArraysEqual(actual.mask_next, expected.mask_next)
+            self.assertArraysEqual(
+                actual.partial_mask_blocks, expected.partial_mask_blocks
+            )
+            self.assertArraysEqual(actual_dkv.mask_next, expected_dkv.mask_next)
+            self.assertArraysEqual(
+                actual_dkv.partial_mask_blocks, expected_dkv.partial_mask_blocks
+            )
+
+  @parameterized.parameters((1, 1), (2, 1), (2, 2), (4, 2))
+  def test_heterogeneous_multi_head_mask_info_equivalence(
+      self, head_shards: int, q_seq_shards: int
+  ):
+    shape = (16, 16)
+    block_shape = (4, 4)
+    lazy_heads = (
+        mask_lib.CausalMask(shape, offset=0),
+        mask_lib.LocalMask(shape, (3, 3), offset=0),
+        mask_lib.ChunkedCausalMask(shape, chunk_size=6),
+        mask_lib.CausalMask(shape, offset=-2)
+        | mask_lib.LocalMask(shape, (2, 2), offset=0),
+    )
+    dense_heads = tuple(mask_lib.NumpyMask(m[:, :]) for m in lazy_heads)
+    lazy_mh = mask_lib.MultiHeadMask(lazy_heads)
+    dense_mh = mask_lib.MultiHeadMask(dense_heads)
+
+    actual, actual_dkv, mask_fn = self._process_mask(
+        lazy_mh,
+        block_shape,
+        head_shards=head_shards,
+        q_seq_shards=q_seq_shards,
+    )
+    expected, expected_dkv, expected_fn = self._process_mask(
+        dense_mh,
+        block_shape,
+        head_shards=head_shards,
+        q_seq_shards=q_seq_shards,
+    )
+    self.assertIsNone(mask_fn)
+    self.assertIsNone(expected_fn)
+    self.assertArraysEqual(actual.block_mask, expected.block_mask)
+    self.assertArraysEqual(actual.data_next, expected.data_next)
+    self.assertArraysEqual(actual.mask_next, expected.mask_next)
+    self.assertArraysEqual(
+        actual.partial_mask_blocks, expected.partial_mask_blocks
+    )
+    self.assertArraysEqual(actual_dkv.block_mask, expected_dkv.block_mask)
+    self.assertArraysEqual(actual_dkv.data_next, expected_dkv.data_next)
+    self.assertArraysEqual(actual_dkv.mask_next, expected_dkv.mask_next)
+    self.assertArraysEqual(
+        actual_dkv.partial_mask_blocks, expected_dkv.partial_mask_blocks
+    )
+
+  def test_non_contiguous_q_sequence_mask_info_equivalence(self):
+    shape = (16, 16)
+    block_shape = (4, 4)
+    non_contig_q = np.array(
+        [0, 2, 3, 7, 4, 5, 6, 7, 8, 10, 12, 15, 12, 13, 14, 15],
+        dtype=np.int32,
+    )
+    for make_mask in [
+        lambda: mask_lib.CausalMask(shape, offset=0),
+        lambda: mask_lib.LocalMask(shape, (2, 2), offset=0),
+        lambda: mask_lib.ChunkedCausalMask(shape, chunk_size=6),
+    ]:
+      lazy_mask = make_mask()
+      lazy_mask.q_sequence = non_contig_q
+      dense_mask = mask_lib.NumpyMask(lazy_mask[:, :])
+      full_mask = mask_lib.FullMask(shape)
+
+      # Heterogeneous 2-head mask exercises both _classify_mask_blocks fallback
+      # and partial_mask_blocks / mask_next generation.
+      lazy_mh = mask_lib.MultiHeadMask((lazy_mask, full_mask))
+      dense_mh = mask_lib.MultiHeadMask((dense_mask, full_mask))
+      actual, actual_dkv, _ = self._process_mask(lazy_mh, block_shape)
+      expected, expected_dkv, _ = self._process_mask(dense_mh, block_shape)
+      self.assertArraysEqual(actual.block_mask, expected.block_mask)
+      self.assertArraysEqual(actual.data_next, expected.data_next)
+      self.assertArraysEqual(actual.mask_next, expected.mask_next)
+      self.assertArraysEqual(
+          actual.partial_mask_blocks, expected.partial_mask_blocks
+      )
+      self.assertArraysEqual(actual_dkv.block_mask, expected_dkv.block_mask)
+      self.assertArraysEqual(actual_dkv.data_next, expected_dkv.data_next)
+      self.assertArraysEqual(actual_dkv.mask_next, expected_dkv.mask_next)
+      self.assertArraysEqual(
+          actual_dkv.partial_mask_blocks, expected_dkv.partial_mask_blocks
+      )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
