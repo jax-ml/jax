@@ -1151,7 +1151,7 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   check_arraylike("choice", a)
   arr = jnp.asarray(a)
   if arr.ndim == 0:
-    n_inputs = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
+    n_inputs = a
   else:
     axis = canonicalize_axis(axis, arr.ndim)
     n_inputs = arr.shape[axis]
@@ -1160,12 +1160,13 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                arr.shape[:axis] + tuple(shape) + arr.shape[axis + 1:])
   if n_draws == 0:
     return jnp.zeros(out_shape, dtype=arr.dtype)
-  if n_inputs <= 0:
-    raise ValueError("a must be greater than 0 unless no samples are taken")
-  if not replace and n_draws > n_inputs:
-    raise ValueError(
-        f"Cannot take a larger sample (size {n_draws}) than "
-        f"population (size {n_inputs}) when 'replace=False'")
+  if not isinstance(n_inputs, core.Tracer):
+    if n_inputs <= 0:  # type: ignore
+      raise ValueError("a must be greater than 0 unless no samples are taken")
+    if not replace and n_draws > n_inputs:  # type: ignore
+      raise ValueError(
+          f"Cannot take a larger sample (size {n_draws}) than "
+          f"population (size {n_inputs}) when 'replace=False'")
 
   if p is None:
     if replace:
@@ -1177,7 +1178,7 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   else:
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
-    if p_arr.shape != (n_inputs,):
+    if not isinstance(n_inputs, core.Tracer) and p_arr.shape != (n_inputs,):
       raise ValueError(
           "p must be None or a 1D vector with the same size as a.shape[axis]. "
           f"p has shape {p_arr.shape} and a.shape[axis] is {n_inputs}.")
@@ -1187,7 +1188,7 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       ind = jnp.searchsorted(p_cuml, r).astype(int)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)
+      g = gumbel(key, (n_inputs,), dtype=p_arr.dtype, mode=mode) + jnp.log(p_arr)  # type: ignore
       ind = lax.top_k(g, k=n_draws)[1].astype(int)
     result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
 
