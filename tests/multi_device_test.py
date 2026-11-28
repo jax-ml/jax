@@ -335,5 +335,24 @@ class MultiDeviceTest(jtu.JaxTestCase):
     tm.stop()
     self.assertEqual(y.sharding, x.sharding)
 
+  def test_clear_memory_stats(self):
+    device = jax.devices()[0]
+    if device.memory_stats() is None:
+      self.skipTest("memory_stats not supported on this device")
+
+    x = jnp.ones((1024, 1024), dtype=jnp.float32, device=device)
+    x.block_until_ready()
+    peak_before = device.memory_stats()["peak_bytes_in_use"]
+    self.assertGreater(peak_before, 0)
+
+    del x
+    jax.effects_barrier()
+    try:
+      device.clear_memory_stats()
+    except NotImplementedError:
+      self.skipTest("clear_memory_stats not supported on this device")
+    peak_after_clear = device.memory_stats()["peak_bytes_in_use"]
+    self.assertLess(peak_after_clear, peak_before)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
