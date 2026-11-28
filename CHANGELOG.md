@@ -33,6 +33,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     (logged at `WARNING` when `jax_log_compiles` is enabled). Previously this
     raised a `ValueError`.
 * Bug fixes
+  * {func}`jax.numpy.quantile` and {func}`jax.numpy.nanquantile` now accept
+    integer values of `q`, such as `q=0` or `q=1`, matching NumPy. Previously
+    they raised a `TypeError`.
 
 ## JAX 0.12.1 (November 18, 2026)
 

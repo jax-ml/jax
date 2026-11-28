@@ -2748,6 +2748,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
+  if not dtypes.issubdtype(q.dtype, np.inexact):
+    q = lax.convert_element_type(q, a.dtype)
   if out_sharding is not None:
     red_axes = canonicalize_axis_tuple(axis, a.ndim)
     a = _unshard_axes(a, red_axes)

@@ -951,6 +951,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
+  @jtu.sample_product(
+    op=["quantile", "nanquantile"],
+    q=[0, 1, [0, 1], np.array([0, 1], dtype=np.int32), True],
+    a_dtype=[np.float32, np.int32],
+  )
+  def testQuantileIntegerQ(self, op, q, a_dtype):
+    rng = jtu.rand_default(self.rng())
+    a = rng((5, 4), a_dtype)
+    q = np.asarray(q)
+    np_fun = getattr(np, op)
+    jnp_fun = getattr(jnp, op)
+    self.assertAllClose(jnp_fun(a, jnp.asarray(q), axis=0),
+                        np_fun(a, q, axis=0), check_dtypes=False)
+
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
