@@ -53,6 +53,7 @@ def _open_mpi_major_version() -> int | None:
 
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
+@jtu.pytest_mark_if_available('multiaccelerator')
 class MultiProcessGpuTest(jtu.JaxTestCase):
 
   def test_gpu_distributed_initialize(self):
@@ -164,6 +165,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus = 4
     num_gpus_per_task = 1
 
+    if jax.device_count() < num_gpus:
+      raise unittest.SkipTest(
+          f"Test requires >={num_gpus} GPUs. Found {jax.device_count()}."
+      )
+
     args = [
         'mpirun',
         '--oversubscribe',
@@ -206,6 +212,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
     num_gpus = 4
     num_gpus_per_task = 1
+
+    if jax.device_count() < num_gpus:
+      raise unittest.SkipTest(
+          f"Test requires >={num_gpus} GPUs. Found {jax.device_count()}."
+      )
 
     args = [
         'mpirun',
