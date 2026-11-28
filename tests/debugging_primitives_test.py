@@ -1034,6 +1034,28 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
+  def test_wide_sharding(self):
+    mesh = jax.sharding.Mesh(self._create_devices((2, 4)), ['x', 'y'])
+    pspec = jax.sharding.PartitionSpec('x', 'y')
+    sd = jax.sharding.NamedSharding(mesh, pspec)
+    shape = (8, 128)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    │                  │                  │                  │                  │
+    │      CPU 0       │      CPU 1       │      CPU 2       │      CPU 3       │
+    │                  │                  │                  │                  │
+    │                  │                  │                  │                  │
+    ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    │                  │                  │                  │                  │
+    │      CPU 4       │      CPU 5       │      CPU 6       │      CPU 7       │
+    │                  │                  │                  │                  │
+    │                  │                  │                  │                  │
+    └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    """)
+    self.assertEqual(output(), expected)
+
   def test_sharding_with_replication(self):
     shape = (8, 8)
     mesh = jax.sharding.Mesh(self._create_devices((8, 4)), ['x', 'y'])

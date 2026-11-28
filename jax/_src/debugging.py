@@ -946,7 +946,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
         height = 1
       else:
         height = int(maybe_height * base_height)
-      width = min(max(width, min_width), max_width)
+      width = min(max(width, min_width), max_width // num_cols)
       left_padding, remainder = divmod(width - len(entry) - 2, 2)
       right_padding = left_padding + remainder
       top_padding, remainder = divmod(height - 2, 2)
