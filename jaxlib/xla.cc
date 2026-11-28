@@ -27,6 +27,7 @@ limitations under the License.
 #include <string_view>
 #include <utility>
 
+#include "absl/base/attributes.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -46,6 +47,11 @@ limitations under the License.
 namespace nb = nanobind;
 
 namespace {
+
+template <typename R, typename... Params, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI R NoCfiCall(R (*fn)(Params...), Args&&... args) {
+  return fn(std::forward<Args>(args)...);
+}
 
 // An HloXlaTransform that delegates to a Python callback.
 //
@@ -294,7 +300,7 @@ NB_MODULE(_xla, m) {
         args.stage = static_cast<PJRT_XlaTransform_PipelineStage>(stage);
         args.callbacks = &state->callbacks;
 
-        PJRT_Error* error = extension->register_xla_transform(&args);
+        PJRT_Error* error = NoCfiCall(extension->register_xla_transform, &args);
         if (error != nullptr) {
           absl::Status status = pjrt::PjrtErrorToStatus(error);
           throw std::runtime_error(status.ToString());
@@ -330,7 +336,7 @@ NB_MODULE(_xla, m) {
         args.stage = static_cast<PJRT_XlaTransform_PipelineStage>(stage);
         args.callbacks = nullptr;
 
-        PJRT_Error* error = extension->clear_xla_transform(&args);
+        PJRT_Error* error = NoCfiCall(extension->clear_xla_transform, &args);
         if (error != nullptr) {
           absl::Status status = pjrt::PjrtErrorToStatus(error);
           throw std::runtime_error(status.ToString());

@@ -533,6 +533,7 @@ nanobind_pywrap_extension(
     ],
     pytype_srcs = ["_xla.pyi"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@nanobind",
