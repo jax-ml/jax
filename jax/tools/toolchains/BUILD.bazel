@@ -45,3 +45,12 @@ platform(
     ],
     parents = ["@ml_build_config_platform//:platform"],
 )
+
+platform(
+    name = "arm64_windows-clang-cl",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+        "@bazel_tools//tools/cpp:clang-cl",
+    ],
+)
