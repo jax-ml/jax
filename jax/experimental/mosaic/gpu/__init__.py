@@ -83,6 +83,7 @@ from .fragmented_array import (
 )
 from .utils import (
     BarrierRef as BarrierRef,
+    BoundedDynamicSlice as BoundedDynamicSlice,
     CtaBarrierRef as CtaBarrierRef,
     DialectBarrierRef as DialectBarrierRef,
     CollectiveBarrierRef as CollectiveBarrierRef,
@@ -92,6 +93,7 @@ from .utils import (
     SemaphoreRef as SemaphoreRef,
     ThreadSubset as ThreadSubset,
     MultimemReductionOp as MultimemReductionOp,
+    bds as bds,
     bitwidth as bitwidth,
     bytewidth as bytewidth,
     c as c,

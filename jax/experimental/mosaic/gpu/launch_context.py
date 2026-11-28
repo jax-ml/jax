@@ -1517,6 +1517,13 @@ class LaunchContext:
     - If ``leader_tracked`` is ``CopyPartition.REPLICATED``, all blocks load the
       same data into their SMEM but only the first block in the collective
       tracks progress via barrier arrivals. This uses the ``cta_group::2`` mode.
+
+    A ``gmem_slice`` entry ``bds(base, length, bound)`` (``BoundedDynamicSlice``)
+    clips that slice dimension to ``min(bound, length)`` elements at runtime.
+    Unlike normal TMA copies, dynamic start indices must be non-negative
+    (negative starts are not clipped and will write out of bounds before the
+    buffer), the minor start must be 16 B aligned, and minor-dimension bounds
+    require a provably 16 B-aligned bound and minor GMEM dimension.
     """
     index = ir.IndexType.get()
     i8 = ir.IntegerType.get_signless(8)
@@ -1569,6 +1576,41 @@ class LaunchContext:
 
     if collective and untransformed_gmem_ref is dst_ref:
       raise ValueError("Only GMEM -> SMEM copies can be collective")
+
+    bounds: list[ir.Value | None] | None = None
+    if any(isinstance(s, utils.BoundedDynamicSlice) for s in gmem_slice):
+      if not (arch := utils.get_arch()).is_sm107f:
+        raise NotImplementedError(
+            f"BoundedDynamicSlice requires sm_107f, got {arch}"
+        )
+      if implementation != AsyncCopyImplementation.TMA:
+        raise ValueError("BoundedDynamicSlice is only supported by the TMA implementation")
+      if untransformed_gmem_ref is src_ref:
+        raise NotImplementedError("BoundedDynamicSlice is only supported for SMEM -> GMEM transfers")
+      if gmem_transform:
+        raise NotImplementedError("BoundedDynamicSlice does not support `gmem_transform`")
+      if (
+          reduction_op is not None
+          or collective
+          or leader_tracked is not None
+          or gmem_peer_id is not None
+          or element_bitwidth < 8
+          or any(isinstance(s, fa.FragmentedArray) for s in gmem_slice)
+      ):
+        raise NotImplementedError(
+            "BoundedDynamicSlice does not support reductions, collectives,"
+            " peers, sub-byte types, or gathers"
+        )
+      bounds = [
+          s.bound if isinstance(s, utils.BoundedDynamicSlice) else None
+          for s in gmem_slice
+      ]
+      gmem_slice = tuple(
+          utils.DynamicSlice(s.base, s.length)
+          if isinstance(s, utils.BoundedDynamicSlice)
+          else s
+          for s in gmem_slice
+      )
 
     (
         slice_shape,
@@ -2070,6 +2112,7 @@ class LaunchContext:
         and oob_mode != OOBFillMode.ZEROS
         and leader_tracked is None
         and implementation == AsyncCopyImplementation.TMA
+        and bounds is None
     )
     if is_simple_contiguous_copy:
       slicing = tuple(
@@ -2150,6 +2193,96 @@ class LaunchContext:
           "Async copies only support copying <=256 elements along each"
           f" dimension, got {tuple(slice_shape)}"
       )
+    if bounds is not None:
+      if squeezed_dims:
+        raise NotImplementedError(
+            "BoundedDynamicSlice does not support squeezed dims"
+        )
+      bounds += [None] * (untransformed_gmem_ref_ty.rank - len(bounds))
+      if len(bounds) != ref_ty.rank:
+        raise ValueError(
+            "Cannot use BoundedDynamicSlice on a dimension of size 1"
+        )
+      elem_bytes = element_bitwidth // 8
+      if (minor_bound := bounds[-1]) is not None:
+        # VR200 clips TMA stores along the minor dimension at 16 B granularity.
+        elem_align = max(1, 16 // elem_bytes)
+        if (
+            not utils.is_known_divisible(minor_bound, elem_align)
+            or ref_ty.shape[-1] % elem_align != 0
+        ):
+          raise NotImplementedError(
+              "BoundedDynamicSlice on the minor dimension for stores requires a"
+              f" 16 B-aligned bound and array size (multiple of {elem_align}"
+              " elements)"
+          )
+      tma_desc = self._get_tma_desc(
+          untransformed_gmem_ref, gmem_transform, gmem_peer_id,
+          tuple(slice_shape), swizzle, reduction_op
+      )
+      gmem_bounds = []
+      for b, box, dim, start in zip(
+          bounds, slice_shape, ref_ty.shape, dyn_base_indices, strict=True
+      ):
+        gmem_bound = c(box, index)
+        if b is not None:
+          b_idx = b if b.type == index else arith.index_cast(index, b)
+          gmem_bound = arith.minsi(b_idx, gmem_bound)
+        gmem_bounds.append(arith.minsi(gmem_bound, arith.subi(c(dim, index), start)))
+      # TMA dimensions are encoded as (extent - 1) in u16, so empty windows (bds(0, 0, 0))
+      # cannot be represented and must be skipped via predicate.
+      nonempty = functools.reduce(
+          arith.andi,
+          (arith.cmpi(arith.CmpIPredicate.sgt, e, c(0, index)) for e in gmem_bounds),
+      )
+      # PTX .override::global_address requires a 16 B-aligned address; non-minor
+      # strides are multiples of 16 B, so the minor start must be 16 B-aligned.
+      gmem_addr = utils.memref_ptr(utils.memref_slice(ref, tuple(dyn_base_indices)))
+      dim_args = [arith.index_cast(i16, arith.subi(e, c(1, index))) for e in reversed(gmem_bounds)]
+      rank = len(dim_args)
+      override_operands: list[ir.Value] = [gmem_addr, *dim_args]
+      dim_placeholders = ", ".join(f"${3 + i}" for i in range(rank))
+      # When we override TMA attributes tensor coords must be 0.
+      tensor_coords = ", ".join(["0"] * rank)
+      if rank == 1:
+        qualifiers = ".override::global_address.override::global_dim"
+        stride_placeholders = ""
+      else:
+        qualifiers = ".override::global_address.override::global_dim_stride"
+        # PTX .override::global_dim_stride encodes each 16 B-aligned byte stride
+        # as a 32-bit low word (bits 4..35) plus packed 4-bit upper nibbles
+        # (bits 36..39); we pass 0 for the upper nibbles and reject strides
+        # >= 64 GiB.
+        stride_limit = 1 << 36
+        for stride in reversed(strides[:-1]):
+          stride_bytes = stride * elem_bytes
+          if stride_bytes >= stride_limit:
+            raise NotImplementedError(
+                "BoundedDynamicSlice does not support strides >= 64 GiB, got"
+                f" {stride_bytes} bytes"
+            )
+          override_operands.append(c(stride_bytes >> 4, i32))
+        override_operands.append(c(0, i16))
+        lower_stride_placeholders = ", ".join(
+            f"${3 + rank + i}" for i in range(rank - 1)
+        )
+        upper_stride_placeholder = f"${2 + 2 * rank}"
+        stride_placeholders = (
+            f"{{{lower_stride_placeholders}}}, {upper_stride_placeholder}, "
+        )
+      utils.inline_ptx(
+          f"cp.async.bulk.tensor.{rank}d.global.shared::cta.tile.bulk_group"
+          f"{qualifiers} [$1, $2, {{{dim_placeholders}}},"
+          f" {stride_placeholders}{{{tensor_coords}}}], [$0];",
+          smem_ptr,
+          tma_desc,
+          *override_operands,
+          predicate=arith.andi(predicate, nonempty),
+      )
+      if arrive:
+        nvvm.cp_async_bulk_commit_group()
+      return
+
     tma_desc = self._get_tma_desc(
         untransformed_gmem_ref, gmem_transform, gmem_peer_id,
         tuple(slice_shape), swizzle, reduction_op,
