@@ -428,6 +428,10 @@ class Einshape(hijax.HiPrim):
       raise ValueError("Expected 1 output block spec")
 
     block_transform = out_block_specs[0]
+    if block_transform.block_shape is None:
+      block_transform = block_transform.replace(
+          block_shape=self.out_aval.shape
+      )
     in_shape = self.in_avals[0].shape
     transforms = get_einshape_transforms(self.equation, in_shape, **self.sizes)
 
@@ -440,6 +444,55 @@ class Einshape(hijax.HiPrim):
 
     return (block_transform,)
 
+  def push_block_spec_rule(
+      self,
+      ctx,  # PushRuleContext
+      in_block_specs: tuple[Any, ...],
+  ) -> tuple[Any, ...]:
+    del ctx
+    if len(in_block_specs) != 1:
+      raise ValueError("Expected 1 input block spec")
+
+    in_block_spec = in_block_specs[0]
+    if in_block_spec is pallas_core.no_block_spec:
+      return (pallas_core.no_block_spec,)
+
+    from jax._src.pallas.fuser import block_spec as fuser_block_spec  # pyrefly: ignore[missing-import]
+
+    in_shape = self.in_avals[0].shape
+    in_block_shape = (
+        in_shape
+        if in_block_spec.block_shape is None
+        else tuple(in_block_spec.block_shape)
+    )
+    in_index_map = (
+        pallas_core.default_index_map(len(in_shape))
+        if in_block_spec.index_map is None
+        else in_block_spec.index_map
+    )
+
+    block_transform = fuser_block_spec.BlockIndexTransform(
+        block_shape=in_block_shape,
+        block_index_transform=in_index_map,
+        memory_space=in_block_spec.memory_space,
+        pipeline_mode=in_block_spec.pipeline_mode,
+    )
+
+    transforms = get_einshape_transforms(self.equation, in_shape, **self.sizes)
+    shape = in_shape
+    for t in transforms:
+      next_shape = t.transform_shape(shape)
+      block_transform = _inverse_block_transform(
+          _invert_transform(t, shape), next_shape, block_transform
+      )
+      shape = next_shape
+
+    out_block_spec = in_block_spec.replace(
+        block_shape=block_transform.block_shape,
+        index_map=block_transform.block_index_transform,
+    )
+    return (out_block_spec,)
+
   def block_eval_rule(self, ctx, x):
     in_shape = self.in_avals[0].shape
     transforms = get_einshape_transforms(
@@ -451,6 +504,7 @@ class Einshape(hijax.HiPrim):
     ]
 
     intermediate_block_shapes = None
+    out_block_shape = None
     if (
         ctx is not None
         and hasattr(ctx, "out_block_specs")
@@ -463,8 +517,9 @@ class Einshape(hijax.HiPrim):
           and block_spec.block_shape is not None
       ):
         from jax._src.pallas.fuser import block_spec as fuser_block_spec  # pyrefly: ignore[missing-import]
+        out_block_shape = tuple(block_spec.block_shape)
         curr = fuser_block_spec.BlockIndexTransform(
-            block_shape=block_spec.block_shape
+            block_shape=out_block_shape
         )
         block_shapes_rev = [curr.block_shape]
         for t, s in zip(reversed(transforms), reversed(shapes[:-1])):
@@ -472,6 +527,18 @@ class Einshape(hijax.HiPrim):
           block_shapes_rev.append(curr.block_shape)
         block_shapes_rev.reverse()
         intermediate_block_shapes = block_shapes_rev
+
+    squeezed_input = False
+    if x.ndim < len(in_shape) and intermediate_block_shapes is not None:
+      in_block_shape = intermediate_block_shapes[0]
+      squeezed_in_axes = [
+          d
+          for d, bd in enumerate(in_block_shape)
+          if _is_squeezed_block_dim(bd)
+      ]
+      if x.ndim + len(squeezed_in_axes) == len(in_shape):
+        x = jnp.expand_dims(x, axis=squeezed_in_axes)
+        squeezed_input = True
 
     full_shape = in_shape
     for i, t in enumerate(transforms):
@@ -496,20 +563,20 @@ class Einshape(hijax.HiPrim):
           # When ctx.out_block_specs is available, use the exact intermediate
           # tile sizes propagated backwards from the compute kernel's target
           # block shape to ensure synchronization with DMA slicing.
-          if intermediate_block_shapes is not None:
+          if x.shape[index] == 1:
+            # Unit or squeezed tile along this axis splits into unit dimensions.
+            tile_sizes = (1,) * len(sizes)
+          elif intermediate_block_shapes is not None:
             target_bds = intermediate_block_shapes[i + 1][  # pyrefly: ignore[unsupported-operation]
                 index : index + len(sizes)
             ]
             tile_sizes = tuple(
-                s if bd is None else pallas_core.get_block_size(bd)
+                s if _is_squeezed_block_dim(bd) else pallas_core.get_block_size(bd)
                 for s, bd in zip(sizes, target_bds)
             )
           elif x.shape[index] == math.prod(sizes):
             # Unpartitioned or full-size tile along this axis.
             tile_sizes = sizes
-          elif x.shape[index] == 1:
-            # Unit tile along this axis splits into unit dimensions.
-            tile_sizes = (1,) * len(sizes)
           else:
             # Factoring a partial tile (1 < bs < math.prod(sizes)) across
             # multiple split dimensions cannot be done uniquely without
@@ -530,7 +597,37 @@ class Einshape(hijax.HiPrim):
           )
           x = jnp.reshape(x, new_tile_shape)
           full_shape = new_full_shape
+
+    if squeezed_input and out_block_shape is not None:
+      squeezed_out_axes = [
+          d
+          for d, bd in enumerate(out_block_shape)
+          if _is_squeezed_block_dim(bd)
+      ]
+      if squeezed_out_axes:
+        x = jnp.squeeze(x, axis=squeezed_out_axes)
+
     return (x,)
+
+
+def _is_squeezed_block_dim(bd: Any) -> bool:
+  return bd is None or isinstance(bd, pallas_core.Squeezed)
+
+
+def _invert_transform(t: Transform, in_shape: tuple[int, ...]) -> Transform:
+  match t:
+    case Transpose(perm):
+      inv_perm: list[int] = [0] * len(perm)
+      for j, p in enumerate(perm):
+        inv_perm[p] = j
+      return Transpose(tuple(inv_perm))
+    case SplitDims(index=idx, sizes=sizes):
+      return MergeDims(index=idx, count=len(sizes))
+    case MergeDims(index=idx, count=count):
+      return SplitDims(index=idx, sizes=in_shape[idx : idx + count])
+    case _:
+      raise TypeError(f"Unknown transform {type(t)}")
+
 
 def _inverse_block_transform(
   t: Transform, shape: tuple[int, ...], block_transform: Any
@@ -560,11 +657,16 @@ def _inverse_block_transform(
       split_block_dims = curr_block_shape[idx : idx + k]
 
       b_sizes = [
-          s if bd is None else pallas_core.get_block_size(bd)
+          s if _is_squeezed_block_dim(bd) else pallas_core.get_block_size(bd)
           for bd, s in zip(split_block_dims, sizes)
       ]
       first_non_unit = next((i for i, b in enumerate(b_sizes) if b > 1), None)
       if first_non_unit is not None:
+        if sizes[first_non_unit] % b_sizes[first_non_unit] != 0:
+          raise NotImplementedError(
+              f"SplitDims slice {b_sizes} does not divide dimension"
+              f" of sizes {sizes}"
+          )
         for j in range(first_non_unit + 1, k):
           if b_sizes[j] != sizes[j]:
             raise NotImplementedError(
@@ -573,12 +675,11 @@ def _inverse_block_transform(
             )
 
       if all(bd is None for bd in split_block_dims):
-        prev_dim_block_size = None
+        prev_dim_block_size: Any = None
+      elif all(_is_squeezed_block_dim(bd) for bd in split_block_dims):
+        prev_dim_block_size = pallas_core.Squeezed()
       else:
-        prev_dim_block_size = math.prod(
-            s if bd is None else pallas_core.get_block_size(bd)
-            for bd, s in zip(split_block_dims, sizes)
-        )
+        prev_dim_block_size = math.prod(b_sizes)
       prev_block_shape = (
           *curr_block_shape[:idx],
           prev_dim_block_size,
@@ -586,7 +687,9 @@ def _inverse_block_transform(
       )
 
       split_block_counts = tuple(
-          s if bd is None else s // pallas_core.get_block_size(bd)
+          s
+          if _is_squeezed_block_dim(bd)
+          else s // pallas_core.get_block_size(bd)
           for s, bd in zip(sizes, split_block_dims)
       )
       block_strides = [
@@ -615,8 +718,8 @@ def _inverse_block_transform(
       b_merged = curr_block_shape[idx]
       merged_sizes = shape[idx : idx + count]
 
-      if b_merged is None:
-        new_block_dims = [None] * count
+      if _is_squeezed_block_dim(b_merged):
+        new_block_dims: list[Any] = [b_merged] * count
       else:
         bs = pallas_core.get_block_size(b_merged)
         new_block_dims = []
@@ -646,7 +749,9 @@ def _inverse_block_transform(
       )
 
       merged_block_counts = tuple(
-          s if bd is None else s // pallas_core.get_block_size(bd)
+          s
+          if _is_squeezed_block_dim(bd)
+          else s // pallas_core.get_block_size(bd)
           for s, bd in zip(merged_sizes, new_block_dims)
       )
 
