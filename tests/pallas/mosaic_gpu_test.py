@@ -3195,19 +3195,89 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  @parameterized.product(unroll=[1, 2, 4])
-  def test_fori_loop_array_unrolled(self, unroll):
+  @parameterized.parameters(
+      (0, 1),
+      (0, 0),
+      (1, 1),
+      (4, 1),
+      (4, 2),
+      (4, 4),
+      (5, 2),
+      (5, 3),
+      (5, 8),
+      (5, 0),
+      (8, 3),
+      (7, True),
+      (7, False),
+  )
+  def test_fori_loop_array_unrolled(self, length, unroll):
+    lower = 2
+
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], jnp.int32)
     )
     def kernel(x_ref, o_ref):
-      # Equivalent to x_ref[...] + 2 + 3 + 4 + 5.
       o_ref[...] = lax.fori_loop(
-          2, 6, lambda i, x: x + i, x_ref[...], unroll=unroll
+          lower,
+          lower + length,
+          lambda i, x: x * 2 + i,
+          x_ref[...],
+          unroll=unroll,
       )
 
     x = jnp.arange(256, dtype=jnp.int32)
-    np.testing.assert_array_equal(kernel(x), x + 2 + 3 + 4 + 5)
+    expected = x
+    for i in range(lower, lower + length):
+      expected = expected * 2 + i
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.parameters(
+      (0, 2),
+      (1, 1),
+      (3, 5),
+      (8, 3),
+      (5, 0),
+      (5, True),
+      (5, False),
+  )
+  def test_scan_unrolled(self, length, unroll):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...], _ = lax.scan(
+          lambda x, _: (x * 2 + 1, None),
+          x_ref[...],
+          length=length,
+          unroll=unroll,
+      )
+
+    x = jnp.arange(256, dtype=jnp.int32)
+    expected = x
+    for _ in range(length):
+      expected = expected * 2 + 1
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.parameters(2, 3, 8)
+  def test_fori_loop_indexed_store_unrolled(self, unroll):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([8, 128], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros(o_ref.shape, dtype=jnp.int32)
+
+      def body(idx, _):
+        o_ref[idx] = x_ref[idx] + idx
+        return ()
+
+      lax.fori_loop(2, 7, body, (), unroll=unroll)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    expected = jnp.zeros_like(x)
+    for idx in range(2, 7):
+      expected = expected.at[idx].set(x[idx] + idx)
+    np.testing.assert_array_equal(kernel(x), expected)
 
   @parameterized.product(force_while=[False, True])
   def test_fori_loop_scalar(self, force_while):
