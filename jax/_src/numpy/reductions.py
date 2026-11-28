@@ -909,11 +909,11 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     raise NotImplementedError("The 'out' argument to jnp.logaddexp.reduce is not supported.")
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "jnp.logaddexp.reduce")
-  # TODO(phawkins): dtype isn't used here. That seems like a bug!
-  del dtype
   a = ensure_arraylike("logsumexp", a)
   where = check_where("logsumexp", where)
   a_arr, = promote_dtypes_inexact(a)
+  if dtype is not None:
+    a_arr = lax.convert_element_type(a_arr, dtype)
   pos_dims, dims = _reduction_dims(a_arr, axis)
   amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
@@ -935,6 +935,8 @@ def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         dtype, "jnp.logaddexp2.reduce")
   a = ensure_arraylike("logsumexp2", a)
   where = check_where("logsumexp2", where)
+  if dtype is not None:
+    a = lax.convert_element_type(a, dtype)
   ln2 = float(np.log(2))
   if initial is not None:
     initial *= ln2
