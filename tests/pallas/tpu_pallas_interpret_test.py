@@ -29,6 +29,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
+from jax._src.pallas.mosaic.interpret import race_detection_state
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -751,6 +752,32 @@ class InterpretTest(jtu.JaxTestCase):
 
     lowered = jax.jit(matmul).lower(x, y).as_text(dialect='stablehlo')
     self.assertNotIn('dot_general', lowered)
+
+  @parameterized.parameters('jit', 'cond', 'fori_loop')
+  def test_skip_floating_point_ops_with_float_literal_in_nested_jaxpr(
+      self, nesting
+  ):
+    # The float literal 1.0 is passed into the nested jaxpr as a Python scalar,
+    # which has a dtype but no shape.
+    def fn(x):
+      return jnp.where(x == 0, 1.0, x)
+
+    def kernel(x_ref, o_ref):
+      x = x_ref[...]
+      if nesting == 'jit':
+        o_ref[...] = jax.jit(fn)(x)
+      elif nesting == 'cond':
+        o_ref[...] = jax.lax.cond(x[0, 0] > 1.0, fn, lambda x: x, x)
+      else:
+        o_ref[...] = jax.lax.fori_loop(0, 2, lambda i, x: fn(x), x)
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    y = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        interpret=pltpu.InterpretParams(skip_floating_point_ops=True),
+    )(x)
+    np.testing.assert_array_equal(y, jnp.full_like(y, jnp.inf))
 
   def test_trace_value(self):
     def kernel(s_ref, x_ref, o_ref):
@@ -1752,6 +1779,36 @@ class InterpretTest(jtu.JaxTestCase):
 
   def test_clip_range_to_shape_negative_int(self):
     self.assertIsNone(interpret_utils.clip_range_to_shape((-1,), (10,)))
+
+  @parameterized.named_parameters(
+      ('disjoint_adjacent', slice(0, 2), slice(2, 8), False),
+      ('overlapping', slice(0, 3), slice(2, 8), True),
+      ('contained', slice(3, 4), slice(2, 8), True),
+      ('zero_length_at_start_of_other', slice(2, 2), slice(2, 8), False),
+      ('zero_length_inside_other', slice(5, 5), slice(0, 8), False),
+      ('other_zero_length', slice(0, 8), slice(5, 5), False),
+      ('both_zero_length', slice(3, 3), slice(3, 3), False),
+      ('int_inside_slice', 4, slice(2, 8), True),
+      ('int_outside_slice', 1, slice(2, 8), False),
+      ('int_vs_zero_length', 2, slice(2, 2), False),
+  )
+  def test_slices_overlap(self, s1, s2, expected):
+    self.assertEqual(race_detection_state._slices_overlap(s1, s2), expected)
+    self.assertEqual(race_detection_state._slices_overlap(s2, s1), expected)
+
+  def test_ranges_overlap_ignores_zero_length_dma_rows(self):
+    # Two DMAs into consecutive rows of one buffer, where the first copies zero
+    # rows (a source that sent 0 tokens): these must not be reported as racing.
+    empty_write = (2, slice(2, 2, 1), slice(0, 8, 1), slice(0, 384, 1))
+    next_write = (2, slice(2, 8, 1), slice(0, 8, 1), slice(0, 384, 1))
+    self.assertFalse(
+        race_detection_state._ranges_overlap(empty_write, next_write)
+    )
+    self.assertTrue(
+        race_detection_state._ranges_overlap(
+            (2, slice(1, 3, 1), slice(0, 8, 1), slice(0, 384, 1)), next_write
+        )
+    )
 
   @parameterized.named_parameters(
       ('interpret_params', pltpu.InterpretParams()),
