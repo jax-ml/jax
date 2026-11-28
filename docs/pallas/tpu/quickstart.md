@@ -170,6 +170,7 @@ the pipeline how to map the grid to the hardware:
 
 ## What's next
 
+- [TPU Tutorial](tutorial/index) -- a progressive multi-chapter walkthrough from TPU hardware to SparseCore
 - [TPU Details](details) -- the full picture of TPU memory spaces and supported ops
 - [TPU Pipelining](pipelining.md) -- deeper dive into pipelining, reductions, and accumulation
 - [Matrix Multiplication](matmul.md) -- putting it all together in a full kernel
