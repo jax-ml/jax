@@ -54,29 +54,50 @@ PyDeviceList::PyDeviceList(nb_class_ptr<PyClient> py_client,
                            xla::ifrt::DeviceListRef device_list)
     : py_client_(std::move(py_client)), device_list_(std::move(device_list)) {}
 
-PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
-    : device_list_(py_device_assignment) {
-  // Attempt to convert to Python devices into `ifrt::DeviceList`.
-  if (py_device_assignment.size() == 0) {
+PyDeviceList::PyDeviceList(nb::tuple py_device_assignment) {
+  // Attempt to convert Python devices into `ifrt::DeviceList`.
+  const Py_ssize_t num_devices = PyTuple_GET_SIZE(py_device_assignment.ptr());
+  if (num_devices == 0) {
+    device_list_ = std::move(py_device_assignment);
+    return;
+  }
+  auto* const py_device_type =
+      reinterpret_cast<PyTypeObject*>(nb::type<PyDevice>().ptr());
+  if (py_device_type == nullptr) {
+    device_list_ = std::move(py_device_assignment);
     return;
   }
   absl::InlinedVector<xla::ifrt::Device*, 1> devices;
-  devices.reserve(py_device_assignment.size());
-  for (nb::handle obj : py_device_assignment) {
-    if (!nb::isinstance<PyDevice>(obj.ptr())) {
+  devices.reserve(num_devices);
+  PyClient* raw_client = nullptr;
+  for (Py_ssize_t i = 0; i < num_devices; ++i) {
+    PyObject* obj = PyTuple_GET_ITEM(py_device_assignment.ptr(), i);
+    if (!PyObject_TypeCheck(obj, py_device_type)) {
       // Non-`PyDevice` is used on an alternative JAX backend with device
-      // duck typing. Use Python device objects already set in `device_list_`.
+      // duck typing.
+      device_list_ = std::move(py_device_assignment);
       return;
     }
-    auto py_device = nb::cast<PyDevice*>(obj);
-    if (py_client_.get() == nullptr) {
-      py_client_ = py_device->client();
-    } else if (py_device->client().get() != py_client_.get()) {
+    if (!nb::inst_ready(obj)) {
+      throw nb::type_error("Uninitialized Device object.");
+    }
+    PyDevice* py_device = nb::inst_ptr<PyDevice>(obj);
+    if (i == 0) {
+      raw_client = py_device->client().get();
+      if (raw_client == nullptr) {
+        device_list_ = std::move(py_device_assignment);
+        return;
+      }
+    } else if (py_device->client().get() != raw_client) {
       // If the list contains multiple clients, fall back to device duck typing.
+      device_list_ = std::move(py_device_assignment);
       return;
     }
     devices.push_back(py_device->device());
   }
+  py_client_ =
+      nb::inst_ptr<PyDevice>(PyTuple_GET_ITEM(py_device_assignment.ptr(), 0))
+          ->client();
   device_list_ =
       xla::ValueOrThrow(py_client_->ifrt_client()->MakeDeviceList(devices));
 }
