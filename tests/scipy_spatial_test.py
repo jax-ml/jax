@@ -214,12 +214,13 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype=float_dtypes,
     shape=[(3,), (num_samples, 3)],
+    degrees=[True, False],
   )
-  def testRotationFromRotvec(self, shape, dtype):
+  def testRotationFromRotvec(self, shape, dtype, degrees):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda r: jsp_Rotation.from_rotvec(r).as_rotvec()
-    np_fn = lambda r: osp_Rotation.from_rotvec(r).as_rotvec().astype(dtype)
+    jnp_fn = lambda r: jsp_Rotation.from_rotvec(r, degrees=degrees).as_rotvec()
+    np_fn = lambda r: osp_Rotation.from_rotvec(r, degrees=degrees).as_rotvec().astype(dtype)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
@@ -335,6 +336,23 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     np_fn = lambda q: osp_Slerp(times, osp_Rotation.from_quat(q))(compute_times).as_rotvec().astype(dtype)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(dtype=float_dtypes + [onp.int32])
+  @jax.numpy_rank_promotion('allow')
+  def testRotationEulerDegreesExact(self, dtype):
+    angles = jnp.array([[0, 0, 90], [0, 0, 180]], dtype=dtype)
+    r = jsp_Rotation.from_euler('xyz', angles, degrees=True)
+    out_dtype = onp.float32 if dtype == onp.int32 else dtype
+    self.assertArraysEqual(
+        r.as_euler('xyz', degrees=True), angles.astype(out_dtype)
+    )
+    if dtype in (onp.float32, onp.float64):
+      q_tiny = jnp.array([0.0, 0.0, 0.5e-10, 1.0], dtype=dtype)
+      self.assertAllClose(
+          jsp_Rotation.from_quat(q_tiny).as_euler('xyz'),
+          jnp.array([0.0, 0.0, 1e-10], dtype=dtype),
+          atol=0,
+      )
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
