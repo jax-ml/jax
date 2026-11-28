@@ -19,6 +19,7 @@ correctly propagated to the jaxpr and mlir.
 
 from absl.testing import absltest, parameterized
 import jax
+from jax.ad_checkpoint import checkpoint_name
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
@@ -539,6 +540,32 @@ class XlaMetadataTest(jtu.JaxTestCase):
     text = jax.jit(jax.value_and_grad(f)).lower(1.0).as_text()
     self.assertEqual(text.count('tag = "x"'), 1)
     self.assertEqual(text.count('tag = "x_bwd"'), 1)
+
+  @parameterized.named_parameters(
+      ("nothing_saveable", jax.checkpoint_policies.nothing_saveable),
+      ("save_only_hidden",
+       jax.checkpoint_policies.save_only_these_names("hidden")),
+  )
+  def test_xla_metadata_call2_grad_under_remat(self, policy):
+    def stage(x, w1, w2):
+      h = checkpoint_name(x @ w1, "hidden")
+      return (jax.nn.silu(h) * h) @ w2
+
+    def loss(wrap):
+      f = (xla_metadata_call2(stage, {"tag": "x"}, ad_metadata={"tag": "x_bwd"})
+           if wrap else stage)
+      return jax.checkpoint(lambda *a: jnp.sum(jnp.sin(f(*a))), policy=policy)
+
+    keys = jax.random.split(jax.random.key(0), 3)
+    args = (jax.random.normal(keys[0], (4, 3)),
+            jax.random.normal(keys[1], (3, 5)),
+            jax.random.normal(keys[2], (5, 2)))
+    grad = jax.jit(jax.grad(loss(True), argnums=(0, 1, 2)))
+    expected = jax.grad(loss(False), argnums=(0, 1, 2))(*args)
+    self.assertAllClose(grad(*args), expected)
+    text = grad.lower(*args).as_text()
+    self.assertIn('tag = "x"', text)
+    self.assertIn('tag = "x_bwd"', text)
 
   def test_xla_metadata_call2_jvp_keeps_primal_metadata(self):
     f = xla_metadata_call2(jnp.sin, {"tag": "x"}, ad_metadata='drop')
