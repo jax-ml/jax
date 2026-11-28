@@ -1195,6 +1195,19 @@ class DistributionsTest(RandomTestBase):
     self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
     self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
+  def testPoissonLargeLambdaVariance(self):
+    # Check both contraction and inflation of the rejection-sampling
+    # variance, using the same total number of samples as a scalar test.
+    lam = np.asarray([3e6, 1e8], dtype=np.float32)
+    rates = jnp.repeat(jnp.asarray(lam), 10000)
+    samples = np.asarray(
+        random.poisson(self.make_key(0), rates, dtype=np.int32)
+    ).astype(np.float64).reshape(2, 10000)
+    self.assertAllClose(samples.mean(axis=1), lam, rtol=1e-4,
+                        check_dtypes=False)
+    self.assertAllClose(samples.var(axis=1), lam, rtol=0.05,
+                        check_dtypes=False)
+
   def testPoissonBatched(self):
     key = self.make_key(1)
     lam = jnp.concatenate([2 * jnp.ones(10000), 20 * jnp.ones(10000)])
