@@ -53,11 +53,11 @@ def custom_root(f: Callable,
 
   Args:
     f: function for which to find a root. Should accept a single argument,
-      return a tree of arrays with the same structure as its input.
+      return a tree of arrays with the same structure and shapes as its input.
     initial_guess: initial guess for a zero of f.
     solve: function to solve for the roots of f. Should take two positional
       arguments, f and initial_guess, and return a solution with the same
-      structure as initial_guess such that func(solution) = 0. In other words,
+      structure and shapes as initial_guess such that func(solution) = 0. In other words,
       the following is assumed to be true (but not checked)::
 
         solution = solve(f, initial_guess)
@@ -67,7 +67,7 @@ def custom_root(f: Callable,
     tangent_solve: function to solve the tangent system. Should take two
       positional arguments, a linear function ``g`` (the function ``f``
       linearized at its root) and a tree of array(s) ``y`` with the same
-      structure as initial_guess, and return a solution ``x`` such that
+      structure and shapes as initial_guess, and return a solution ``x`` such that
       ``g(x)=y``:
 
       - For scalar ``y``, use ``lambda g, y: y / g(1.0)``.
@@ -85,10 +85,13 @@ def custom_root(f: Callable,
   guess_tree = tree_structure(initial_guess)
   f_traced = api.jit(f).trace(initial_guess)
   _check_tree("f", "initial_guess", f_traced.out_tree, guess_tree, False)
+  _check_shapes("f", "initial_guess", tree_leaves(f_traced.out_avals), tree_leaves(guess_avals))
   f_consts, f = f_traced.closure_convert()
 
   solve_traced = api.jit(partial(solve, partial(f, f_consts))).trace(initial_guess)
   _check_tree("solve", "initial_guess", solve_traced.out_tree, guess_tree, has_aux)
+  solve_out = solve_traced.out_avals[0] if has_aux else solve_traced.out_avals
+  _check_shapes("solve", "initial_guess", tree_leaves(solve_out), tree_leaves(guess_avals))
   solve_consts, solve = solve_traced.closure_convert()
 
   # Capture tangent_solve's environment without constructing the derivative of f.
@@ -100,6 +103,7 @@ def custom_root(f: Callable,
     return tangent_solve(partial(f_jvp, f_consts, x), b)
   tangent_traced = api.jit(linearize_and_solve).trace(guess_avals, tangent_avals)
   _check_tree("tangent_solve", "x", tangent_traced.out_tree, guess_tree, False)
+  _check_shapes("tangent_solve", "initial_guess", tree_leaves(tangent_traced.out_avals), tree_leaves(guess_avals))
   tangent_consts, tangent = tangent_traced.closure_convert()
 
   # Keep solve's operands first so its input effect indices carry over directly.

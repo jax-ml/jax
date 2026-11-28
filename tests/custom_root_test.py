@@ -453,6 +453,13 @@ class CustomRootTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
       lax.custom_root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
+    with self.assertRaisesRegex(ValueError, re.escape("f() output shapes")):
+      lax.custom_root(lambda x: jnp.zeros(2), 0.0, lambda f, x: x, lambda f, x: x)
+    with self.assertRaisesRegex(ValueError, re.escape("solve() output shapes")):
+      lax.custom_root(lambda x: x, 0.0, lambda f, x: jnp.zeros(2), lambda f, x: x)
+    with self.assertRaisesRegex(ValueError, re.escape("tangent_solve() output shapes")):
+      lax.custom_root(lambda x: x, 0.0, lambda f, x: x, lambda f, x: jnp.zeros(2))
+
     def dummy_root_usage(x):
       f = lambda y: x - y
       return lax.custom_root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
