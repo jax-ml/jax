@@ -1733,8 +1733,8 @@ def _truncated_normal(
     # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
     return jnp.clip(
         out,
-        lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
-        lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+        lax.nextafter(lax.stop_gradient(lower), lax._const(lower, np.inf)),
+        lax.nextafter(lax.stop_gradient(upper), lax._const(upper, -np.inf)))
 
   lower = lax.stop_gradient(lower)
   upper = lax.stop_gradient(upper)
@@ -1759,8 +1759,8 @@ def _truncated_normal(
         if core.typeof(lower).sharding != bound_s:
           lower = reshard(lower, bound_s)
           upper = reshard(upper, bound_s)
-  min_out = lax.nextafter(lower, np.array(np.inf, dtype=dtype))
-  max_out = lax.nextafter(upper, np.array(-np.inf, dtype=dtype))
+  min_out = lax.nextafter(lower, lax._const(lower, np.inf))
+  max_out = lax.nextafter(upper, lax._const(upper, -np.inf))
 
   # Compute in at least float32 so 16-bit dtypes get full 32-bit quantile
   # resolution and avoid underflow/rounding in the tails.
