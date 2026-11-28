@@ -1935,16 +1935,23 @@ def _rel_entr(p: Array, q: Array, kl: bool) -> Array:
   log_p_over_q, _, near_one, near_one_delta, u = _log_p_over_q(safe_p, safe_q)
   log_val = lax.mul(safe_p, log_p_over_q)
   if kl:
-    # For |u| = |(p - q) / q| < 0.05, evaluate the Taylor series
-    # p * log(1 + u) - (p - q) = (p - q) * u * (1/2 - u/6 + u^2/12 - u^3/20 + u^4/30 - ...)
-    # directly to avoid catastrophic cancellation and negative values near p ≈ q.
-    poly = lax.polynomial(u, [1 / 2, -1 / 6, 1 / 12, -1 / 20, 1 / 30])
-    series_val = lax.mul(lax.mul(near_one_delta, u), poly)
-    small_u = lax.bitwise_and(
-        near_one, lax.lt(lax.abs(u), _lax_const(p, 0.05))
-    )
+    # For 0.5 < p / q < 2 (|s| < 1/3 where s = (p - q) / (p + q) = u / (2 + u)),
+    # use the exact identity log(p / q) = 2 * atanh(s) to write:
+    #   p * log(p / q) - (p - q) = (p - q) * s * (1 + (1 + s) * s * Q(s^2))
+    # where Q(z) = sum_{k>=1} z^{k-1} / (2k + 1). Since (p - q) * s >= 0 and
+    # (1 + s) * s * Q(s^2) > -0.08 on |s| < 1/3, this avoids catastrophic
+    # cancellation and negative values across all floating-point precisions,
+    # including bfloat16/float16 near the boundary and full float64 precision.
+    s = lax.div(u, lax.add(_lax_const(p, 2.0), u))
+    z = lax.mul(s, s)
+    n_terms = 8 if dtypes.finfo(p.dtype).bits <= 32 else 16
+    coeffs = [1.0 / (2 * k + 1) for k in range(1, n_terms + 1)]
+    q_poly = lax.polynomial(z, coeffs)
+    one_plus_s = lax.add(_lax_const(p, 1.0), s)
+    factor = lax.add(_lax_const(p, 1.0), lax.mul(lax.mul(one_plus_s, s), q_poly))
+    series_val = lax.mul(lax.mul(near_one_delta, s), factor)
     pos_val = jnp.where(
-        small_u, series_val, lax.sub(log_val, lax.sub(safe_p, safe_q))
+        near_one, series_val, lax.sub(log_val, lax.sub(safe_p, safe_q))
     )
   else:
     pos_val = log_val

@@ -575,6 +575,36 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       )
       self.assertAllClose(lax_op(p64, q64), expected64, atol=0, rtol=1e-15)
 
+      if op == "kl_div":
+        # Verify full float64 precision across the entire near-one regime
+        # (including near |u| = 0.049 where a 5-term Taylor series loses ~8 digits).
+        q_vals = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float64)
+        p_vals = np.array([1.049, 0.951, 1.3, 0.7], dtype=np.float64)
+        expected = np.array(
+            [
+                0.001181358555453969,
+                0.0012206031686538442,
+                0.041073543807738366,
+                0.05032753924288733,
+            ],
+            dtype=np.float64,
+        )
+        self.assertAllClose(
+            lax_op(p_vals, q_vals), expected, atol=0, rtol=1e-15
+        )
+    if op == "kl_div":
+      # Verify non-negativity and accuracy in bfloat16/float16 near 0.5 < p/q < 2.
+      for low_dtype in (jnp.bfloat16, jnp.float16):
+        q_low = jnp.array([1.0, 1.0, 1.0, 1.0], dtype=low_dtype)
+        p_low = jnp.array([1.06, 0.94, 1.008, 0.992], dtype=low_dtype)
+        vals = lax_op(p_low, q_low)
+        self.assertTrue(bool(jnp.all(vals >= 0)))
+        ref = osp_special.kl_div(
+            np.asarray(p_low, dtype=np.float64),
+            np.asarray(q_low, dtype=np.float64),
+        ).astype(low_dtype)
+        self.assertAllClose(vals, ref, atol=0, rtol=2e-2)
+
   @jtu.sample_product(
       op=["rel_entr", "kl_div"],
       dtype=float_dtypes,
