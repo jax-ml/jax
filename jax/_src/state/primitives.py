@@ -705,20 +705,55 @@ def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind, pin):
   val, = vals_in
   dim, = dims_in
   if dim is None:
-    # We defensively batch the ref, b/c it could later be hit with a batched val
+    # Broadcast the initializer so a later batched write can land on this ref.
+    # Tag it so freeze/get can drop the axis again when no batched write
+    # happens (needed so jacfwd's out_axes=None sees an unmapped primal;
+    # see github.com/jax-ml/jax/issues/42821).
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
-    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind,
-                           pin=pin), 0
+    ref = core.ref_p.bind(val2, memory_space=memory_space, kind=kind,
+                          pin=pin)
+    _tag_defensive_batch(ref)
+    return ref, 0
   else:
     return core.ref_p.bind(val, memory_space=memory_space, kind=kind,
                            pin=pin), dim
 batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
+_DEFENSIVE_BATCH_ATTR = "_jax_defensive_batch"
+
+
+def _tag_defensive_batch(ref):
+  try:
+    object.__setattr__(ref, _DEFENSIVE_BATCH_ATTR, True)
+  except (AttributeError, TypeError):
+    pass
+
+
+def _clear_defensive_batch(ref):
+  if getattr(ref, _DEFENSIVE_BATCH_ATTR, False):
+    try:
+      object.__setattr__(ref, _DEFENSIVE_BATCH_ATTR, False)
+    except (AttributeError, TypeError):
+      pass
+
+
+def _is_defensive_batch(ref):
+  return bool(getattr(ref, _DEFENSIVE_BATCH_ATTR, False))
+
+
+def _unbatch_if_defensive(ref, val, dim):
+  """Drop a purely defensive batch axis so jacfwd can use out_axes=None."""
+  if dim == 0 and _is_defensive_batch(ref):
+    return val[0], None
+  return val, dim
+
+
 def _freeze_batched(axis_data, vals_in, dims_in):
+  del axis_data
   ref, = vals_in
   dim, = dims_in
-  return core.freeze_p.bind(ref), dim
+  return _unbatch_if_defensive(ref, core.freeze_p.bind(ref), dim)
 batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
@@ -912,7 +947,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   ref_dim, *flat_idx_dims = batched_dims
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   if not indexers:
-    return get_p.bind(ref, *flat_idxs, tree=tree), ref_dim
+    return _unbatch_if_defensive(ref, get_p.bind(ref, *flat_idxs, tree=tree), ref_dim)
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
   idx_is_batched = any(i_dim is not None
@@ -975,7 +1010,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       out_bdim = 0
       if new_int_indexers_contiguous:
         out_bdim = is_new_int_indexing.index(True)
-  return out, out_bdim
+  return _unbatch_if_defensive(ref, out, out_bdim)
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
@@ -994,6 +1029,8 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
                     f"an unbatched array reference of type {core.typeof(ref)}. "
                     "Move the array reference to be an argument to the vmapped "
                     "function?")
+  if val_is_batched or idx_is_batched:
+    _clear_defensive_batch(ref)
   if not indexers:
     if ref_is_batched and not val_is_batched:
       val = batching.broadcast(val, axis_data.size, ref_dim,
@@ -1088,6 +1125,8 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
                     f"an unbatched array reference of type {core.typeof(ref)}. "
                     "Move the array reference to be an argument to the vmapped "
                     "function?")
+  if val_is_batched or idx_is_batched:
+    _clear_defensive_batch(ref)
   if not indexers:
     if val_dim != ref_dim:
       val = batching.matchaxis(axis_data, val_dim, ref_dim, val)
