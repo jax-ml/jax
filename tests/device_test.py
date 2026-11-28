@@ -84,6 +84,36 @@ class DeviceTest(jtu.JaxTestCase):
     self.assertTrue(dl.is_fully_addressable)
     self.assertEqual(dl.addressable_device_list, dl)
 
+  def test_device_list_fast_path_and_fallbacks(self):
+    devs = tuple(jax.devices())
+    dl = xc.DeviceList(devs)
+    self.assertEqual(tuple(dl), devs)
+
+    class TupleSubclass(tuple):
+      pass
+
+    dl_sub = xc.DeviceList(TupleSubclass(devs))
+    self.assertEqual(tuple(dl_sub), devs)
+
+    # Non-PyDevice elements (including None and duck-typed objects) fall back.
+    dl_none = xc.DeviceList((None,))
+    self.assertEqual(tuple(dl_none), (None,))
+
+    duck = object()
+    dl_mixed = xc.DeviceList((devs[0], duck))
+    self.assertEqual(tuple(dl_mixed), (devs[0], duck))
+
+    uninit_dev = _jax.Device.__new__(_jax.Device)
+    with self.assertRaises(TypeError):
+      xc.DeviceList((uninit_dev,))
+
+    class SubDevice(_jax.Device):
+      pass
+
+    uninit_sub = SubDevice.__new__(SubDevice)
+    with self.assertRaises(TypeError):
+      xc.DeviceList((uninit_sub,))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
