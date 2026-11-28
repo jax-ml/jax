@@ -957,6 +957,17 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = jnp.broadcast_to(x[0:1], x.shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.product(source_type=(int, np.int32, jnp.int32), axis=(0, 1),
+                         use_jit=(False, True))
+  def testCollectiveBroadcastVmapOverCollectiveAxis(self, source_type, axis,
+                                                  use_jit):
+    source = source_type(2)
+    f = vmap(lambda x: lax.pbroadcast(x, source=source, axis_name='i'),
+             axis_name='i', in_axes=axis, out_axes=axis)
+    x = jnp.arange(12, dtype=jnp.float32).reshape(4, 3)
+    expected = np.take(x, [2] * x.shape[axis], axis=axis)
+    self.assertAllClose(jit(f)(x) if use_jit else f(x), expected)
+
   @jtu.run_on_devices("gpu")
   def testCollectiveBroadcastGrad(self):
     device_count = jax.device_count()
