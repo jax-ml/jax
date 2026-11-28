@@ -400,6 +400,34 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
   @jtu.sample_product(
+      name=['logaddexp', 'logaddexp2'],
+      dtype=jtu.dtypes.all_floating,
+      initial=[0, 2, 0.5, np.int32(2), np.float16(0.5), np.float64(0.5)],
+      use_where=[False, True],
+  )
+  def test_logaddexp_reduce_initial_dtype(self, name, dtype, initial, use_where):
+    # `initial` need not have the same dtype as the array being reduced.
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    rng = jtu.rand_default(self.rng())
+    rng_where = jtu.rand_bool(self.rng())
+    if use_where:
+      args_maker = lambda: [rng((3, 4), dtype), rng_where((3, 4), bool)]
+      jnp_fun_reduce = lambda a, where: jnp_fun.reduce(
+          a, axis=1, where=where, initial=initial)
+      np_fun_reduce = lambda a, where: np_fun.reduce(
+          a, axis=1, where=where, initial=initial)
+    else:
+      args_maker = lambda: [rng((3, 4), dtype)]
+      jnp_fun_reduce = lambda a: jnp_fun.reduce(a, axis=1, initial=initial)
+      np_fun_reduce = lambda a: np_fun.reduce(a, axis=1, initial=initial)
+
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun_reduce, args_maker)
+
+  @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
        for shape in all_shapes
