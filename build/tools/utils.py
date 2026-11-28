@@ -290,3 +290,7 @@ def is_linux_x86_64(arch: str, os_name: str):
 def is_linux_aarch64(arch: str, os_name: str):
   """Returns true if the architecture is Linux aarch64."""
   return arch == "aarch64" and os_name == "linux"
+
+def is_windows_amd64(arch: str, os_name: str):
+  """Returns true if the architecture is Windows AMD64."""
+  return arch in ("AMD64", "x86_64") and os_name == "windows"
