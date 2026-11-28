@@ -398,6 +398,8 @@ class TiledLayout:
         for d in self.lane_dims
     )
     if lane_dims_prod != WARP_SIZE:
+      print("min_tiled_shape:", min_tiled_shape)
+      print([min_tiled_shape[d] if isinstance(d, int) else d.times for d in self.lane_dims])
       raise ValueError("The product of lane dims does not equal the warp size")
     has_unreduced = any(
         isinstance(d, Unreduced)
