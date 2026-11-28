@@ -280,6 +280,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # examples from the array_equiv() docstring.
     self.assertTrue(jnp.array_equiv([1, 2], [1, 2]))
     self.assertFalse(jnp.array_equiv([1, 2], [1, 3]))
+    self.assertFalse(jnp.array_equiv([1, 2], [1, 2, 3]))
     with jax.numpy_rank_promotion('allow'):
       self.assertTrue(jnp.array_equiv([1, 2], [[1, 2], [1, 2]]))
       self.assertFalse(jnp.array_equiv([1, 2], [[1, 2, 1, 2], [1, 2, 1, 2]]))

@@ -5544,7 +5544,7 @@ def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
   a1, a2 = asarray(a1), asarray(a2)
   try:
     eq = ufuncs.equal(a1, a2)
-  except ValueError:
+  except (ValueError, TypeError):
     # shapes are not broadcastable
     return array(False)
   return reductions.all(eq)
