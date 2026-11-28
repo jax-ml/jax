@@ -97,7 +97,7 @@ class ApiUtilTest(jtu.JaxTestCase):
     treedef = jax.tree.structure({"a": 1, "b": 2})
     spec = {"a": 0, "b": (1, 2)}
     with self.assertRaisesRegex(
-        ValueError, r"(?s)Mismatch details.*different types"
+        ValueError, r"(?s)Mismatch details.*full pytree has a leaf"
     ):
       api_util.flatten_axes("test_spec", treedef, spec)
 
@@ -106,6 +106,14 @@ class ApiUtilTest(jtu.JaxTestCase):
     spec = {"a": [0, 1], "b": (2, 3)}
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axes("test_spec", treedef, spec)
+
+  def test_flatten_axes_error_treats_none_and_dummy_leaves_as_leaves(self):
+    treedef = jax.tree.structure((None, 1))
+    with self.assertRaises(ValueError) as error:
+      api_util.flatten_axes("test_spec", treedef, ([], None))
+    self.assertNotIn("NoneType", str(error.exception))
+    self.assertNotIn("PytreeLeaf", str(error.exception))
+    self.assertIn("the full pytree has a leaf", str(error.exception))
 
   def test_flatten_axis_resources_valid_prefix(self):
     tree = jax.tree.structure({"a": [1, 2], "b": 3})
@@ -117,7 +125,7 @@ class ApiUtilTest(jtu.JaxTestCase):
     tree = jax.tree.structure({"a": 1, "b": 2})
     shardings = {"a": None, "b": (None, None)}
     with self.assertRaisesRegex(
-        ValueError, r"(?s)Mismatch details.*different types"
+        ValueError, r"(?s)Mismatch details.*full pytree has a leaf"
     ):
       api_util.flatten_axis_resources("test_spec", tree, shardings, False)
 
@@ -126,6 +134,15 @@ class ApiUtilTest(jtu.JaxTestCase):
     shardings = {"a": [None, None], "b": (None, None)}
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+
+  def test_flatten_axis_resources_error_treats_none_and_dummy_leaves_as_leaves(
+      self):
+    tree = jax.tree.structure((None, 1))
+    with self.assertRaises(ValueError) as error:
+      api_util.flatten_axis_resources("test_spec", tree, ([], None), False)
+    self.assertNotIn("NoneType", str(error.exception))
+    self.assertNotIn("PytreeLeaf", str(error.exception))
+    self.assertIn("the full pytree has a leaf", str(error.exception))
 
   def test_fun_sourceinfo(self):
     fsi = api_util.fun_sourceinfo
