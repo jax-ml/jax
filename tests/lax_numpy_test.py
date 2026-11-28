@@ -6705,6 +6705,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp.logaddexp, args_maker, tol=tol)
       self._CompileAndCheck(jnp.logaddexp, args_maker, rtol=tol, atol=tol)
 
+  def testLogaddexpComplexInfiniteRealParts(self):
+    inf = np.inf
+    x1 = jnp.array([-inf, inf, 0, inf], dtype=jnp.complex64)
+    x2 = jnp.array([-inf, 0, inf, inf], dtype=jnp.complex64)
+    expected = jnp.array([-inf, inf, inf, inf], dtype=jnp.complex64)
+    self.assertArraysEqual(jnp.logaddexp(x1, x2), expected)
+
+    x = jnp.array([-inf, -inf, 1.0, 2.0], dtype=jnp.complex64)
+    expected_cumulative = jnp.array(
+        [-inf, -inf, 1.0, np.logaddexp(1.0, 2.0)], dtype=jnp.complex64)
+    self.assertAllClose(lax.cumlogsumexp(x), expected_cumulative)
+
   @jtu.sample_product(
     [dict(shapes=shapes, dtypes=dtypes)
       for shapes in filter(
