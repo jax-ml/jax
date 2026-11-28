@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import numpy as np
 
+from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax._src.scipy.special import xlogy
-from jax._src.nn.functions import log1mexp
+from jax._src.scipy.stats._core import log1m_exp_neg_exp
 
 
 def logpdf(x: ArrayLike,
@@ -221,10 +224,11 @@ def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   """
   x, loc, scale = promote_args_inexact("gumbel_r.sf", x, loc, scale)
   ok = lax.gt(scale, _lax_const(scale, 0))
-  # sf = 1 - exp(-exp(-z))
+  # sf = 1 - exp(-exp(-z)); sf is 1 where exp(-z) would overflow
   neg_z = lax.div(lax.sub(loc, x), scale)
-  t1 = lax.exp(lax.neg(lax.exp(neg_z)))
-  _sf = lax.sub(_lax_const(x, 1), t1)
+  hi = _lax_const(neg_z, math.log(float(dtypes.finfo(neg_z.dtype).max)) - 1)
+  neg_z = jnp.where(neg_z > hi, hi, neg_z)
+  _sf = lax.neg(lax.expm1(lax.neg(lax.exp(neg_z))))
   return jnp.where(ok, _sf, np.nan)
 
 
@@ -253,5 +257,5 @@ def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   ok = lax.gt(scale, _lax_const(scale, 0))
   # logsf = log(1 - exp(-exp(-z)))
   neg_z = lax.div(lax.sub(loc, x), scale)
-  log_sf = log1mexp(lax.exp(neg_z))
+  log_sf = log1m_exp_neg_exp(neg_z)
   return jnp.where(ok, log_sf, np.nan)
