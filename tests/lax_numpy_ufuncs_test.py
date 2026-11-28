@@ -283,6 +283,13 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
+  @jtu.sample_product(name=["logaddexp", "logaddexp2"])
+  def test_binary_ufunc_reduce_dtype(self, name):
+    x = np.array([0, 0, 0], dtype=np.float16)
+    jax_result = getattr(jnp, name).reduce(jnp.asarray(x), dtype=jnp.float32)
+    numpy_result = getattr(np, name).reduce(x, dtype=np.float32)
+    self.assertAllClose(jax_result, numpy_result)
+
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
