@@ -953,7 +953,16 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
 
   # Softmax and it is always carried out in fp32.
   padded_logits = padded_logits.astype(np.float32)
-  probs = softmax(padded_logits, axis=-1).astype(key.dtype)
+  logits_max = jnp.max(padded_logits, axis=-1, keepdims=True)
+  is_neg_inf = jnp.logical_and(jnp.isinf(logits_max), logits_max < 0)
+  logits_max = jnp.where(is_neg_inf, 0.0, logits_max)
+  unnorm_probs = jnp.exp(padded_logits - logits_max)
+  probs_sum = jnp.sum(unnorm_probs, axis=-1, keepdims=True)
+  probs = jnp.where(
+      probs_sum == 0,
+      0.0,
+      unnorm_probs / jnp.where(probs_sum == 0, 1.0, probs_sum),
+  ).astype(key.dtype)
 
   encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
   if q_seqlen is not None:
