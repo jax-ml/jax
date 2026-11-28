@@ -23,8 +23,12 @@ from ._tpu_ops_gen import *
 from ._tpu_ops_gen import _Dialect, VectorLoadOp, VectorStoreOp
 from jaxlib.mlir._mlir_libs._tpu_ext import *
 try:
+  from jaxlib.mlir import ir
+  from jaxlib.mlir.dialects import arith
   from jaxlib.mlir.dialects._ods_common import _cext
 except ImportError:
+  from mlir import ir
+  from mlir.dialects import arith
   from mlir.dialects._ods_common import _cext
 
 
@@ -55,6 +59,64 @@ class RegionOp(_tpu_ops_gen.RegionOp):  # noqa: F405
   @property
   def body(self):
     return self.regions[0].blocks[0]
+
+
+def _normalize_sublane_mask(sublane_mask, *, loc=None, ip=None):
+  if isinstance(sublane_mask, ir.Value):
+    return sublane_mask
+  attrs = [ir.BoolAttr.get(bool(x)) for x in sublane_mask]
+  mask_ty = ir.VectorType.get((len(attrs),), ir.IntegerType.get_signless(1))
+  return arith.constant(
+      mask_ty, ir.DenseElementsAttr.get(attrs, mask_ty), loc=loc, ip=ip
+  )
+
+
+def load(
+    result,
+    base,
+    indices,
+    sublane_mask,
+    *,
+    sublane_stride=None,
+    loc=None,
+    ip=None,
+):
+  sublane_mask = _normalize_sublane_mask(sublane_mask, loc=loc, ip=ip)
+  return _tpu_ops_gen.LoadOp(
+      result,
+      base,
+      indices,
+      sublane_mask,
+      sublane_stride=sublane_stride,
+      loc=loc,
+      ip=ip,
+  ).result
+
+
+def store(
+    value_to_store,
+    base,
+    indices,
+    sublane_mask,
+    *,
+    mask=None,
+    sublane_stride=None,
+    add=None,
+    loc=None,
+    ip=None,
+):
+  sublane_mask = _normalize_sublane_mask(sublane_mask, loc=loc, ip=ip)
+  return _tpu_ops_gen.StoreOp(
+      value_to_store,
+      base,
+      indices,
+      sublane_mask,
+      mask=mask,
+      sublane_stride=sublane_stride,
+      add=add,
+      loc=loc,
+      ip=ip,
+  )
 
 
 def vector_load(

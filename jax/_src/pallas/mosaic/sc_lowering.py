@@ -25,6 +25,7 @@ from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.lib import xla_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
@@ -95,12 +96,10 @@ def _load_vreg(
         out_vec_type, ref, indices=starts, strides=[], mask=mask
     )
   assert not expand
-  return tpu.load(
-      out_vec_type,
-      ref,
-      indices=starts,
-      sublane_mask=[True] * sc_core.get_sparse_core_info().num_lanes,
-  )
+  sublane_mask = [True] * sc_core.get_sparse_core_info().num_lanes
+  if xla_version < 92:
+    return tpu.LoadOp(out_vec_type, ref, starts, cast(Any, sublane_mask)).result
+  return tpu.load(out_vec_type, ref, indices=starts, sublane_mask=sublane_mask)
 
 
 def _vector_load(
@@ -362,13 +361,11 @@ def _store_lowering_rule(
         )
     else:
       assert not compress
-      tpu.store(
-          val,
-          ref,
-          indices=starts,
-          sublane_mask=[True] * sc_core.get_sparse_core_info().num_lanes,
-          add=add,
-      )
+      sublane_mask = [True] * sc_core.get_sparse_core_info().num_lanes
+      if xla_version < 92:
+        tpu.StoreOp(val, ref, starts, cast(Any, sublane_mask), add=add)
+      else:
+        tpu.store(val, ref, indices=starts, sublane_mask=sublane_mask, add=add)
     return old_val
   # Load and store at the full memref rank, keeping integer-indexed dims as
   # size 1, because apply-vector-layout requires the vector rank to match

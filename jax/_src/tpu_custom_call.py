@@ -27,6 +27,7 @@ import logging
 from typing import Any, TypedDict
 
 from jax._src import api
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -78,6 +79,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
     return _FWD_COMPAT_VERSION
   if ir_version_override is not None:
     return ir_version_override()
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.54"):
+    return 20
   return None
 
 
@@ -1031,7 +1034,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 20
+    current_ir_version = 21
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
