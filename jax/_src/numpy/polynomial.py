@@ -510,9 +510,9 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
   a1_arr, a2_arr = promote_dtypes(a1, a2)
   del a1, a2
   if a2_arr.shape[0] <= a1_arr.shape[0]:
-    return a1_arr.at[-a2_arr.shape[0]:].add(a2_arr)
+    return a1_arr.at[a1_arr.shape[0] - a2_arr.shape[0]:].add(a2_arr)
   else:
-    return a2_arr.at[-a1_arr.shape[0]:].add(a1_arr)
+    return a2_arr.at[a2_arr.shape[0] - a1_arr.shape[0]:].add(a1_arr)
 
 
 @export
