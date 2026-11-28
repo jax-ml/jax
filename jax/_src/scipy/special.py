@@ -1367,7 +1367,7 @@ def _erfcx_grad_jvp(primals, tangents):
   # total derivative with respect to `x` only depends on `x_dot`.
   (x, ans), (x_dot, _) = primals, tangents
   grad_ans = _erfcx_grad(x, ans)
-  threshold = _lax_const(x, 2.25)
+  threshold = lax.full_like(x, 2.25)
   is_large = x > threshold
   zeros = lax.full_like(x, 0.0)
   x_small = lax.select(is_large, zeros, x)

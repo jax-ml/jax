@@ -17,9 +17,11 @@
 
 from jax._src.scipy.stats.truncnorm import (
   cdf as cdf,
+  isf as isf,
   logcdf as logcdf,
   logpdf as logpdf,
-  pdf as pdf,
   logsf as logsf,
-  sf as sf
+  pdf as pdf,
+  ppf as ppf,
+  sf as sf,
 )
