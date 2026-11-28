@@ -909,11 +909,14 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     raise NotImplementedError("The 'out' argument to jnp.logaddexp.reduce is not supported.")
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "jnp.logaddexp.reduce")
-  # TODO(phawkins): dtype isn't used here. That seems like a bug!
-  del dtype
+    if not dtypes.issubdtype(dtype, np.inexact):
+      raise TypeError(f"jnp.logaddexp.reduce only supports floating or complex dtypes, got {dtype}")
   a = ensure_arraylike("logsumexp", a)
   where = check_where("logsumexp", where)
-  a_arr, = promote_dtypes_inexact(a)
+  if dtype is None:
+    a_arr, = promote_dtypes_inexact(a)
+  else:
+    a_arr = lax.convert_element_type(a, dtype)
   pos_dims, dims = _reduction_dims(a_arr, axis)
   amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
@@ -921,7 +924,10 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
   sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
   result = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
-  return result if initial is None else lax_other.logaddexp(initial, result)
+  if initial is not None:
+    initial = lax.convert_element_type(initial, a_arr.dtype)
+    result = lax_other.logaddexp(initial, result)
+  return result if dtype is None else result.astype(dtype)
 
 
 def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
@@ -933,13 +939,20 @@ def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(
         dtype, "jnp.logaddexp2.reduce")
+    if not dtypes.issubdtype(dtype, np.inexact):
+      raise TypeError(f"jnp.logaddexp2.reduce only supports floating or complex dtypes, got {dtype}")
   a = ensure_arraylike("logsumexp2", a)
   where = check_where("logsumexp2", where)
-  ln2 = float(np.log(2))
+  if dtype is not None:
+    ln2 = np.array(np.log(2), dtype=dtype)
+    a = lax.convert_element_type(a, dtype)
+  else:
+    ln2 = float(np.log(2))
   if initial is not None:
-    initial *= ln2
-  return _logsumexp(a * ln2, axis=axis, dtype=dtype, keepdims=keepdims,
+    initial = initial * ln2
+  res = _logsumexp(a * ln2, axis=axis, dtype=dtype, keepdims=keepdims,
                     where=where, initial=initial) / ln2
+  return res if dtype is None else res.astype(dtype)
 
 @export
 def amin(a: ArrayLike, axis: Axis = None, out: None = None,

@@ -625,5 +625,24 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
         getattr(jnp, name).reduceat(x, i, dtype=jnp.int32),
         getattr(np, name).reduceat(x, i, dtype=np.int32),
         check_dtypes=True)
+
+  @jtu.sample_product(
+      name=["logaddexp", "logaddexp2"],
+      dtype=[jnp.float32, jnp.float64],
+  )
+  def test_logaddexp_reduce_dtype(self, name, dtype):
+    x = jnp.array([0, 0, 0], dtype=jnp.float16)
+    np_x = np.array([0, 0, 0], dtype=np.float16)
+    self.assertArraysAllClose(
+        getattr(jnp, name).reduce(x, dtype=dtype),
+        getattr(np, name).reduce(np_x, dtype=dtype),
+        check_dtypes=True)
+
+  @jtu.sample_product(name=["logaddexp", "logaddexp2"])
+  def test_logaddexp_reduce_invalid_dtype(self, name):
+    x = jnp.array([0, 0, 0], dtype=jnp.float16)
+    with self.assertRaises(TypeError):
+      getattr(jnp, name).reduce(x, dtype=jnp.int32)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
