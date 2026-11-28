@@ -1827,6 +1827,49 @@ class PallasCallMultimemTest(TestCase):
           f" {requested_space}:\n{compiled}",
       )
 
+  def test_persistent_semaphore_multicast_across_kernels(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    @self.kernel()
+    def signal_kernel(sem_ref):
+      @pl.when(lax.axis_index("x") == 0)
+      def _():
+        plgpu.semaphore_signal_multicast(sem_ref, 3, collective_axes="x")
+
+    @self.kernel()
+    def wait_kernel(sem_ref):
+      pl.semaphore_wait(sem_ref, value=2)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((1,), jnp.int32))
+    def read_kernel(sem_ref, out_ref):
+      out_ref[0] = pl.semaphore_read(sem_ref)
+
+    def body():
+      sem = plgpu.alloc_semaphore(())
+      signal_kernel(sem)
+      wait_kernel(sem)
+      return read_kernel(sem)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    out = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+        )
+    )()
+    out = multihost_utils.process_allgather(out, tiled=True)
+    try:
+      np.testing.assert_array_equal(out, jnp.array([1, 1], jnp.int32))
+    except AssertionError:
+      # On some CUDA versions there is a compiler bug where the predicate
+      # on the multimem reduction is not respected, so all 128 warpgroup
+      # lanes signal (128 * 3 - 2 = 382).
+      if cuda_versions.cuda_runtime_get_version() not in [12080, 12090, 13000]:
+        raise
+      np.testing.assert_array_equal(out, jnp.array([382, 382], jnp.int32))
+
 
 @jtu.thread_unsafe_test_class()
 class PallasCallMultimemThreadUnsafeTest(TestCase):
