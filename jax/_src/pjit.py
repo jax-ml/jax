@@ -845,7 +845,9 @@ def pjit_check_aval_sharding(
   for aval, s, name in zip(flat_avals, shardings, names):
     if isinstance(s, UnspecifiedValue):
       continue
-    name_str = f' with pytree key path {name}' if name else ''
+    name_str = (f' with pytree key path {name}'
+                if name and not (what_aval == 'pjit outputs' and name == 'result')
+                else '')
     if aval.is_high and not isinstance(aval, core.ShapedArray):
       raise NotImplementedError(
           f'One of {what_aval}{name_str} has non-array (hijax) type {aval} '
