@@ -41,6 +41,7 @@ from jax._src import hijax
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src.random import prng
+from jax._src import state
 from jax._src import tree_util
 from jax._src import typing
 from jax._src import util
@@ -63,6 +64,7 @@ pull_block_spec_rules: dict[core.Primitive, PullBlockSpecRuleFn] = {}
 stateful_primitives: set[core.Primitive] = {
     lax.dynamic_update_slice_p,
 }
+array_prefetch_primitives: set[core.Primitive] = set()
 
 
 def _null_block_index_trafo(*block_indices):
@@ -165,8 +167,14 @@ class PullRuleContext:
   avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...]
   out_usages: tuple[set[Usage], ...]
+  in_usages: tuple[set[Usage], ...] = ()
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
   strict_mode: bool = True
+  grid_len: int | None = None
+
+  @property
+  def program_ids(self) -> tuple[int | jax.Array, ...] | None:
+    return _sp_env.program_ids
 
 
 @dataclasses.dataclass
@@ -291,7 +299,7 @@ class KernelEvalContext:
     return self.program_ids
 
   def get_in_block_indices(self):
-    with _sp_context(*self.scalar_prefetch):
+    with _sp_context(*self.scalar_prefetch, program_ids=self.program_ids):
       return tuple(
           None
           if bs is pallas_core.no_block_spec
@@ -300,7 +308,7 @@ class KernelEvalContext:
       )
 
   def get_out_block_indices(self):
-    with _sp_context(*self.scalar_prefetch):
+    with _sp_context(*self.scalar_prefetch, program_ids=self.program_ids):
       return tuple(
           None
           if bs is pallas_core.no_block_spec
@@ -316,19 +324,27 @@ class _SpEnv(threading.local):
 
   def __init__(self):
     self.scalar_prefetch = None
+    self.already_selected = False
+    self.program_ids = None
 
 
 _sp_env = _SpEnv()
 
 
 @contextlib.contextmanager
-def _sp_context(*scalar_prefetch):
-  prev = _sp_env.scalar_prefetch
+def _sp_context(
+    *scalar_prefetch,
+    already_selected: bool = False,
+    program_ids: tuple[int | jax.Array, ...] | None = None,
+):
+  prev = (_sp_env.scalar_prefetch, _sp_env.already_selected, _sp_env.program_ids)
   _sp_env.scalar_prefetch = scalar_prefetch
+  _sp_env.already_selected = already_selected
+  _sp_env.program_ids = program_ids
   try:
     yield
   finally:
-    _sp_env.scalar_prefetch = prev
+    _sp_env.scalar_prefetch, _sp_env.already_selected, _sp_env.program_ids = prev
 
 
 def _get_scalar_prefetch():
@@ -336,7 +352,21 @@ def _get_scalar_prefetch():
 
 
 # TPU metadata (SMEM scalar prefetch) uses rank 1 (shape=(1,)), GPU uses rank 0.
-def _load_scalar_prefetch(a: Any) -> Any:
+def _load_scalar_prefetch(
+    a: Any, aval: core.AbstractValue | None = None
+) -> Any:
+  if isinstance(aval, core.ShapedArray) and aval.ndim > 0:
+    if a.shape == aval.shape:
+      return a
+    if a.shape == (1, *aval.shape):
+      is_ref = isinstance(a, state.TransformedRef) or isinstance(
+          core.typeof(a), state.AbstractRef
+      )
+      return a.at[0] if is_ref else a[0]
+    raise ValueError(
+        f'Expected scalar prefetch array of shape {aval.shape} or '
+        f'{(1, *aval.shape)}, got shape {a.shape}.'
+    )
   return a[0] if a.ndim > 0 else a[...]
 
 
@@ -352,7 +382,7 @@ def _wrap_index_map(
         args_and_scalar_prefetch,
         [num_grid_args],
     )
-    with _sp_context(*scalar_prefetch):
+    with _sp_context(*scalar_prefetch, program_ids=tuple(args)):
       return index_map(*args)
 
   return new_index_map
@@ -467,10 +497,23 @@ def pull_block_spec(
     )
     # The scalars this fusion prefetches, in the order its index maps and body
     # expect to be handed them back.
+    sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
     kernel_fn.scalar_prefetch = tuple(
-        c for c, sp in zip(consts, _scalar_prefetch_mask(jaxpr, read_usage_env),
-                           strict=True) if sp)
-    if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
+        c for c, sp in zip(consts, sp_mask, strict=True) if sp
+    )
+    # Non-scalar prefetch is only allowed when consumed solely by blocked,
+    # non-SP-feeding primitives in `array_prefetch_primitives` (optionally
+    # through `pvary_p`).
+    bs_env, _ = env
+    if non_scalars := [
+        c
+        for v, c, sp in zip(jaxpr.constvars, consts, sp_mask, strict=True)
+        if sp
+        and jnp.ndim(c) != 0
+        and _has_invalid_non_scalar_prefetch_consumer(
+            v, jaxpr, read_usage_env, bs_env
+        )
+    ]:
       raise ValueError(
           f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
           f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
@@ -527,23 +570,46 @@ def _block_specs_equal(
 
 
 def _compare_index_transforms(
-    idx_map1, idx_map2, block_idxs_avals, scalar_prefetch_avals=()
+    idx_map1,
+    idx_map2,
+    block_idxs_avals,
+    scalar_prefetch_avals=(),
+    grid_len: int | None = None,
 ) -> bool:
   if idx_map1 is idx_map2:
     return True
 
-  # An index map may read the scalar prefetch; trace it on placeholders.
+  program_ids_avals = (
+      None
+      if grid_len is None
+      else (core.ShapedArray((), jnp.int32),) * grid_len
+  )
+  # Non-scalar prefetch values are passed as SMEM Refs at runtime.
+  sp_avals = tuple(
+      state.AbstractRef(aval)
+      if isinstance(aval, core.ShapedArray) and aval.ndim > 0
+      else aval
+      for aval in scalar_prefetch_avals
+  )
+
+  # An index map may read the scalar prefetch or program_ids; trace it on
+  # placeholders.
   def to_jaxpr(idx_map):
-    def traced(idxs, scalar_prefetch):
+    def traced(idxs, scalar_prefetch, program_ids):
       # `None` marks a block index that is always 0 (see `_block_idxs_avals`).
       idxs = tuple(
           None if idx is None else tuple(0 if i is None else i for i in idx)
           for idx in idxs
       )
-      with _sp_context(*scalar_prefetch):
+      with _sp_context(
+          *scalar_prefetch, already_selected=True, program_ids=program_ids
+      ):
         return idx_map(*idxs)
 
-    return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
+    jaxpr, _, _, _ = fuser_utils.make_jaxpr(
+        traced, block_idxs_avals, sp_avals, program_ids_avals
+    )
+    return jaxpr
 
   return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
 
@@ -575,6 +641,7 @@ def _block_transforms_equal(
     block_idxs_avals: tuple[tuple[ShapedAbstractValue, ...], ...],
     scalar_prefetch_avals: tuple[ShapedAbstractValue, ...] = (),
     strict_mode: bool = True,
+    grid_len: int | None = None,
 ) -> bool:
   if bs1 is bs2:
     return True
@@ -589,6 +656,7 @@ def _block_transforms_equal(
           bs2.block_index_transform,
           block_idxs_avals,
           scalar_prefetch_avals,
+          grid_len=grid_len,
       )
     return True
   return False
@@ -597,6 +665,36 @@ def _block_transforms_equal(
 def _scalar_prefetch_mask(jaxpr, read_usage_env) -> list[bool]:
   """Which of `jaxpr.constvars` are scalars prefetched for block indices."""
   return [Usage.SCALAR_PREFETCH in read_usage_env(v) for v in jaxpr.constvars]
+
+
+def _has_invalid_non_scalar_prefetch_consumer(
+    constvar: core.Var,
+    jaxpr: core.Jaxpr,
+    read_usage_env: Callable[[core.Var], set[Usage]],
+    bs_env: dict[core.Var, pallas_core.BlockSpec],
+) -> bool:
+  """Returns True if a non-scalar prefetch constvar has an unsupported consumer."""
+  sp_vars = {constvar}
+  for eqn in jaxpr.eqns:
+    if not any(isinstance(v, core.Var) and v in sp_vars for v in eqn.invars):
+      continue
+    if eqn.primitive is core.pvary_p:
+      sp_vars.update(v for v in eqn.outvars if isinstance(v, core.Var))
+      continue
+    if (
+        eqn.primitive in array_prefetch_primitives
+        and any(
+            bs_env.get(o, pallas_core.no_block_spec)
+            is not pallas_core.no_block_spec
+            for o in eqn.outvars
+        )
+        and not any(
+            Usage.SCALAR_PREFETCH in read_usage_env(o) for o in eqn.outvars
+        )
+    ):
+      continue
+    return True
+  return any(isinstance(v, core.Var) and v in sp_vars for v in jaxpr.outvars)
 
 
 def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
@@ -608,7 +706,8 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
   handler, `scalar_prefetch` is shared by every fusion in the kernel and the
   handler selects this fusion's group out of it.
   """
-  scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
+  if not _sp_env.already_selected:
+    scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
   if len(scalar_prefetch) != num_expected:
     raise ValueError(
         f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
@@ -669,7 +768,9 @@ def _make_scalar_prefetch_fn(
         len(sp_jaxpr.invars),
         sp_jaxpr.debug_info.func_name,
     )
-    return sp_fn((), (), *map(_load_scalar_prefetch, args))
+    return sp_fn(
+        (), (), *map(_load_scalar_prefetch, args, (v.aval for v in sp_jaxpr.invars))
+    )
 
   return _scalar_prefetch_fn
 
@@ -680,13 +781,17 @@ def pvary_operands(vals: Sequence[Any]) -> list[Any]:
   vma = frozenset().union(*(
       a.mat.varying
       for v in vals
-      if isinstance(a := core.typeof(v), core.ShapedArray)
+      if v is not None
+      and not isinstance(v, state.TransformedRef)
+      and isinstance(a := core.typeof(v), core.ShapedArray)
   ))
   if not vma:
     return list(vals)
   return [
       core.pvary(v, tuple(vma - a.mat.varying))
-      if isinstance(a := core.typeof(v), core.ShapedArray)
+      if v is not None
+      and not isinstance(v, state.TransformedRef)
+      and isinstance(a := core.typeof(v), core.ShapedArray)
       and (vma - a.mat.varying)
       else v
       for v in vals
@@ -757,18 +862,20 @@ def _pull_block_transform(
       rule = _unblocked_pull_rule
     elif not (rule := pull_block_spec_rules.get(eqn.primitive, None)):
       raise NotImplementedError(eqn.primitive, eqn_out_block_transforms)
+    eqn_invar_usages = [
+        read_usage_env(v) if not isinstance(v, core.Literal) else set()
+        for v in eqn.invars
+    ]
     ctx = PullRuleContext(
         prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         out_usages=tuple(read_usage_env(v) for v in eqn.outvars),
+        in_usages=tuple(eqn_invar_usages),
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
+        grid_len=grid_len,
     )
-    eqn_invar_usages = [
-        read_usage_env(v) if not isinstance(v, core.Literal) else set()
-        for v in eqn.invars
-    ]
     if any(Usage.SCALAR_PREFETCH in usage for usage in eqn_invar_usages):
       ctx.scalar_prefetch_fn = scalar_prefetch_fn_env[i] = (
           _make_scalar_prefetch_fn(
@@ -794,6 +901,7 @@ def _pull_block_transform(
               env[v], in_block_transform, block_idxs_avals,
               scalar_prefetch_avals=scalar_prefetch_avals,
               strict_mode=strict_mode,
+              grid_len=grid_len,
           )
       ):
         in_block_transform = BlockIndexTransform(_illegal, _illegal)
@@ -902,7 +1010,12 @@ def make_kernel_function(
       sp = _select_scalar_prefetch(
           scalar_prefetch_handler, scalar_prefetch, sum(sp_mask),
           jaxpr.debug_info.func_name)
-      sp = iter(_load_scalar_prefetch(a) for a in sp)
+      sp_avals = [
+          v.aval
+          for v, is_sp in zip(jaxpr.constvars, sp_mask, strict=True)
+          if is_sp
+      ]
+      sp = map(_load_scalar_prefetch, sp, sp_avals)
       bound_consts = [next(sp) if is_sp else c
                       for c, is_sp in zip(consts, sp_mask, strict=True)]
     for const, constvar in zip(bound_consts, jaxpr.constvars, strict=True):
@@ -926,7 +1039,7 @@ def make_kernel_function(
         # We need to substitute in scalar prefetch values into equation invars.
         if scalar_prefetch_fn := scalar_prefetch_fn_env.get(i, None):
           # Evaluate scalar prefetch function.
-          with _sp_context(*scalar_prefetch):
+          with _sp_context(*scalar_prefetch, program_ids=tuple(program_ids)):
             scalar_prefetch_vals = scalar_prefetch_fn()
           # Some results of the SP function will be literals.
           eqn_invar_usages = [
@@ -2515,9 +2628,13 @@ def _convert_element_type_pull_rule(
 @register_eval_rule(core.pvary_p)
 def _pvary_eval_rule(eval_ctx: KernelEvalContext, x, *, axes, **params):
   del eval_ctx, params
-  if not config._check_vma.value:
+  if (
+      not config._check_vma.value
+      or isinstance(x, state.TransformedRef)
+      or isinstance(a := core.typeof(x), state.AbstractRef)
+  ):
     return x
-  if isinstance(a := core.typeof(x), core.ShapedArray):
+  if isinstance(a, core.ShapedArray):
     axes = tuple(ax for ax in axes if ax not in a.mat.varying)
   return core.pvary(x, axes) if axes else x
 
@@ -3062,6 +3179,7 @@ def _call_jaxpr_pull_block_spec_rule(
       jaxpr,
       out_block_transforms,
       read_usage_env=read_usage_env,
+      grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
   )
   return in_block_transforms

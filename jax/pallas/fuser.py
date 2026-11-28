@@ -15,6 +15,7 @@
 """Public API for fuser."""
 
 from jax._src.pallas.fuser.block_spec import BlockIndexTransform as BlockIndexTransform
+from jax._src.pallas.fuser.block_spec import Usage as Usage
 from jax._src.pallas.fuser.block_spec import get_fusion_values as get_fusion_values
 from jax._src.pallas.fuser.block_spec import get_stateful_input_fusion_values as get_stateful_input_fusion_values
 from jax._src.pallas.fuser.block_spec import get_stateful_output_fusion_values as get_stateful_output_fusion_values
