@@ -93,6 +93,7 @@ Automatic differentiation
 
 .. autosummary::
   :toctree: _autosummary
+  :template: class.rst
 
     grad
     value_and_grad
