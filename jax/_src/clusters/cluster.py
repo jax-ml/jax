@@ -40,6 +40,18 @@ class ClusterEnv:
     super().__init_subclass__(**kwargs)
     cls._cluster_types.append(cls)
 
+  @classmethod
+  def auto_detected_env(cls) -> type[ClusterEnv] | None:
+    """Returns the env no-argument ``initialize()`` would select.
+
+    This is the first ``_cluster_types`` entry, in registration order, with
+    ``opt_in_only_method`` false and ``is_env_present()`` true. Opt-in methods
+    such as ``mpi4py`` are skipped. Returns ``None`` when none is present.
+    """
+    return next(
+        (env for env in cls._cluster_types
+         if env.opt_in_only_method == False and env.is_env_present()),
+        None)
 
   @classmethod
   def auto_detect_unset_distributed_params(cls,
@@ -62,7 +74,7 @@ class ClusterEnv:
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {cluster_detection_method} is supported but not functional in this environment.")
     else:
-      env = next((env for env in cls._cluster_types if env.opt_in_only_method == False and env.is_env_present()), None)
+      env = cls.auto_detected_env()
 
     # Above: I have wrapped the env selection in a conditional to go through
     # opt-in methods first (currently only mpi4py) but to check all possible options
