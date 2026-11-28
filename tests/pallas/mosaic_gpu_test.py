@@ -11165,6 +11165,27 @@ class SemaphoreTest(PallasTest):
 
     np.testing.assert_array_equal(run(), jnp.array([3, 7], jnp.int32))
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_semaphore_signal_parallel_fence_ordering(self):
+    @self.kernel()
+    def kernel(sem_ref):
+      plgpu.semaphore_signal_parallel(
+          plgpu.SemaphoreSignal(sem_ref.at[0], device_id=None),
+          plgpu.SemaphoreSignal(sem_ref.at[1], device_id=None),
+      )
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      kernel(plgpu.alloc_semaphore((2,)))
+
+    ptx_str = ptx()
+    self.assertEqual(ptx_str.count("fence.release.sys;"), 1)
+    self.assertRegex(ptx_str, r"@%p\d+\s+fence\.release\.sys;")
+    self.assertEqual(ptx_str.count("red.relaxed.sys.global.add.u32"), 2)
+    self.assertLess(
+        ptx_str.index("fence.release.sys;"),
+        ptx_str.index("red.relaxed.sys.global.add.u32"),
+    )
+
   def test_kernel_rejects_semaphore_array_operand(self):
     @self.kernel(
         out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
