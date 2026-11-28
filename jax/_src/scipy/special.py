@@ -4291,12 +4291,15 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   return _hyp1f1(a, b, x)
 
 
-def _hyp2f1_terminal(a, b, c, x):
+def _hyp2f1_terminal(a, b, c, x, enabled=True):
   """
   The Taylor series representation of the 2F1 hypergeometric function
   terminates when either a or b is a non-positive integer. See Eq. 4.1 and
   Taylor Series Method (a) from PEARSON, OLVER & PORTER 2014
   https://doi.org/10.48550/arXiv.1407.7786
+
+  ``enabled`` says whether this branch is the one actually selected. The caller
+  evaluates every branch, so the loop runs zero iterations when it is False.
   """
   # Ensure that between a and b, the negative integer parameter with the greater
   # absolute value - that still has a magnitude less than the absolute value of
@@ -4326,6 +4329,9 @@ def _hyp2f1_terminal(a, b, c, x):
 
   def body(i, state):
     serie, term = state
+    # The loop index is an integer: a floating-point index stops advancing
+    # once it exceeds the largest integer the dtype counts exactly.
+    i = i.astype(x.dtype)
 
     term *= -(a - i + 1) / (c + i - 1) * (b + i - 1) / i * x
     serie += term
@@ -4334,8 +4340,9 @@ def _hyp2f1_terminal(a, b, c, x):
 
   init = (jnp.array(1, dtype=x.dtype), jnp.array(1, dtype=x.dtype))
 
-  return lax.fori_loop(jnp.array(1, dtype=a.dtype),
-                       a + 1,
+  upper = jnp.where(enabled & jnp.isfinite(a), a, 0).astype(jnp.int32)
+  return lax.fori_loop(jnp.array(1, dtype=jnp.int32),
+                       upper + 1,
                        body,
                        init)[0]
 
@@ -4399,7 +4406,7 @@ def _hyp2f1_terminal_or_serie(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
                       _hyp2f1_digamma_transform(
                           a, b, c, x, log_gamma_ratio, sgn_gamma_ratio
                       ),
-                      _hyp2f1_terminal(a, b, c, x))
+                      _hyp2f1_terminal(a, b, c, x, enabled=(index == 2)))
 
 
 def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
