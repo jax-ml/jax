@@ -674,6 +674,7 @@ def _lower_to_custom_call_config(
     disable_semaphore_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     skip_device_barrier: bool = False,
+    has_communication: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
@@ -692,7 +693,7 @@ def _lower_to_custom_call_config(
   (
       lowered_module_asm,
       (
-          has_communication,
+          detected_has_communication,
           has_custom_barrier,
       ),
       debug_locations,
@@ -701,6 +702,7 @@ def _lower_to_custom_call_config(
       ir_version=ir_version,
       unzip_debug_locations=unzip_debug_locations,
   )
+  has_communication = has_communication or detected_has_communication
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
       lowered_module_asm,
@@ -894,6 +896,7 @@ def lower_module_to_custom_call(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None,
     metadata: Any | None = None,
     skip_device_barrier: bool = False,
+    has_communication: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
@@ -922,6 +925,7 @@ def lower_module_to_custom_call(
       disable_semaphore_checks=disable_semaphore_checks,
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
+      has_communication=has_communication,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
       needs_layout_passes=needs_layout_passes,
