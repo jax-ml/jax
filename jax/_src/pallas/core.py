@@ -101,6 +101,21 @@ class AbstractSemaphoreTyRules:
   def physical_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), jnp.int32)
 
+  @staticmethod
+  def full(shape, fill_value, dtype):
+    val = jnp.full(shape, fill_value, dtype=jnp.int32)
+    return lax.convert_element_type(val, dtype)
+
+  @staticmethod
+  def global_sharded_result_handler(aval, out_sharding, committed):
+    from jax._src.interpreters import pxla
+    from jax._src import earray
+    phys_sharding = out_sharding
+    phys_aval = jax_core.physical_aval(aval)
+    phys_handler_maker = pxla.global_result_handlers[jax_core.ShapedArray]
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+    return phys_handler.wrap(lambda arr: earray.EArray(aval, arr))
+
 # TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
