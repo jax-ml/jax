@@ -31,7 +31,8 @@ from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 from functools import partial
 import inspect
-from typing import Any, Literal, overload, cast, TYPE_CHECKING
+from typing import (Any, Literal, Optional, TypeVar, overload, cast,
+                    TYPE_CHECKING)
 import weakref
 
 import numpy as np
@@ -151,8 +152,8 @@ class NotSpecified:
     return "<not-specified>"
 
 @overload
-def jit(
-  fun: Callable, /, *,
+def jit[**Parameters, ReturnType](
+  fun: Callable[Parameters, ReturnType], /, *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
   static_argnums: int | Sequence[int] | None = ...,
@@ -164,11 +165,11 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> pjit.JitWrapped:
+) -> pjit.JitWrapped[Parameters, ReturnType]:
   ...
 
 @overload
-def jit(
+def jit[**Parameters, ReturnType](
   *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
@@ -181,11 +182,12 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]:
+) -> Callable[[Callable[Parameters, ReturnType]],
+              pjit.JitWrapped[Parameters, ReturnType]]:
   ...
 
-def jit(
-  fun: Callable | NotSpecified = NotSpecified(), /, *,
+def jit[**Parameters, ReturnType](
+  fun: Callable[Parameters, ReturnType] | NotSpecified = NotSpecified(), /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -197,7 +199,9 @@ def jit(
   backend: str | None = None,
   inline: bool | Inline = False,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+) -> (pjit.JitWrapped[Parameters, ReturnType]
+      | Callable[[Callable[Parameters, ReturnType]],
+                 pjit.JitWrapped[Parameters, ReturnType]]):
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
