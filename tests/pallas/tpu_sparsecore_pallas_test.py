@@ -13,10 +13,12 @@
 # limitations under the License.
 """Tests for Pallas on SparseCore."""
 
+import base64
 import collections
 from collections.abc import Mapping, Sequence
 import functools
 import itertools
+import json
 import math
 from unittest import mock
 
@@ -28,11 +30,13 @@ import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
+from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
@@ -4057,6 +4061,204 @@ class LoweringCacheTest(jtu.JaxTestCase):
       jax.jit(lambda: (k_false(), k_true())).trace().lower(
           lowering_platforms=("tpu",)
       )
+
+
+def _split_printed_locs(printed: str) -> list[str]:
+  """Splits a printed `ArrayAttr` of locations into per-location strings."""
+  assert printed.startswith("[") and printed.endswith("]"), printed
+  locs = []
+  depth = 0
+  in_string = False
+  escaped = False
+  start = 1
+  for i, char in enumerate(printed[1:-1], start=1):
+    if in_string:
+      if escaped:
+        escaped = False
+      elif char == "\\":
+        escaped = True
+      elif char == '"':
+        in_string = False
+    elif char == '"':
+      in_string = True
+    elif char == "(":
+      depth += 1
+    elif char == ")":
+      depth -= 1
+    elif char == "," and depth == 0:
+      locs.append(printed[start:i].strip())
+      start = i + 1
+  locs.append(printed[start:-1].strip())
+  return [loc for loc in locs if loc]
+
+
+def _kernel_op_locs(lowered) -> list[list[tuple[str, str, str | None, int]]]:
+  """Returns `(op_name, loc, trace_message, depth)` for each Mosaic kernel op."""
+  configs = []
+
+  def find_custom_call_configs(op: ir.Operation) -> ir.WalkResult:
+    if (
+        "call_target_name" in op.attributes
+        and ir.StringAttr(op.attributes["call_target_name"]).value
+        == "tpu_custom_call"
+    ):
+      configs.append(
+          json.loads(ir.StringAttr(op.attributes["backend_config"]).value)[
+              "custom_call_config"
+          ]
+      )
+    return ir.WalkResult.ADVANCE
+
+  lowered.compiler_ir().operation.walk(find_custom_call_configs)
+  kernels = []
+  for config in configs:
+    with ir.Context() as ctx:
+      tpu.register_dialect(ctx)
+      ctx.allow_unregistered_dialects = True
+      debug_module = ir.Module.parse(
+          base64.b64decode(config["debug_locations"]), context=ctx
+      )
+      locs = iter(
+          _split_printed_locs(
+              str(debug_module.operation.attributes["tpu.locs"])
+          )
+      )
+      kernel_module = ir.Module.parse(
+          base64.b64decode(config["body"]), context=ctx
+      )
+      ops = []
+
+      # Mirrors the pre-order walk of `tpu.private_unzip_debug_locations`.
+      def visit(op: ir.Operation, depth: int):
+        loc = next(locs)
+        for region in op.regions:
+          for block in region:
+            for _ in block.arguments:
+              next(locs)
+        message = None
+        if "message" in op.attributes:
+          message = ir.StringAttr(op.attributes["message"]).value
+        # Serialized Mosaic ops use the `stable_mosaic.` dialect prefix.
+        ops.append(
+            (op.name.removeprefix("stable_mosaic."), loc, message, depth)
+        )
+        for region in op.regions:
+          for block in region:
+            block_depth = 0
+            for child in block:
+              visit(child.operation, depth + 1)
+              child_name = child.operation.name.removeprefix("stable_mosaic.")
+              if child_name == "tpu.trace_start":
+                block_depth += 1
+              elif child_name == "tpu.trace_stop":
+                block_depth -= 1
+              assert block_depth >= 0, "Unbalanced trace ops"
+            assert block_depth == 0, "Unbalanced trace ops"
+
+      visit(kernel_module.operation, 0)
+      kernels.append(ops)
+  return kernels
+
+
+class SparseCoreRegionScopeLoweringTest(jtu.JaxTestCase):
+  """Deviceless tests for named scopes across SparseCore region boundaries."""
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind="TPU7x", num_cores=1, platform="tpu"
+    )
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        )
+    )
+
+  @parameterized.named_parameters(
+      ("scalar_subcore", False),
+      ("vector_subcore", True),
+  )
+  @jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+  def test_region_ops_keep_enclosing_scopes(self, vector_subcore):
+    num_lanes = plsc.get_sparse_core_info().num_lanes
+    if vector_subcore:
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+          num_subcores=1,
+      )
+      scratch = pltpu.VMEM((num_lanes,), jnp.int32)
+      loop_step = num_lanes
+    else:
+      mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+      scratch = pltpu.SMEM((num_lanes,), jnp.int32)
+      loop_step = 1
+
+    def kernel(o_ref, scratch_ref):
+      core = lax.axis_index("core")
+
+      def store(i, value):
+        if vector_subcore:
+          scratch_ref[...] = jnp.broadcast_to(value, (num_lanes,))
+        else:
+          scratch_ref[i] = value
+
+      with jax.named_scope("sc_outer"):
+
+        @plsc.parallel_loop(
+            jnp.int32(0), jnp.int32(num_lanes), jnp.int32(loop_step)
+        )
+        def _(i):
+          with jax.named_scope("sc_inner"):
+            store(i, core + jnp.int32(1))
+
+        @pl.when(core == 0)
+        def _():
+          with jax.named_scope("when_inner"):
+            store(0, core + jnp.int32(2))
+
+        @pl.loop(jnp.int32(0), jnp.int32(2))
+        def _(_):
+          with jax.named_scope("loop_inner"):
+            store(0, core + jnp.int32(3))
+
+        @pl.run_scoped
+        def _():
+          with jax.named_scope("scoped_inner"):
+            store(0, core + jnp.int32(4))
+
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    f = pl.kernel(
+        kernel,
+        mesh=mesh,
+        out_type=jax.ShapeDtypeStruct((num_lanes,), jnp.int32),
+        scratch_types=(scratch,),
+    )
+    lowered = jax.jit(f).trace().lower(lowering_platforms=("tpu",))
+
+    (ops,) = _kernel_op_locs(lowered)
+    locs = [loc for _, loc, _, _ in ops]
+    # The cached `parallel_loop` body is inlined under the location of the
+    # `parallel_loop` equation, which sets the op type of its ops.
+    expected_prefixes = (
+        'loc("parallel_loop:"("sc_outer/parallel_loop/sc_inner/add"',
+        'loc("add:"("sc_outer/when_inner/add"',
+        'loc("add:"("sc_outer/loop_inner/add"',
+        'loc("add:"("sc_outer/scoped_inner/add"',
+    )
+    for prefix in expected_prefixes:
+      self.assertTrue(
+          any(loc.startswith(prefix) for loc in locs),
+          msg=f"No op with location {prefix}",
+      )
+    self.assertCountEqual(
+        [message for name, _, message, _ in ops if name == "tpu.trace_start"],
+        ["sc_outer", "sc_inner", "when_inner", "loop_inner", "scoped_inner"],
+    )
 
 
 if __name__ == "__main__":

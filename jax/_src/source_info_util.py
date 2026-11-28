@@ -325,6 +325,17 @@ def reset_name_stack() -> Generator[None]:
     yield
 
 
+@contextlib.contextmanager
+def reset_source_info() -> Generator[None]:
+  """Temporarily resets the thread-local traceback and name stack."""
+  prev = _source_info_context.context
+  _source_info_context.context = new_source_info()
+  try:
+    yield
+  finally:
+    _source_info_context.context = prev
+
+
 class TransformNameStackContextManager:
   __slots__ = ['name', 'prev']
 
