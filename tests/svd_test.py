@@ -272,6 +272,77 @@ class SvdTest(jtu.JaxTestCase):
                         atol=1E-6)
 
   @jtu.sample_product(
+   a11=[0,1,2,3,4],
+   a12=[0,1,2,3,4],
+   a13=[0,1,2,3,4],
+   a21=[0,1,2,3,4],
+   a22=[0,1,2,3,4],
+   a23=[0,1,2,3,4],
+   a31=[0,1,2,3,4],
+   a32=[0,1,2,3,4],
+   a33=[0,1,2,3,4],
+   fi=[0,1,2],
+   fj=[0,1,2],
+   dtype=jtu.dtypes.floating,
+  )
+  def testHessianSvdForUnderflow(self, a11,a12,a13,a21,a22,a23,a31,a32,a33,
+                                 fi,fj,dtype):
+    """Tests if the Hessian of an SVD underflows numerically. Intended to guard
+    against #40185. """
+    a = jnp.array([
+      [a11,a12,a13],
+      [a21,a22,a23],
+      [a31,a32,a33],
+    ], dtype=dtype)
+    a = a.at[fi, fj].set(-a[fi,fj])
+    # Underflow occurs due to error, and this is nigh inevitable. The x10 is
+    # meant to check only for errors occurring very far away from the float
+    # limits, as these are a much bigger problem.
+    a = jnp.finfo(dtype).tiny * a * 10
+
+    def total_sigma(M):
+      return jnp.linalg.svd(M, compute_uv=False).sum()
+
+    res = jax.hessian(total_sigma)(a)
+    self.assertFalse(jnp.any(jnp.isnan(res)))
+
+  @jtu.sample_product(
+   a11=[0,1,2,3,4],
+   a12=[0,1,2,3,4],
+   a13=[0,1,2,3,4],
+   a21=[0,1,2,3,4],
+   a22=[0,1,2,3,4],
+   a23=[0,1,2,3,4],
+   a31=[0,1,2,3,4],
+   a32=[0,1,2,3,4],
+   a33=[0,1,2,3,4],
+   fi=[0,1,2],
+   fj=[0,1,2],
+   dtype=jtu.dtypes.floating,
+  )
+  def testHessianSvdForOverflow(self, a11,a12,a13,a21,a22,a23,a31,a32,a33,
+                                 fi,fj,dtype):
+    """Tests if the Hessian of an SVD overflows numerically. Intended to guard
+    against #40185. """
+    a = jnp.array([
+      [a11,a12,a13],
+      [a21,a22,a23],
+      [a31,a32,a33],
+    ], dtype=dtype)
+    a = a.at[fi, fj].set(-a[fi,fj])
+    # The comment in testHessianSvdForUnderflow applies here too: slight errors
+    # typically lead to overflow near the bounds anyways, so the /10 ensures
+    # we're not being unreasonably strict, i.e. we get sufficiently near the
+    # expressable bounds.
+    a = jnp.finfo(dtype).max/10 * a
+
+    def total_sigma(M):
+      return jnp.linalg.svd(M, compute_uv=False).sum()
+
+    res = jax.hessian(total_sigma)(a)
+    self.assertFalse(jnp.any(jnp.isnan(res)))
+
+  @jtu.sample_product(
       start=[0, 1, 64, 126, 127],
       end=[1, 2, 65, 127, 128],
   )
