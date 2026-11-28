@@ -890,6 +890,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
           a_dbg, b_dbg, c_dbg, x_dbg, log_gamma_ratio, sgn_gamma_ratio
       )
 
+  @parameterized.parameters(
+      (np.float16, 4000.0, 1e-4),
+      (np.float32, 1e8, 1e-9),
+      (np.float32, np.inf, 1e-4),
+  )
+  def testHyp2f1LargeATerminates(self, dtype, a, x):
+    # The terminating-series branch is evaluated for every input, so its loop
+    # must not use a floating-point counter: once |a| exceeds the largest
+    # integer the dtype counts exactly, `i + 1 == i` and the loop never ends.
+    args = [np.array(v, dtype=dtype) for v in (a, 1.0, 2.0, x)]
+    out = lsp_special.hyp2f1(*args)
+    self.assertEqual(out.dtype, dtype)
+    self.assertAllClose(jax.jit(lsp_special.hyp2f1)(*args), out)
+
   @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1ParameterDerivatives(self, dtype):
     a = np.array([0.15, 5.0], dtype=dtype)
