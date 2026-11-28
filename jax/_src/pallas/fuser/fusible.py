@@ -152,30 +152,32 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
 
 @partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
-  """Decorator that marks a kernel wrapper function as a fusible for ``fuse``.
-
-  The decorated function ``f`` is invoked as ``f(*in_fusions, output_fusions,
-  **kwargs)``, where each positional argument in ``in_fusions`` preserves the
-  PyTree structure of the corresponding input in ``*args`` with array leaves
-  wrapped in ``Fusion`` objects, and ``output_fusions`` is a PyTree matching the
-  structure of ``output_fusion_prefix`` whose leaves are ``Fusion`` objects or
-  ``None`` when no output fusion is present. Keyword arguments are bound to ``f``
-  as static values. When called outside ``fuse``, each input array leaf is
-  wrapped in a trivial ``Fusion`` that returns it and all ``output_fusions``
-  leaves are ``None``.
+  """Marks a kernel wrapper as a fusible, so :func:`fuse` can fuse ops into it.
 
   Args:
-    f: The fusible kernel function to decorate. If ``None``, returns a
-      decorator.
-    output_fusion_prefix: A PyTree prefix mask whose PyTree structure specifies
-      how the outputs of ``f`` are grouped into separate output fusions (with the
-      default ``True``, all outputs are grouped into a single ``Fusion | None``).
-      Multiple output fusion groups are not supported when the output fusion
-      writes to ``Refs``.
+    f: The fusible kernel function to decorate. It is called as
+      ``f(*in_fusions, out_fusions, **kwargs)``:
 
-  Returns:
-    A wrapped function that binds a ``Fusible`` primitive when called, or a
-    decorator if ``f`` is ``None``.
+      - ``in_fusions`` mirror the positional arguments, with each array
+        replaced by a :class:`Fusion` that computes it. This lets the kernel
+        run the ops that produce its inputs (the input fusions) block by block.
+      - ``out_fusions`` are the ops applied to ``f``'s results (the output
+        fusions), grouped as described by ``output_fusion_prefix``. A group
+        with no ops after it gets ``None``.
+      - ``kwargs`` are passed through unchanged, as static values.
+
+      Outside of :func:`fuse`, each input fusion just returns its array and
+      all output fusions are ``None``.
+    output_fusion_prefix: How the results of ``f`` are split into output
+      fusions. Its tree structure must be a prefix of the structure of ``f``'s
+      results, and each leaf gets its own output fusion that takes the
+      matching part of the results; leaf values are ignored. The default
+      gives a single output fusion for all results. For example, if ``f``
+      returns ``(x, y)``, passing ``(True, True)`` gives
+      ``out_fusions = (x_fusion, y_fusion)``, so the kernel can apply the ops
+      that follow ``x`` and ``y`` separately. Each output of the fused function
+      must then depend on only one group; e.g. returning ``x + y`` is an
+      error.
   """
 
   def decorator(f):

@@ -62,20 +62,8 @@ def pack_dtype_abstract_eval(*xs, dtype):
   raise ValueError(f"Attempted to pack non-fusion dtype: {dtype}")
 
 
-def pack(*xs, dtype):
-  """Packs physical component arrays into one array with fusion dtype `dtype`.
-
-  `pack` has no eager implementation or lowering; it must be used inside a
-  function that is physicalized, e.g. by `fuse` with `resolve_fusion_dtypes`.
-
-  Args:
-    *xs: Physical component arrays to pack.
-    dtype: Target `FusionDType` instance.
-
-  Returns:
-    An array with dtype `dtype`, whose abstract value is given by
-    `dtype.abstract_pack(*xs)`.
-  """
+def pack(*xs: jax.Array, dtype: "FusionDType") -> jax.Array:
+  """Packs physical arrays into a single array with fusion dtype ``dtype``."""
   return pack_dtype_p.bind(*xs, dtype=dtype)
 
 
@@ -90,19 +78,8 @@ def unpack_dtype_abstract_eval(x):
   raise ValueError(f"Attempted to unpack non-fusion dtype: {x.dtype}")
 
 
-def unpack(x):
-  """Unpacks an array with a `FusionDType` into its constituent physical arrays.
-
-  Like `pack`, `unpack` has no eager implementation or lowering and must be
-  used inside a function that is physicalized.
-
-  Args:
-    x: An array whose dtype is a `FusionDType`.
-
-  Returns:
-    A tuple of physical component arrays unpacked from `x`, with abstract
-    values given by `x.dtype.abstract_unpack(x)`.
-  """
+def unpack(x: jax.Array) -> tuple[jax.Array, ...]:
+  """Unpacks an array with a fusion dtype into its physical arrays."""
   return tuple(unpack_dtype_p.bind(x))
 
 

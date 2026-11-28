@@ -47,10 +47,10 @@ def fuse(
 ):
   """Fuses a function into a single fusible.
 
-  There should be a single call to a ``fusible`` inside the body of ``f``. ``fuse``
-  returns a transformed function that will fuse the surrounding computation into
-  the fusible and invoke it. The fused function cannot take ``jax.ref.Ref`` objects as
-  arguments (it must close over ``Refs`` instead).
+  There should be a single call to a :func:`fusible` inside the body of ``f``.
+  ``fuse`` returns a transformed function that will fuse the surrounding
+  computation into the fusible and invoke it. The fused function cannot take
+  :class:`jax.ref.Ref` objects as arguments (it must close over refs instead).
 
   Args:
     f: The function to fuse.
@@ -58,14 +58,14 @@ def fuse(
       dtypes (which don't correspond to physical dtypes)
     debug: Whether to print debug information.
     strict_mode: Whether to verify block index map equality in collisions during
-      block spec propagations in output fusions.
+      block spec propagations in output fusions (see :func:`pull_block_spec`).
     static_argnums: An optional int or collection of ints that specify which
       positional arguments to treat as static (compile-time constant).
     static_argnames: An optional string or collection of strings specifying
       which named arguments to treat as static (compile-time constant).
 
   Returns:
-    A fused version of ``f``, or a decorator if ``f`` is ``None``.
+    A fused version of ``f``.
   """
 
   def decorator(f):
