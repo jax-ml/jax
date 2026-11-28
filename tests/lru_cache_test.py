@@ -15,13 +15,16 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
 import time
+from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 from jax._src import path as pathlib
-from jax._src.lru_cache import _ATIME_SUFFIX, _CACHE_SUFFIX, LRUCache
+from jax._src.lru_cache import _ATIME_SUFFIX, _CACHE_SUFFIX, _TMP_SUFFIX, LRUCache
 import jax._src.test_util as jtu
 
 
@@ -190,6 +193,51 @@ class LRUCacheTest(LRUCacheTestCase):
 
     cache.get("a")
     self.assertEmpty(list(self.path.glob(f"*{_ATIME_SUFFIX}")))
+
+  @parameterized.parameters(-1, 100)
+  def test_put_replaces_truncated_entry(self, max_size):
+    cache = LRUCache(self.name, max_size=max_size)
+
+    # simulates an entry left truncated by a process that was killed while
+    # writing it in place
+    (self.path / f"a{_CACHE_SUFFIX}").write_bytes(b"aa")
+
+    cache.put("a", b"aaaa")
+    self.assertEqual(cache.get("a"), b"aaaa")
+    self.assertCacheKeys(("a",))
+
+  @parameterized.parameters(-1, 100)
+  def test_failed_put_leaves_no_files(self, max_size):
+    cache = LRUCache(self.name, max_size=max_size)
+
+    with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+      with self.assertRaisesRegex(OSError, "disk full"):
+        cache.put("a", b"a")
+
+    self.assertIsNone(cache.get("a"))
+    self.assertCacheKeys(())
+    self.assertEmpty(list(self.path.glob(f"*{_TMP_SUFFIX}")))
+
+  def test_put_is_not_visible_until_complete(self):
+    cache = LRUCache(self.name, max_size=-1)
+    cache.put("a", b"old")
+
+    # record what a concurrent reader would see right before the new entry
+    # is moved into place
+    seen = []
+    replace = os.replace
+
+    def replace_and_record(src, dst):
+      seen.append(cache.get("a"))
+      replace(src, dst)
+
+    with mock.patch.object(os, "replace", side_effect=replace_and_record):
+      cache.put("a", b"new")
+
+    self.assertEqual(seen, [b"old"])
+    self.assertEqual(cache.get("a"), b"new")
+    self.assertCacheKeys(("a",))
+    self.assertEmpty(list(self.path.glob(f"*{_TMP_SUFFIX}")))
 
 
 if __name__ == "__main__":
