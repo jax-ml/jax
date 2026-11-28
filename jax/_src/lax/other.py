@@ -268,6 +268,9 @@ def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   elif dtypes.isdtype(x1_arr.dtype, "complex floating"):
     delta = lax.sub(lax.add(x1, x2), lax.mul(amax, lax._const(amax, 2)))
     out = lax.add(amax, lax.log1p(lax.exp(delta)))
+    has_infinite_real_part = lax.eq(
+        lax.abs(lax.real(amax)), lax._const(lax.real(amax), np.inf))
+    out = lax.select(has_infinite_real_part, amax, out)
     return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
   else:
     raise ValueError(f"logaddexp requires floating-point or complex inputs; got {x1_arr.dtype}")
