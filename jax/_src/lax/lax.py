@@ -8187,15 +8187,75 @@ def _ragged_dot_general_impl(
     case RaggedDotMode.RAGGED_NONCONTRACTING:
       rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
       assert len(rhs_group_dims) == 1
-      return _dot_general(
-          expand(lhs, lhs_ragged_dim, group_sizes, *l_prefix),
+      # The dense expansion used to zero `lhs` outside each group and then
+      # contract over the group axis, so every row picked up a `0 * rhs[g]`
+      # term from every other group `g`. When `rhs[g]` holds an `inf` that
+      # term is `nan`, corrupting rows that have nothing to do with group
+      # `g` (and rows in no group at all). Instead, dot the unmasked `lhs`
+      # against every group's `rhs` in a single batched dot, then pick each
+      # row's own group's result. Selection (rather than multiplication)
+      # keeps an `inf` in another group from leaking into a row's result,
+      # and rows in no group sum to zero. This mirrors
+      # `jax._src.lax_reference.ragged_dot`.
+      from jax._src.lax import control_flow  # avoid circular imports
+
+      num_groups = group_sizes.shape[-1]
+      prefix_shape = list(group_sizes.shape[:-1])
+      # Accumulate boundary counts in an index dtype that can represent
+      # both `num_groups` and the ragged extent, independently of
+      # `group_sizes.dtype`, so a narrow integer `group_sizes` cannot wrap
+      # the count (e.g. uint8 with 256 groups). Use `int_dtype_for_shape`,
+      # not a Python `max`, so a symbolic ragged extent (e.g. under
+      # `jax.export`) never needs a dimension comparison.
+      idx_dtype = lax_utils.int_dtype_for_shape(
+          (num_groups, lhs.shape[lhs_ragged_dim]), signed=True)
+      group_sizes = convert_element_type(group_sizes, idx_dtype)
+      # The group containing row `m` is the number of group boundaries at
+      # or before `m`; rows in no group count all `num_groups` boundaries.
+      group_ends = control_flow.cumsum(group_sizes, axis=len(prefix_shape))
+      row_iota = broadcasted_iota(
+          idx_dtype, prefix_shape + [lhs.shape[lhs_ragged_dim]],
+          len(prefix_shape))
+      ends_b = broadcast_in_dim(
+          group_ends,
+          prefix_shape + [lhs.shape[lhs_ragged_dim], num_groups],
+          list(range(len(prefix_shape))) + [len(prefix_shape) + 1])
+      rows_b = broadcast_in_dim(
+          row_iota,
+          prefix_shape + [lhs.shape[lhs_ragged_dim], num_groups],
+          list(range(len(prefix_shape) + 1)))
+      # The group containing each row; rows in no group count all
+      # `num_groups` boundaries, which matches no `g` in the loop below,
+      # so those rows select no term and sum to zero.
+      group_idx = reduce_sum(
+          convert_element_type(le(ends_b, rows_b), idx_dtype),
+          (len(prefix_shape) + 1,))
+
+      lhs_batched = broadcast_in_dim(
+          lhs, [num_groups] + list(lhs.shape), list(range(1, lhs.ndim + 1)))
+      out_batched = _dot_general(
+          lhs_batched,
           rhs,
           dimension_numbers=(
-              (incr(l_contract) + [0], list(r_contract) + [rhs_group_dims[0]]),
-              (incr(l_batch), r_batch),
+              (incr(l_contract), list(r_contract)),
+              ([0] + incr(l_batch), [rhs_group_dims[0]] + list(r_batch)),
           ),
-          out_sharding=out_sharding,
+          out_sharding=None,
       )
+      out_shape = list(out_batched.shape[1:])
+      group_idx_b = broadcast_in_dim(
+          group_idx, out_shape, list(range(len(l_prefix) + 1)))
+      result = full(out_shape, 0, out_batched.dtype)
+      for g in range(num_groups):
+        out_g = slicing.dynamic_index_in_dim(
+            out_batched, g, axis=0, keepdims=False)
+        # Update by selection, not addition: the group masks are disjoint,
+        # and `add` does not accept boolean outputs.
+        result = select(
+            eq(group_idx_b, _const(group_idx_b, g)), out_g, result)
+      if out_sharding is not None:
+        result = pjit.with_sharding_constraint(result, out_sharding)
+      return result
     case RaggedDotMode.RAGGED_CONTRACTING:
       rhs_ragged_dim = r_contract[l_contract.index(lhs_ragged_dim)]
       r_prefix = _ragged_dot_prefix_dims(

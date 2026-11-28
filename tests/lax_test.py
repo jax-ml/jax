@@ -5893,6 +5893,56 @@ class RaggedTest(jtu.JaxTestCase):
   def test_ragged_dot(self, m, k, n, num_groups, dtype):
     return self._test_ragged_dot(m, k, n, num_groups, dtype)
 
+  def test_ragged_dot_inf_in_other_group(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42918: an
+    # `inf` in one group's `rhs` must not turn other groups' rows (or rows
+    # in no group) into `nan`.
+    lhs = jnp.arange(24, dtype=jnp.float32).reshape(6, 4) - 10
+    rhs = jnp.ones((3, 4, 5), dtype=jnp.float32).at[2, 0, 0].set(jnp.inf)
+    group_sizes = jnp.array([2, 1, 2], dtype=jnp.int32)
+    expected = jnp.array(
+        [[-34., -34., -34., -34., -34.],
+         [-18., -18., -18., -18., -18.],
+         [-2., -2., -2., -2., -2.],
+         [jnp.inf, 14., 14., 14., 14.],
+         [jnp.inf, 30., 30., 30., 30.],
+         [0., 0., 0., 0., 0.]], dtype=jnp.float32)
+    for fn in (lax.ragged_dot, jax.jit(lax.ragged_dot)):
+      self.assertArraysAllClose(fn(lhs, rhs, group_sizes), expected)
+
+  def test_ragged_dot_narrow_group_sizes_dtype(self):
+    # Regression test: group indices must not wrap when `group_sizes` has
+    # a narrow integer dtype. With 255 empty groups followed by one group
+    # of size 1, row 0 is in group 255 and row 1 is in no group; a uint8
+    # boundary count would wrap 256 to 0 and select group 0 for row 1.
+    num_groups = 256
+    lhs = jnp.ones((2, 2), dtype=jnp.float32)
+    rhs = jnp.ones((num_groups, 2, 2), dtype=jnp.float32)
+    group_sizes = jnp.array([0] * 255 + [1], dtype=jnp.uint8)
+    expected = jnp.array([[2., 2.], [0., 0.]], dtype=jnp.float32)
+    self.assertArraysAllClose(
+        lax.ragged_dot(lhs, rhs, group_sizes), expected)
+
+  def test_ragged_dot_export_symbolic_ragged_dim(self):
+    # Regression test: exporting with a symbolic ragged extent must not
+    # require comparing the symbolic dimension against the group count.
+    lhs = jnp.arange(24, dtype=jnp.float32).reshape(6, 4) - 10
+    rhs = jnp.ones((3, 4, 5), dtype=jnp.float32)
+    rhs = rhs.at[2, 0, 0].set(jnp.inf)
+    group_sizes = jnp.array([2, 1, 2], dtype=jnp.int32)
+    expected = jnp.zeros((6, 5), dtype=jnp.float32)
+    expected = expected.at[0:2].set(lhs[0:2] @ rhs[0])
+    expected = expected.at[2:3].set(lhs[2:3] @ rhs[1])
+    expected = expected.at[3:5].set(lhs[3:5] @ rhs[2])
+    # `export.export` requires a `jit`-wrapped function.
+    exported = export.export(jax.jit(lax.ragged_dot))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("m, 4"), jnp.float32),
+        jax.ShapeDtypeStruct((3, 4, 5), jnp.float32),
+        jax.ShapeDtypeStruct((3,), jnp.int32),
+    )
+    self.assertArraysAllClose(
+        exported.call(lhs, rhs, group_sizes), expected)
+
   @parameterized.parameters([True, False])
   def test_ragged_dot_use_ragged_dot_instruction(self, use_instruction):
     with config.jax_ragged_dot_use_ragged_dot_instruction(use_instruction):
