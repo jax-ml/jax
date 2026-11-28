@@ -11375,6 +11375,15 @@ class UtilsTest(TestCase):
         with self.assertRaisesRegex(NotImplementedError, "has dynamic bounds"):
           utils.parse_indices(s, (2, 3, 4))
 
+  @parameterized.named_parameters(
+      ("negative_base", -1, 64, "base must be non-negative"),
+      ("negative_length", 0, -1, "length must be non-negative"),
+  )
+  def test_bounded_dynamic_slice_validation(self, base, length, pattern):
+    bound = c(4, ir.IntegerType.get_signless(32))
+    with self.assertRaisesRegex(ValueError, pattern):
+      bds(base, length, bound)
+
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_assert(self):
     if cf is None:

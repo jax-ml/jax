@@ -750,6 +750,24 @@ class DynamicSlice:
 ds = DynamicSlice
 
 
+@dataclasses.dataclass(frozen=True)
+class BoundedDynamicSlice:
+  """A dynamic slice with a runtime `bound` element [0, min(bound, length)]."""
+
+  base: ir.Value | int
+  length: int
+  bound: ir.Value
+
+  def __post_init__(self):
+    if isinstance(self.base, int) and self.base < 0:
+      raise ValueError(f"base must be non-negative, got {self.base}")
+    if self.length < 0:
+      raise ValueError(f"length must be non-negative, got {self.length}")
+
+
+bds = BoundedDynamicSlice
+
+
 def memref_slice(ref: ir.Value[ir.MemRefType], index) -> ir.Value[ir.MemRefType]:
   ref_ty = ir.MemRefType(ref.type)
   base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
