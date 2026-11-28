@@ -85,7 +85,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
   kv_shape = (batch_size, kv_seq_len, num_kv_heads, head_dim)
   if k.shape != kv_shape:
     raise ValueError(f"Expected {k.shape=} to be {kv_shape} (inferred from q)")
-  if k.shape != kv_shape:
+  if v.shape != kv_shape:
     raise ValueError(f"Expected {v.shape=} to be {kv_shape} (inferred from q)")
   if (dtype := q.dtype) != k.dtype or dtype != v.dtype:
     raise ValueError(f"q, k, and v should all have the same dtype, got: {q.dtype}, {k.dtype}, {v.dtype}")
@@ -661,7 +661,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   kv_shape = (batch_size, kv_seq_len, num_kv_heads, head_dim)
   if k.shape != kv_shape:
     raise ValueError(f"Expected {k.shape=} to be {kv_shape} (inferred from q)")
-  if k.shape != kv_shape:
+  if v.shape != kv_shape:
     raise ValueError(f"Expected {v.shape=} to be {kv_shape} (inferred from q)")
   if (dtype := q.dtype) != k.dtype or dtype != v.dtype:
     raise ValueError(f"q, k, and v should all have the same dtype, got: {q.dtype}, {k.dtype}, {v.dtype}")
